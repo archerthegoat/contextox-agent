@@ -2,7 +2,7 @@
 
 ContextOx Agent 是一个面向 FDE 和工程师的、受业务上下文约束的任务 Agent。它把授权的公司资料、任务证据和人的决策组织成可追溯、可恢复、可验收的单任务闭环。
 
-> 当前状态：C0 文档基线。产品代码、依赖安装、自动验证、真实模型运行与人工产品验收均未开始或未运行；本仓库目前不可安装、不可执行。
+> 当前状态：C1 TypeScript 单包骨架已实现，并在提交 `8b234eaa6830e66c4217067e1d52997811730a13` 上完成自动验证与人工验收。C2/C3 尚未开始；真实模型验证仍为 `NOT RUN`，V0 端到端闭环与用户价值仍未验证。
 
 ## V0 目标
 
@@ -29,10 +29,10 @@ Agent Runtime 将使用发布版 `@earendil-works/pi-agent-core` 与 `@earendil-
 | 层级 | 当前状态 |
 | --- | --- |
 | C0 文档基线 | 进行中；legacy/fixture 迁移仍按 publication manifest 逐文件保持 `pending` |
-| 产品实现 | `NOT STARTED` |
-| 自动验证 | `NOT RUN` |
+| 产品实现 | `C1 COMPLETED；C2/C3 NOT STARTED` |
+| 自动验证 | `C1 PASS` |
 | 真实模型验证 | `NOT RUN` |
-| 人工产品验收 | `PENDING` |
+| 人工产品验收 | `C1 PASS；V0 END-TO-END PENDING` |
 | 用户价值证据 | `NOT VERIFIED` |
 
 静态文件或测试通过不能替代真实模型验证、人工验收或用户价值证据。
