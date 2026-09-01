@@ -1,0 +1,511 @@
+{
+  "schema_version": 1,
+  "status": "draft_pending_human_review",
+  "created_on": "2026-09-01",
+  "purpose": "Per-file public-distribution gate for selected legacy ContextOx documents and synthetic fixture metadata.",
+  "policy": {
+    "decisions": [
+      "pending",
+      "allow",
+      "deny"
+    ],
+    "copy_rule": "A file may be copied only after a human changes its publication decision to allow and all required review fields are closed with evidence.",
+    "automation_may_allow": false,
+    "pending_or_denied_action": "Keep the file outside the new repository.",
+    "destination_verification": "After an allowed byte-for-byte copy, record and verify destination_sha256 without replacing source_sha256.",
+    "sensitive_content_rule": "Do not place sensitive source body text in this manifest."
+  },
+  "source_repository": {
+    "url": "https://github.com/archerthegoat/ContextOx",
+    "commit": "f84c1face877aed443ccfec180959ff193f62348",
+    "candidate_files_match_commit": {
+      "status": "pass",
+      "checked_on": "2026-09-01",
+      "scope": "Only the seven candidate source paths listed in this manifest.",
+      "method": "Compared the candidate worktree paths with the fixed commit and recomputed SHA-256."
+    },
+    "license_observation": {
+      "source_path": "LICENSE",
+      "source_sha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
+      "declared_spdx": "MIT",
+      "copyright_notice": "Copyright (c) 2025 Mario Zechner",
+      "applicability_to_candidates": "pending_human_rights_and_license_review",
+      "note": "A repository-level license observation is evidence, not a per-file ownership or third-party clearance decision."
+    }
+  },
+  "entries": [
+    {
+      "id": "legacy-product-definition-and-brand-core",
+      "category": "legacy_document",
+      "source_repository": "https://github.com/archerthegoat/ContextOx",
+      "source_commit": "f84c1face877aed443ccfec180959ff193f62348",
+      "source_path": "docs/contextox/产品定义与品牌核心.md",
+      "source_sha256": "2405165807f5d84f4148ef4411cbb93902c90f12a0e70fede9a29bc6eff9768c",
+      "destination_path": "docs/legacy/产品定义与品牌核心.md",
+      "destination_sha256": null,
+      "review": {
+        "claimed_rights_owner": {
+          "status": "pending",
+          "value": null,
+          "evidence": []
+        },
+        "copyright_and_license": {
+          "status": "pending",
+          "copyright_notice": null,
+          "spdx": null,
+          "evidence": [
+            "source_repository.license_observation"
+          ]
+        },
+        "third_party_content": {
+          "status": "pending",
+          "observations": [
+            "Product and brand planning text was observed; ownership and quoted or derived third-party material have not been adjudicated."
+          ]
+        },
+        "secrets": {
+          "automated_scan": "not_run",
+          "human_review": "not_run",
+          "findings": []
+        },
+        "pii": {
+          "status": "pending",
+          "observations": []
+        },
+        "customer_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "company_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "raw_runtime_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "evaluator_only": {
+          "status": "pending",
+          "observations": []
+        }
+      },
+      "publication": {
+        "decision": "pending",
+        "decided_by": null,
+        "decided_on": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "legacy-product-direction-and-comparables",
+      "category": "legacy_document",
+      "source_repository": "https://github.com/archerthegoat/ContextOx",
+      "source_commit": "f84c1face877aed443ccfec180959ff193f62348",
+      "source_path": "docs/contextox/产品方向与同类产品.md",
+      "source_sha256": "fe35f017e1b6f5c39a1174fe9d0f161d90379e71b707ae08832c1168538c3493",
+      "destination_path": "docs/legacy/产品方向与同类产品.md",
+      "destination_sha256": null,
+      "review": {
+        "claimed_rights_owner": {
+          "status": "pending",
+          "value": null,
+          "evidence": []
+        },
+        "copyright_and_license": {
+          "status": "pending",
+          "copyright_notice": null,
+          "spdx": null,
+          "evidence": [
+            "source_repository.license_observation"
+          ]
+        },
+        "third_party_content": {
+          "status": "pending",
+          "observations": [
+            "Contains descriptions, names, and links concerning third-party products and companies; quotation, derivation, and factual accuracy review is not complete."
+          ]
+        },
+        "secrets": {
+          "automated_scan": "not_run",
+          "human_review": "not_run",
+          "findings": []
+        },
+        "pii": {
+          "status": "pending",
+          "observations": []
+        },
+        "customer_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "company_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "raw_runtime_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "evaluator_only": {
+          "status": "pending",
+          "observations": []
+        }
+      },
+      "publication": {
+        "decision": "pending",
+        "decided_by": null,
+        "decided_on": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "legacy-prd-v0-1",
+      "category": "legacy_document",
+      "source_repository": "https://github.com/archerthegoat/ContextOx",
+      "source_commit": "f84c1face877aed443ccfec180959ff193f62348",
+      "source_path": "docs/contextox/PRD-v0.1.md",
+      "source_sha256": "e599d8c2598b0825a55e5d355ee772a599180abdf4fdb13583dbebb8584169f5",
+      "destination_path": "docs/legacy/PRD-v0.1.md",
+      "destination_sha256": null,
+      "review": {
+        "claimed_rights_owner": {
+          "status": "pending",
+          "value": null,
+          "evidence": []
+        },
+        "copyright_and_license": {
+          "status": "pending",
+          "copyright_notice": null,
+          "spdx": null,
+          "evidence": [
+            "source_repository.license_observation"
+          ]
+        },
+        "third_party_content": {
+          "status": "pending",
+          "observations": [
+            "Contains external product and dataset references, including Olist, Kaggle, and a CC BY-NC-SA 4.0 label; no third-party data rows were observed in this Markdown file, but applicability and accuracy remain unreviewed."
+          ]
+        },
+        "secrets": {
+          "automated_scan": "not_run",
+          "human_review": "not_run",
+          "findings": []
+        },
+        "pii": {
+          "status": "pending",
+          "observations": []
+        },
+        "customer_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "company_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "raw_runtime_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "evaluator_only": {
+          "status": "pending",
+          "observations": []
+        }
+      },
+      "publication": {
+        "decision": "pending",
+        "decided_by": null,
+        "decided_on": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "fixture-context",
+      "category": "synthetic_fixture_input",
+      "source_repository": "https://github.com/archerthegoat/ContextOx",
+      "source_commit": "f84c1face877aed443ccfec180959ff193f62348",
+      "source_path": "packages/contextox/fixtures/high-potential-customer-v0.1/context.md",
+      "source_sha256": "f1f4475bd3c7b32abca6b621ac0745a4ca13aef7cea1093412cd5ee93f36ab30",
+      "destination_path": "fixtures/high-potential-customer-v0.1/context.md",
+      "destination_sha256": null,
+      "review": {
+        "claimed_rights_owner": {
+          "status": "pending",
+          "value": null,
+          "evidence": []
+        },
+        "copyright_and_license": {
+          "status": "pending",
+          "copyright_notice": null,
+          "spdx": null,
+          "evidence": [
+            "source_repository.license_observation"
+          ]
+        },
+        "third_party_content": {
+          "status": "pending",
+          "observations": [
+            "The source labels the material synthetic and does not identify a third-party source; that source claim has not yet been accepted as publication clearance."
+          ]
+        },
+        "secrets": {
+          "automated_scan": "not_run",
+          "human_review": "not_run",
+          "findings": []
+        },
+        "pii": {
+          "status": "pending",
+          "observations": [
+            "No real-person claim appears in the source text; human publication review is still required."
+          ]
+        },
+        "customer_private_data": {
+          "status": "pending",
+          "observations": [
+            "The source labels the scenario synthetic; human publication review is still required."
+          ]
+        },
+        "company_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "raw_runtime_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "evaluator_only": {
+          "status": "pending",
+          "observations": [
+            "The source describes this file as candidate Agent input, not evaluator-only content."
+          ]
+        }
+      },
+      "publication": {
+        "decision": "pending",
+        "decided_by": null,
+        "decided_on": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "fixture-facts",
+      "category": "synthetic_fixture_input",
+      "source_repository": "https://github.com/archerthegoat/ContextOx",
+      "source_commit": "f84c1face877aed443ccfec180959ff193f62348",
+      "source_path": "packages/contextox/fixtures/high-potential-customer-v0.1/facts.json",
+      "source_sha256": "59f058c21eb187ab9493887a25cbe7c4da5c16765e155dcb5db4aa374a0e7e19",
+      "destination_path": "fixtures/high-potential-customer-v0.1/facts.json",
+      "destination_sha256": null,
+      "review": {
+        "claimed_rights_owner": {
+          "status": "pending",
+          "value": null,
+          "evidence": []
+        },
+        "copyright_and_license": {
+          "status": "pending",
+          "copyright_notice": null,
+          "spdx": null,
+          "evidence": [
+            "source_repository.license_observation"
+          ]
+        },
+        "third_party_content": {
+          "status": "pending",
+          "observations": [
+            "The source labels the data synthetic and does not identify third-party rows; that source claim has not yet been accepted as publication clearance."
+          ]
+        },
+        "secrets": {
+          "automated_scan": "not_run",
+          "human_review": "not_run",
+          "findings": []
+        },
+        "pii": {
+          "status": "pending",
+          "observations": [
+            "Identifiers and names appear illustrative; human publication review is still required."
+          ]
+        },
+        "customer_private_data": {
+          "status": "pending",
+          "observations": [
+            "The source labels all records synthetic; human publication review is still required."
+          ]
+        },
+        "company_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "raw_runtime_data": {
+          "status": "pending",
+          "observations": [
+            "The file is static fixture JSON rather than an observed runtime export."
+          ]
+        },
+        "evaluator_only": {
+          "status": "pending",
+          "observations": [
+            "The source describes this file as candidate Agent input, not evaluator-only content."
+          ]
+        }
+      },
+      "publication": {
+        "decision": "pending",
+        "decided_by": null,
+        "decided_on": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "fixture-validation-readme",
+      "category": "synthetic_fixture_metadata",
+      "source_repository": "https://github.com/archerthegoat/ContextOx",
+      "source_commit": "f84c1face877aed443ccfec180959ff193f62348",
+      "source_path": "docs/contextox/validation/high-potential-customer-v0.1/README.md",
+      "source_sha256": "85eb953a7ded934c9c372d2bcde70e92e6be47ad974a7a8d74be7e96de289ad9",
+      "destination_path": "fixtures/high-potential-customer-v0.1/README.md",
+      "destination_sha256": null,
+      "review": {
+        "claimed_rights_owner": {
+          "status": "pending",
+          "value": null,
+          "evidence": []
+        },
+        "copyright_and_license": {
+          "status": "pending",
+          "copyright_notice": null,
+          "spdx": null,
+          "evidence": [
+            "source_repository.license_observation"
+          ]
+        },
+        "third_party_content": {
+          "status": "pending",
+          "observations": [
+            "The source states that the package is self-authored and uses no Olist or external rows; that claim and all linked material still require publication review."
+          ]
+        },
+        "secrets": {
+          "automated_scan": "not_run",
+          "human_review": "not_run",
+          "findings": []
+        },
+        "pii": {
+          "status": "pending",
+          "observations": [
+            "The source claims no personal identities or accounts were used; human publication review is still required."
+          ]
+        },
+        "customer_private_data": {
+          "status": "pending",
+          "observations": [
+            "The source claims this is not customer data; human publication review is still required."
+          ]
+        },
+        "company_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "raw_runtime_data": {
+          "status": "pending",
+          "observations": [
+            "The source describes static material checks and historical receipts, not a product runtime execution."
+          ]
+        },
+        "evaluator_only": {
+          "status": "pending",
+          "observations": [
+            "The source explicitly classifies this README as evaluator-only and references evaluator-only files not included in this candidate set."
+          ]
+        }
+      },
+      "publication": {
+        "decision": "pending",
+        "decided_by": null,
+        "decided_on": null,
+        "reason": null
+      }
+    },
+    {
+      "id": "fixture-validation-manifest",
+      "category": "synthetic_fixture_metadata",
+      "source_repository": "https://github.com/archerthegoat/ContextOx",
+      "source_commit": "f84c1face877aed443ccfec180959ff193f62348",
+      "source_path": "docs/contextox/validation/high-potential-customer-v0.1/manifest.json",
+      "source_sha256": "5c82be526c8812b0f5b4ee12d7efead30dba684b61763363f94051182868ccd6",
+      "destination_path": "fixtures/high-potential-customer-v0.1/manifest.json",
+      "destination_sha256": null,
+      "review": {
+        "claimed_rights_owner": {
+          "status": "pending",
+          "value": null,
+          "evidence": []
+        },
+        "copyright_and_license": {
+          "status": "pending",
+          "copyright_notice": null,
+          "spdx": null,
+          "evidence": [
+            "source_repository.license_observation"
+          ]
+        },
+        "third_party_content": {
+          "status": "pending",
+          "observations": [
+            "The source manifest claims zero third-party rows and self-authored synthetic generation; that claim has not yet been accepted as publication clearance."
+          ]
+        },
+        "secrets": {
+          "automated_scan": "not_run",
+          "human_review": "not_run",
+          "findings": []
+        },
+        "pii": {
+          "status": "pending",
+          "observations": [
+            "The source manifest claims zero real people or customer identifiers; human publication review is still required."
+          ]
+        },
+        "customer_private_data": {
+          "status": "pending",
+          "observations": [
+            "The source manifest claims synthetic data only; human publication review is still required."
+          ]
+        },
+        "company_private_data": {
+          "status": "pending",
+          "observations": []
+        },
+        "raw_runtime_data": {
+          "status": "pending",
+          "observations": [
+            "Contains static material counts, hashes, timestamps, and historical status claims; classification is not complete."
+          ]
+        },
+        "evaluator_only": {
+          "status": "pending",
+          "observations": [
+            "The source manifest classifies itself as evaluator-only and exposes hashes, counts, and names of evaluator-only files not proposed for migration."
+          ]
+        }
+      },
+      "publication": {
+        "decision": "pending",
+        "decided_by": null,
+        "decided_on": null,
+        "reason": null
+      }
+    }
+  ],
+  "summary": {
+    "candidate_count": 7,
+    "allow_count": 0,
+    "deny_count": 0,
+    "pending_count": 7,
+    "copy_authorized": false,
+    "automated_secret_scan": "not_run",
+    "human_publication_review": "not_run"
+  }
+}
