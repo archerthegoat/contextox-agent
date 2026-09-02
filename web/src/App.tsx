@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import {
   ApiRequestError,
@@ -244,8 +244,7 @@ function WorkspaceMenuItem({
   return (
     <button
       type="button"
-      role="menuitemradio"
-      aria-checked={selected}
+      aria-current={selected ? "true" : undefined}
       className={`workspace-menu-item ${selected ? "workspace-menu-item-active" : ""}`}
       onClick={() => onSelect(workspace.workspace_id)}
     >
@@ -272,6 +271,9 @@ function App() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createState, setCreateState] = useState<CreateState>({ kind: "idle" });
+  const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const createNameInputRef = useRef<HTMLInputElement>(null);
+  const restoreTriggerFocusRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,11 +346,25 @@ function App() {
     }
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        restoreTriggerFocusRef.current = true;
         setWorkspaceMenuOpen(false);
       }
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [workspaceMenuOpen]);
+
+  useEffect(() => {
+    if (createOpen && workspaceMenuOpen) {
+      createNameInputRef.current?.focus();
+    }
+  }, [createOpen, workspaceMenuOpen]);
+
+  useEffect(() => {
+    if (!workspaceMenuOpen && restoreTriggerFocusRef.current) {
+      restoreTriggerFocusRef.current = false;
+      workspaceTriggerRef.current?.focus();
+    }
   }, [workspaceMenuOpen]);
 
   const selectedWorkspace = useMemo(
@@ -426,6 +442,7 @@ function App() {
       setSelectionIssue(null);
       setCreateName("");
       setCreateOpen(false);
+      restoreTriggerFocusRef.current = true;
       setWorkspaceMenuOpen(false);
       setCreateState({ kind: "success", workspace: created });
     } catch (error: unknown) {
@@ -445,7 +462,17 @@ function App() {
     setSelectedWorkspaceId(workspaceId);
     writeSelectedWorkspaceId(workspaceId);
     setSelectionIssue(null);
+    restoreTriggerFocusRef.current = true;
     setWorkspaceMenuOpen(false);
+  }
+
+  function toggleWorkspaceMenu(): void {
+    if (workspaceMenuOpen) {
+      restoreTriggerFocusRef.current = true;
+      setWorkspaceMenuOpen(false);
+      return;
+    }
+    setWorkspaceMenuOpen(true);
   }
 
   function openCreate(): void {
@@ -486,21 +513,28 @@ function App() {
           <div className="workspace-switcher">
             <span className="panel-label">WORKSPACE</span>
             <button
+              ref={workspaceTriggerRef}
               id="workspace-switcher-button"
               type="button"
               className="workspace-button"
               aria-label={selectedWorkspace ? `Current workspace: ${selectedWorkspace.display_name}` : "Choose a workspace"}
-              aria-haspopup="menu"
               aria-expanded={workspaceMenuOpen}
-              onClick={() => setWorkspaceMenuOpen((open) => !open)}
+              aria-controls="workspace-switcher-panel"
+              onClick={toggleWorkspaceMenu}
             >
               <WorkspaceIdentity workspace={selectedWorkspace} />
             </button>
             <p className="sidebar-note">Per-tab selection · local owner · no customer data</p>
             {workspaceMenuOpen ? (
-              <div className="workspace-menu" role="menu" aria-labelledby="workspace-switcher-button">
+              <section
+                id="workspace-switcher-panel"
+                className="workspace-menu"
+                aria-labelledby="workspace-switcher-panel-title"
+              >
                 <div className="workspace-menu-heading">
-                  <span className="panel-label">AVAILABLE WORKSPACES</span>
+                  <span id="workspace-switcher-panel-title" className="panel-label">
+                    AVAILABLE WORKSPACES
+                  </span>
                   <span className="workspace-menu-count">{workspaces.length}</span>
                 </div>
                 {workspaceListState === "loading" ? (
@@ -617,7 +651,7 @@ function App() {
                     </button>
                   </form>
                 ) : null}
-              </div>
+              </section>
             ) : null}
             {createState.kind === "success" ? (
               <p className="workspace-success" role="status">
