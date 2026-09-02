@@ -1,0 +1,30 @@
+{
+  "name": "contextox-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "generate:api": "node ../scripts/openapi.mjs",
+    "check:api": "node ../scripts/openapi.mjs --check",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}
