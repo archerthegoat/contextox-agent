@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
-import { fetchWorkbench, type WorkbenchSnapshot } from "./api/client";
+import {
+  ApiRequestError,
+  createWorkspace,
+  fetchWorkbench,
+  fetchWorkspaces,
+  type WorkbenchSnapshot,
+  type Workspace,
+} from "./api/client";
 import "./styles.css";
 
 export type AreaId = "sources" | "mission" | "clarifications" | "contract";
@@ -14,14 +21,14 @@ export const AREA_CONTENT: Record<
     title: "先把证据面摆出来",
     description: "把明确授权的资料放进同一个可追溯的 Workspace，再谈业务定义。",
     emptyTitle: "还没有获准来源",
-    emptyBody: "N1 只提供入口位置。文件准入、解析、版本和 profiling 将在后续来源处理 checkpoint 实现。",
+    emptyBody: "N2a 只提供 Workspace 入口位置。文件准入、解析、版本和 profiling 将在后续来源处理 checkpoint 实现。",
   },
   mission: {
     eyebrow: "Mission / not implemented",
     title: "让每一步都能回到证据",
     description: "任务、阶段、工具收据和终态会在同一条公开事件线上留下位置。",
     emptyTitle: "Mission loop 尚未启用",
-    emptyBody: "N1 不调用模型、不执行领域工具，也不会把静态页面伪装成一次成功运行。",
+    emptyBody: "N2a 不调用模型、不执行领域工具，也不会把静态页面伪装成一次成功运行。",
   },
   clarifications: {
     eyebrow: "Clarifications / not implemented",
@@ -35,7 +42,7 @@ export const AREA_CONTENT: Record<
     title: "让批准的定义可以复用",
     description: "Contract 不是聊天摘要，而是带来源、版本、责任与验收边界的业务定义。",
     emptyTitle: "还没有可批准 Contract",
-    emptyBody: "N1 只展示目标边界。字段映射、规则、例外、版本 Diff 和批准 Context 尚未实现。",
+    emptyBody: "N2a 只展示目标边界。字段映射、规则、例外、版本 Diff 和批准 Context 尚未实现。",
   },
 };
 
@@ -54,6 +61,76 @@ const DEFAULT_AREAS: Array<{ id: AreaId; label: string; description: string; sta
 ];
 
 type ConnectionState = "connecting" | "connected" | "reconnecting";
+
+export const WORKSPACE_STORAGE_KEY = "contextox.selected_workspace_id";
+
+type WorkspaceListState = "loading" | "ready" | "error";
+
+type CreateState =
+  | { kind: "idle" }
+  | { kind: "submitting"; proposedName: string }
+  | { kind: "success"; workspace: Workspace }
+  | { kind: "error"; message: string }
+  | { kind: "reconciling"; proposedName: string }
+  | {
+      kind: "unknown";
+      proposedName: string;
+      snapshotIds: string[];
+      candidates: Workspace[];
+      acknowledged: boolean;
+      refreshError?: string;
+    };
+
+function readSelectedWorkspaceId(): string | null {
+  try {
+    const value = window.sessionStorage.getItem(WORKSPACE_STORAGE_KEY);
+    return value && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSelectedWorkspaceId(workspaceId: string | null): void {
+  try {
+    if (workspaceId) {
+      window.sessionStorage.setItem(WORKSPACE_STORAGE_KEY, workspaceId);
+    } else {
+      window.sessionStorage.removeItem(WORKSPACE_STORAGE_KEY);
+    }
+  } catch {
+    // sessionStorage can be unavailable in a privacy-restricted browser. The
+    // in-memory selection still works for this tab.
+  }
+}
+
+function shortWorkspaceId(workspaceId: string): string {
+  return workspaceId.slice(0, 8);
+}
+
+function workspaceTime(workspace: Workspace): string {
+  const date = new Date(workspace.created_at);
+  if (Number.isNaN(date.getTime())) {
+    return workspace.created_at;
+  }
+  return date.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    return error.message;
+  }
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+  return "本地 API 暂时无法读取 Workspace。";
+}
+
+function needsCreateReconciliation(error: unknown): boolean {
+  return !(error instanceof ApiRequestError) || error.code === null || error.code === "workspace_create_outcome_unknown";
+}
 
 function StatusPill({ children, tone = "muted" }: { children: string; tone?: "muted" | "accent" }) {
   return <span className={`status-pill status-pill-${tone}`}>{children}</span>;
@@ -107,14 +184,17 @@ function StageRail() {
 
 function ReadinessPanel({ snapshot }: { snapshot: WorkbenchSnapshot | null }) {
   const checks = snapshot?.readiness.checks ?? [];
+  const readinessStatus = snapshot?.readiness.status ?? "not_run";
   return (
     <section className="readiness-panel" aria-labelledby="readiness-title">
       <div className="section-heading">
         <div>
           <p className="panel-label">SYSTEM READINESS</p>
-          <h2 id="readiness-title">N1 shell</h2>
+          <h2 id="readiness-title">N2a foundation</h2>
         </div>
-        <StatusPill tone="accent">PARTIAL</StatusPill>
+        <StatusPill tone={readinessStatus === "partial" ? "accent" : "muted"}>
+          {readinessStatus.replaceAll("_", " ")}
+        </StatusPill>
       </div>
       <p className="readiness-copy">{snapshot?.readiness.label ?? "Connecting to the local API…"}</p>
       <ul className="check-list">
@@ -138,11 +218,60 @@ function ReadinessPanel({ snapshot }: { snapshot: WorkbenchSnapshot | null }) {
   );
 }
 
+function WorkspaceIdentity({ workspace }: { workspace: Workspace | null }) {
+  const initial = workspace?.display_name.trim().charAt(0).toUpperCase() ?? "?";
+  return (
+    <>
+      <span className="workspace-avatar" aria-hidden="true">{initial}</span>
+      <span className="workspace-name">{workspace?.display_name ?? "选择 Workspace"}</span>
+      <span className="workspace-short-id">
+        {workspace ? `#${shortWorkspaceId(workspace.workspace_id)}` : "未选择"}
+      </span>
+      <span className="workspace-chevron" aria-hidden="true">⌄</span>
+    </>
+  );
+}
+
+function WorkspaceMenuItem({
+  workspace,
+  selected,
+  onSelect,
+}: {
+  workspace: Workspace;
+  selected: boolean;
+  onSelect: (workspaceId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={selected}
+      className={`workspace-menu-item ${selected ? "workspace-menu-item-active" : ""}`}
+      onClick={() => onSelect(workspace.workspace_id)}
+    >
+      <span className="workspace-menu-item-main">
+        <strong>{workspace.display_name}</strong>
+        <code title={workspace.workspace_id}>{workspace.workspace_id}</code>
+      </span>
+      <time dateTime={workspace.created_at}>{workspaceTime(workspace)}</time>
+    </button>
+  );
+}
+
 function App() {
   const [activeArea, setActiveArea] = useState<AreaId>("sources");
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaceListState, setWorkspaceListState] = useState<WorkspaceListState>("loading");
+  const [workspaceListError, setWorkspaceListError] = useState<string | null>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  const [selectionIssue, setSelectionIssue] = useState<"invalid" | null>(null);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createState, setCreateState] = useState<CreateState>({ kind: "idle" });
 
   useEffect(() => {
     let cancelled = false;
@@ -164,6 +293,41 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    void fetchWorkspaces()
+      .then((data) => {
+        if (cancelled) {
+          return;
+        }
+        setWorkspaces(data);
+        setWorkspaceListState("ready");
+        setWorkspaceListError(null);
+        const savedId = readSelectedWorkspaceId();
+        if (savedId && data.some((workspace) => workspace.workspace_id === savedId)) {
+          setSelectedWorkspaceId(savedId);
+          setSelectionIssue(null);
+        } else if (savedId) {
+          writeSelectedWorkspaceId(null);
+          setSelectedWorkspaceId(null);
+          setSelectionIssue("invalid");
+        } else if (data.length === 1) {
+          const onlyWorkspace = data[0];
+          setSelectedWorkspaceId(onlyWorkspace.workspace_id);
+          writeSelectedWorkspaceId(onlyWorkspace.workspace_id);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setWorkspaceListState("error");
+          setWorkspaceListError(errorMessage(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     const source = new EventSource("/api/events");
     const handleConnected = () => setConnection("connected");
     source.addEventListener("connected", handleConnected);
@@ -174,8 +338,130 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!workspaceMenuOpen) {
+      return;
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setWorkspaceMenuOpen(false);
+      }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [workspaceMenuOpen]);
+
+  const selectedWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.workspace_id === selectedWorkspaceId) ?? null,
+    [selectedWorkspaceId, workspaces],
+  );
+
+  async function refreshWorkspaces(): Promise<Workspace[] | null> {
+    setWorkspaceListState("loading");
+    try {
+      const data = await fetchWorkspaces();
+      setWorkspaces(data);
+      setWorkspaceListState("ready");
+      setWorkspaceListError(null);
+      return data;
+    } catch (error: unknown) {
+      setWorkspaceListState("error");
+      setWorkspaceListError(errorMessage(error));
+      return null;
+    }
+  }
+
+  async function reconcileCreate(snapshotIds: string[], proposedName: string): Promise<void> {
+    setCreateState({ kind: "reconciling", proposedName });
+    try {
+      const latest = await fetchWorkspaces();
+      const snapshot = new Set(snapshotIds);
+      const candidates = latest.filter((workspace) => !snapshot.has(workspace.workspace_id));
+      setWorkspaces(latest);
+      setWorkspaceListState("ready");
+      setWorkspaceListError(null);
+      setCreateState({
+        kind: "unknown",
+        proposedName,
+        snapshotIds,
+        candidates,
+        acknowledged: false,
+      });
+    } catch (error: unknown) {
+      setCreateState({
+        kind: "unknown",
+        proposedName,
+        snapshotIds,
+        candidates: [],
+        acknowledged: false,
+        refreshError: errorMessage(error),
+      });
+    }
+  }
+
+  async function handleCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (createState.kind === "submitting" || createState.kind === "reconciling") {
+      return;
+    }
+    if (createState.kind === "unknown" && !createState.acknowledged) {
+      return;
+    }
+    const proposedName = createName;
+    const snapshotIds = workspaces.map((workspace) => workspace.workspace_id);
+    setCreateState({ kind: "submitting", proposedName });
+    try {
+      const created = await createWorkspace(proposedName);
+      setWorkspaces((current) =>
+        [...current.filter((workspace) => workspace.workspace_id !== created.workspace_id), created].sort(
+          (left, right) =>
+            left.created_at.localeCompare(right.created_at) ||
+            left.workspace_id.localeCompare(right.workspace_id),
+        ),
+      );
+      setWorkspaceListState("ready");
+      setWorkspaceListError(null);
+      setSelectedWorkspaceId(created.workspace_id);
+      writeSelectedWorkspaceId(created.workspace_id);
+      setSelectionIssue(null);
+      setCreateName("");
+      setCreateOpen(false);
+      setWorkspaceMenuOpen(false);
+      setCreateState({ kind: "success", workspace: created });
+    } catch (error: unknown) {
+      if (needsCreateReconciliation(error)) {
+        setCreateOpen(true);
+        setWorkspaceMenuOpen(true);
+        await reconcileCreate(snapshotIds, proposedName);
+        return;
+      }
+      setCreateOpen(true);
+      setWorkspaceMenuOpen(true);
+      setCreateState({ kind: "error", message: errorMessage(error) });
+    }
+  }
+
+  function selectWorkspace(workspaceId: string): void {
+    setSelectedWorkspaceId(workspaceId);
+    writeSelectedWorkspaceId(workspaceId);
+    setSelectionIssue(null);
+    setWorkspaceMenuOpen(false);
+  }
+
+  function openCreate(): void {
+    setCreateOpen(true);
+    setWorkspaceMenuOpen(true);
+    if (createState.kind === "success" || createState.kind === "error") {
+      setCreateState({ kind: "idle" });
+    }
+  }
+
   const active = useMemo(() => AREA_CONTENT[activeArea], [activeArea]);
   const areas = snapshot?.areas ?? DEFAULT_AREAS;
+  const createSubmitBlocked =
+    createState.kind === "submitting" ||
+    createState.kind === "reconciling" ||
+    (createState.kind === "unknown" && !createState.acknowledged);
 
   return (
     <div className="app-shell">
@@ -199,12 +485,145 @@ function App() {
         <aside className="sidebar" aria-label="Workbench navigation">
           <div className="workspace-switcher">
             <span className="panel-label">WORKSPACE</span>
-            <button type="button" className="workspace-button" aria-label="Current workspace: local shell">
-              <span className="workspace-avatar">L</span>
-              <span className="workspace-name">local shell</span>
-              <span className="workspace-chevron" aria-hidden="true">⌄</span>
+            <button
+              id="workspace-switcher-button"
+              type="button"
+              className="workspace-button"
+              aria-label={selectedWorkspace ? `Current workspace: ${selectedWorkspace.display_name}` : "Choose a workspace"}
+              aria-haspopup="menu"
+              aria-expanded={workspaceMenuOpen}
+              onClick={() => setWorkspaceMenuOpen((open) => !open)}
+            >
+              <WorkspaceIdentity workspace={selectedWorkspace} />
             </button>
-            <p className="sidebar-note">Single local owner · no customer data</p>
+            <p className="sidebar-note">Per-tab selection · local owner · no customer data</p>
+            {workspaceMenuOpen ? (
+              <div className="workspace-menu" role="menu" aria-labelledby="workspace-switcher-button">
+                <div className="workspace-menu-heading">
+                  <span className="panel-label">AVAILABLE WORKSPACES</span>
+                  <span className="workspace-menu-count">{workspaces.length}</span>
+                </div>
+                {workspaceListState === "loading" ? (
+                  <p className="workspace-inline-state" role="status">正在读取 Workspace…</p>
+                ) : workspaceListState === "error" ? (
+                  <div className="workspace-inline-error" role="alert">
+                    <strong>Workspace 列表不可用</strong>
+                    <p>{workspaceListError ?? "本地 API 暂时无法读取 Workspace。"}</p>
+                    <button
+                      type="button"
+                      className="workspace-secondary-button"
+                      onClick={() => void refreshWorkspaces()}
+                    >
+                      重新读取
+                    </button>
+                  </div>
+                ) : workspaces.length === 0 ? (
+                  <div className="workspace-empty-state">
+                    <strong>还没有 Workspace</strong>
+                    <p>先创建一个本地 Workspace，选择会只保存在当前浏览器标签页。</p>
+                  </div>
+                ) : (
+                  <div className="workspace-menu-list" role="group" aria-label="Workspace list">
+                    {workspaces.map((workspace) => (
+                      <WorkspaceMenuItem
+                        key={workspace.workspace_id}
+                        workspace={workspace}
+                        selected={workspace.workspace_id === selectedWorkspaceId}
+                        onSelect={selectWorkspace}
+                      />
+                    ))}
+                  </div>
+                )}
+                {selectionIssue === "invalid" ? (
+                  <div className="workspace-inline-error" role="alert">
+                    <strong>当前标签页的 Workspace 选择已失效</strong>
+                    <p>已清除无效 ID，请从列表中明确选择一个 Workspace。</p>
+                  </div>
+                ) : null}
+                <button type="button" className="workspace-create-link" onClick={openCreate}>
+                  <span aria-hidden="true">＋</span>
+                  新建 Workspace
+                </button>
+                {createOpen ? (
+                  <form className="workspace-create-form" onSubmit={(event) => void handleCreate(event)}>
+                    <label htmlFor="workspace-name">Workspace 名称</label>
+                    <input
+                      id="workspace-name"
+                      name="display_name"
+                      type="text"
+                      value={createName}
+                      maxLength={80}
+                      autoComplete="off"
+                      onChange={(event) => setCreateName(event.target.value)}
+                      disabled={createState.kind === "submitting" || createState.kind === "reconciling"}
+                    />
+                    <p className="workspace-form-help">首尾空白会裁剪；控制字符会被拒绝。</p>
+                    {createState.kind === "error" ? (
+                      <p className="workspace-form-error" role="alert">{createState.message}</p>
+                    ) : null}
+                    {createState.kind === "reconciling" ? (
+                      <div className="workspace-unknown-state" role="status">
+                        <strong>正在核对本次创建结果…</strong>
+                        <p>服务没有给出可确认的响应，正在重新读取 Workspace 列表。</p>
+                      </div>
+                    ) : null}
+                    {createState.kind === "unknown" ? (
+                      <div className="workspace-unknown-state" role="alert">
+                        <strong>创建结果未知，当前操作已阻塞</strong>
+                        <p>不要依据名称或单一候选自动判断是否创建成功。请核对下面相对请求前快照新增的 ID 与创建时间。</p>
+                        {createState.candidates.length > 0 ? (
+                          <ul className="workspace-candidate-list">
+                            {createState.candidates.map((workspace) => (
+                              <li key={workspace.workspace_id}>
+                                <code>{workspace.workspace_id}</code>
+                                <time dateTime={workspace.created_at}>{workspace.created_at}</time>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p>本次核对没有发现新增 Workspace；这仍不能证明创建失败。</p>
+                        )}
+                        {createState.refreshError ? (
+                          <p className="workspace-form-error">列表核对也未完成：{createState.refreshError}</p>
+                        ) : null}
+                        <div className="workspace-unknown-actions">
+                          <button
+                            type="button"
+                            className="workspace-secondary-button"
+                            onClick={() => void reconcileCreate(createState.snapshotIds, createState.proposedName)}
+                          >
+                            再次核对列表
+                          </button>
+                          {!createState.acknowledged ? (
+                            <button
+                              type="button"
+                              className="workspace-ack-button"
+                              onClick={() => setCreateState({ ...createState, acknowledged: true })}
+                            >
+                              我已手动核对新增列表
+                            </button>
+                          ) : (
+                            <span className="workspace-acknowledged">已核对；下一次创建需由你重新提交</span>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                    <button
+                      type="submit"
+                      className="workspace-submit-button"
+                      disabled={createSubmitBlocked}
+                    >
+                      {createState.kind === "submitting" ? "创建中…" : "创建 Workspace"}
+                    </button>
+                  </form>
+                ) : null}
+              </div>
+            ) : null}
+            {createState.kind === "success" ? (
+              <p className="workspace-success" role="status">
+                已创建并选中 #{shortWorkspaceId(createState.workspace.workspace_id)}
+              </p>
+            ) : null}
           </div>
 
           <nav className="area-nav" aria-label="Workbench areas">
@@ -231,10 +650,10 @@ function App() {
               <span className="boundary-icon" aria-hidden="true">—</span>
               <div>
                 <strong>Agent boundary</strong>
-                <p>No provider configured in N1</p>
+                <p>No provider configured in N2a</p>
               </div>
             </div>
-            <span className="version-label">v0.1.0 · N1 SHELL</span>
+            <span className="version-label">v0.1.0 · N2a FOUNDATION</span>
           </div>
         </aside>
 
@@ -247,7 +666,7 @@ function App() {
             </div>
             <div className="intro-status">
               <span className="intro-status-label">PRODUCT STATUS</span>
-              <StatusPill tone="accent">PARTIAL · N1</StatusPill>
+              <StatusPill tone="accent">PARTIAL · N2a</StatusPill>
             </div>
           </div>
 
@@ -274,7 +693,7 @@ function App() {
                 <span className="section-index">0 / 4 active</span>
               </div>
               <StageRail />
-              <p className="panel-footnote">N1 只铺设可读的流程骨架；每个阶段的真实行为会在对应 checkpoint 单独验收。</p>
+              <p className="panel-footnote">N2a 只铺设 Workspace identity 的可读边界；每个后续阶段会单独验收。</p>
             </section>
 
             <section className="boundary-panel" aria-labelledby="boundary-title">
@@ -312,7 +731,7 @@ function App() {
             <p className="panel-label">NEXT CHECKPOINT</p>
             <h2 id="next-title">Source admission</h2>
             <p>为授权资料建立 Workspace 隔离、版本与确定性解析边界。</p>
-            <span className="next-marker">N2 · NOT STARTED</span>
+            <span className="next-marker">N2b · NOT STARTED</span>
           </section>
         </aside>
       </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AREA_CONTENT } from "./App";
+import { AREA_CONTENT, WORKSPACE_STORAGE_KEY } from "./App";
 
 describe("Workbench content boundaries", () => {
   it("keeps the four approved areas explicit", () => {
@@ -15,5 +15,10 @@ describe("Workbench content boundaries", () => {
   it("does not describe N1 as a completed product", () => {
     expect(Object.values(AREA_CONTENT).every((area) => area.emptyBody.length > 20)).toBe(true);
     expect(Object.values(AREA_CONTENT).some((area) => area.emptyBody.includes("尚未实现"))).toBe(true);
+  });
+
+  it("keeps workspace selection scoped to the browser tab", () => {
+    expect(WORKSPACE_STORAGE_KEY).toContain("selected_workspace_id");
+    expect(WORKSPACE_STORAGE_KEY).not.toContain("localStorage");
   });
 });
