@@ -21,7 +21,8 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
 
 class CliTests(unittest.TestCase):
     def test_doctor_reports_n1_scope_and_pending_boundaries(self) -> None:
-        result = run_cli("doctor", "--json", "--static-dir", "/tmp/contextox-n1-no-assets")
+        with tempfile.TemporaryDirectory(prefix="contextox-cli-no-assets-") as directory:
+            result = run_cli("doctor", "--json", "--static-dir", directory)
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(report["scope"], "n1")

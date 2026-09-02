@@ -297,7 +297,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EventEnvelope"];
                     "text/event-stream": string;
                 };
             };

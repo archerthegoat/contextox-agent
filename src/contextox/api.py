@@ -231,6 +231,7 @@ def create_app(
     @app.get(
         "/api/events",
         response_model=EventEnvelope,
+        response_class=StreamingResponse,
         responses={
             200: {
                 "description": "A connected SSE stream with public event envelopes.",
