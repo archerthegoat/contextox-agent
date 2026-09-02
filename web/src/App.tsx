@@ -582,6 +582,7 @@ function App() {
                   <form className="workspace-create-form" onSubmit={(event) => void handleCreate(event)}>
                     <label htmlFor="workspace-name">Workspace 名称</label>
                     <input
+                      ref={createNameInputRef}
                       id="workspace-name"
                       name="display_name"
                       type="text"
