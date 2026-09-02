@@ -5,12 +5,14 @@ import {
   AREA_CONTENT,
   AREA_NAV,
   AREA_NAV_PRESENTATION,
+  DEMO_MESSAGES,
+  OBJECT_TABS,
   navigationForAreas,
 } from "./App";
 import type { WorkbenchSnapshot } from "./api/client";
 
-describe("数契 Workbench content boundaries", () => {
-  it("keeps the four user-facing areas in their navigation order", () => {
+describe("ContextOx Workbench v3 content boundaries", () => {
+  it("keeps the four primary modules in the approved rail order", () => {
     expect(AREA_NAV.map((area) => area.id)).toEqual([
       "sources",
       "mission",
@@ -19,9 +21,9 @@ describe("数契 Workbench content boundaries", () => {
     ]);
     expect(AREA_NAV.map((area) => area.label)).toEqual([
       "Sources",
-      "Missions",
+      "Mission",
       "Clarifications",
-      "Contracts",
+      "Contract",
     ]);
   });
 
@@ -37,27 +39,33 @@ describe("数契 Workbench content boundaries", () => {
     ]);
   });
 
-  it("keeps the Sources empty state copy exact", () => {
-    expect(AREA_CONTENT.sources).toEqual({
-      label: "Sources",
-      title: "添加第一份授权资料",
-      description: "数契只会处理你明确选择的本地资料。",
-      emptyTitle: "暂无资料",
-      emptyBody: "来源导入将在下一阶段开放。",
-    });
+  it("keeps the Mission relationship demo grounded in synthetic objects", () => {
+    expect(OBJECT_TABS).toEqual([
+      { id: "mission", label: "统一-高潜客户定义" },
+      { id: "relationship", label: "客户粒度关系" },
+    ]);
+    expect(DEMO_MESSAGES.map(({ role }) => role)).toEqual(["agent", "user", "agent"]);
+    expect(DEMO_MESSAGES.some(({ body }) => body.includes("FDE"))).toBe(false);
   });
 
-  it("keeps every area explicit and truthful", () => {
+  it("keeps every primary module explicit and truthful", () => {
     expect(Object.values(AREA_CONTENT)).toHaveLength(4);
     expect(Object.values(AREA_CONTENT).every((area) => area.emptyTitle && area.emptyBody)).toBe(true);
+    expect(Object.values(AREA_CONTENT).map((area) => area.label)).toEqual([
+      "Sources",
+      "Mission",
+      "Clarifications",
+      "Contract",
+    ]);
   });
 
-  it("keeps the Agent idle state copy and composer placeholder exact", () => {
+  it("labels the Agent composer as disabled demo mode and the human speaker as 用户", () => {
     expect(AGENT_COPY).toEqual({
-      title: "Agent",
-      body: "创建 Mission 后，数契会在这里持续协作。",
-      availability: "即将开放",
-      placeholder: "等待 Mission",
+      title: "演示对话",
+      mode: "演示模式",
+      composerPlaceholder: "演示模式，暂不可发送",
     });
+    expect(JSON.stringify(AGENT_COPY)).not.toContain("FDE");
+    expect(DEMO_MESSAGES.find(({ role }) => role === "user")?.role).toBe("user");
   });
 });
