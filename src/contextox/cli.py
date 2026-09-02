@@ -9,6 +9,7 @@ from typing import Sequence
 from contextox import __version__
 from contextox.api import create_app
 from contextox.models import DoctorCheck, DoctorReport
+from contextox.store import WorkspaceStore
 
 
 EXPECTED_PYTHON = "3.14.7"
@@ -26,7 +27,7 @@ def _package_version(name: str) -> str | None:
         return None
 
 
-def _doctor(static_dir: Path) -> DoctorReport:
+def _doctor(static_dir: Path, data_dir: Path | None = None) -> DoctorReport:
     checks: list[DoctorCheck] = []
     python_actual = platform.python_version()
     checks.append(
@@ -59,16 +60,23 @@ def _doctor(static_dir: Path) -> DoctorReport:
         )
     app = create_app(static_dir=static_dir)
     paths = app.openapi().get("paths", {})
-    required_paths = {"/api/health", "/api/readiness", "/api/workbench", "/api/events"}
+    required_paths = {
+        "/api/health",
+        "/api/readiness",
+        "/api/workbench",
+        "/api/events",
+        "/api/workspaces",
+        "/api/workspaces/{workspace_id}",
+    }
     schema_ready = required_paths.issubset(paths)
     checks.append(
         DoctorCheck(
             key="schema",
             status="ready" if schema_ready else "blocked",
             detail=(
-                "OpenAPI includes the N1 public seams."
+                "OpenAPI includes the N2a public seams."
                 if schema_ready
-                else "The generated API schema is missing an N1 public seam."
+                else "The generated API schema is missing an N2a public seam."
             ),
             actual=str(len(paths)),
             expected=str(len(required_paths)),
@@ -88,29 +96,50 @@ def _doctor(static_dir: Path) -> DoctorReport:
             expected="present",
         )
     )
-    checks.extend(
-        [
+    if data_dir is None:
+        store_checks = [
             DoctorCheck(
-                key="workspace_store",
-                status="not_implemented",
-                detail="Workspace persistence begins in the source-admission checkpoint.",
-            ),
+                key=key,
+                status="not_run",
+                detail="Pass --data-dir to inspect the N2a Workspace store.",
+            )
+            for key in (
+                "workspace_store_configured",
+                "workspace_store_open",
+                "workspace_store_schema",
+                "workspace_store_readwrite",
+            )
+        ]
+    else:
+        store_checks = [
+            DoctorCheck(
+                key=diagnostic.key,
+                status=diagnostic.status,
+                detail=diagnostic.detail,
+                actual=diagnostic.actual,
+                expected=diagnostic.expected,
+            )
+            for diagnostic in WorkspaceStore.diagnose(data_dir)
+        ]
+    checks.extend(
+        store_checks
+        + [
             DoctorCheck(
                 key="provider",
                 status="not_implemented",
-                detail="No model provider is configured or called in N1.",
+                detail="No model provider is configured or called in N2a.",
             ),
             DoctorCheck(
                 key="customer_data",
                 status="not_implemented",
-                detail="N1 accepts no customer files or private payloads.",
+                detail="N2a accepts no customer files or private payloads.",
             ),
         ]
     )
     blocking = any(check.status == "blocked" for check in checks)
     return DoctorReport(
         status="blocked" if blocking else "partial",
-        scope="n1",
+        scope="n2a",
         checks=checks,
     )
 
@@ -133,13 +162,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command")
 
-    doctor = commands.add_parser("doctor", help="Inspect N1 local readiness.")
+    doctor = commands.add_parser("doctor", help="Inspect N2a local readiness.")
     doctor.add_argument("--json", action="store_true", help="Print JSON output.")
     doctor.add_argument(
         "--static-dir",
         type=Path,
         default=Path.cwd() / "web" / "dist",
         help=argparse.SUPPRESS,
+    )
+    doctor.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Inspect an existing Workspace data directory without creating it.",
     )
 
     start = commands.add_parser("start", help="Start the local Workbench server.")
@@ -158,7 +192,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command == "doctor":
-        report = _doctor(args.static_dir.resolve())
+        report = _doctor(
+            args.static_dir.resolve(),
+            args.data_dir.resolve() if args.data_dir else None,
+        )
         _print_doctor(report, args.json)
         return 0 if report.status != "blocked" else 1
     if args.command == "openapi":
