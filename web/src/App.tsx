@@ -1,148 +1,198 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { fetchWorkbench, type WorkbenchSnapshot } from "./api/client";
 import "./styles.css";
 
 export type AreaId = "sources" | "mission" | "clarifications" | "contract";
 
-export const AREA_CONTENT: Record<
-  AreaId,
-  { eyebrow: string; title: string; description: string; emptyTitle: string; emptyBody: string }
-> = {
+export type AreaContent = {
+  label: string;
+  title: string;
+  description: string;
+  emptyTitle: string;
+  emptyBody: string;
+};
+
+export const AREA_CONTENT: Record<AreaId, AreaContent> = {
   sources: {
-    eyebrow: "Sources / empty",
-    title: "先把证据面摆出来",
-    description: "把明确授权的资料放进同一个可追溯的 Workspace，再谈业务定义。",
-    emptyTitle: "还没有获准来源",
-    emptyBody: "N1 只提供入口位置。文件准入、解析、版本和 profiling 将在后续来源处理 checkpoint 实现。",
+    label: "Sources",
+    title: "添加第一份授权资料",
+    description: "数契只会处理你明确选择的本地资料。",
+    emptyTitle: "暂无资料",
+    emptyBody: "来源导入将在下一阶段开放。",
   },
   mission: {
-    eyebrow: "Mission / not implemented",
-    title: "让每一步都能回到证据",
-    description: "任务、阶段、工具收据和终态会在同一条公开事件线上留下位置。",
-    emptyTitle: "Mission loop 尚未启用",
-    emptyBody: "N1 不调用模型、不执行领域工具，也不会把静态页面伪装成一次成功运行。",
+    label: "Missions",
+    title: "Mission 尚未创建",
+    description: "从明确的目标和资料开始，让每个任务都有清晰的边界。",
+    emptyTitle: "暂无 Mission",
+    emptyBody: "任务入口将在下一阶段开放。",
   },
   clarifications: {
-    eyebrow: "Clarifications / not implemented",
+    label: "Clarifications",
     title: "把未知问成能回答的问题",
-    description: "澄清应说明为什么要问、谁适合回答，以及答案会改变哪一条定义。",
+    description: "把需要确认的问题交给合适的人，再回到清晰的定义。",
     emptyTitle: "暂无澄清请求",
-    emptyBody: "澄清表单、回答者路由与冲突状态将在 Contract 闭环前实现。",
+    emptyBody: "澄清入口将在下一阶段开放。",
   },
   contract: {
-    eyebrow: "Contract / not implemented",
+    label: "Contracts",
     title: "让批准的定义可以复用",
-    description: "Contract 不是聊天摘要，而是带来源、版本、责任与验收边界的业务定义。",
-    emptyTitle: "还没有可批准 Contract",
-    emptyBody: "N1 只展示目标边界。字段映射、规则、例外、版本 Diff 和批准 Context 尚未实现。",
+    description: "让已确认的定义保留来源、版本和责任边界。",
+    emptyTitle: "暂无 Contract",
+    emptyBody: "Contract 入口将在下一阶段开放。",
   },
 };
 
-const STAGES = [
-  { number: "01", label: "Material", detail: "授权资料" },
-  { number: "02", label: "Evidence", detail: "确定性证据" },
-  { number: "03", label: "Decision", detail: "人的裁决" },
-  { number: "04", label: "Contract", detail: "可复用定义" },
-] as const;
+export type AreaNavigationItem = {
+  id: AreaId;
+  label: string;
+  description: string;
+};
 
-const DEFAULT_AREAS: Array<{ id: AreaId; label: string; description: string; status: string }> = [
-  { id: "sources", label: "Sources", description: "授权资料、结构与证据的入口。", status: "not_implemented" },
-  { id: "mission", label: "Mission", description: "任务阶段、工具收据与公开事件。", status: "not_implemented" },
-  { id: "clarifications", label: "Clarifications", description: "把未知变成可回答、可路由的问题。", status: "not_implemented" },
-  { id: "contract", label: "Contract", description: "有来源、版本与审批边界的业务定义。", status: "not_implemented" },
+export const AREA_NAV_PRESENTATION: Record<AreaId, Omit<AreaNavigationItem, "id">> = {
+  sources: { label: "Sources", description: "授权资料与结构化输入" },
+  mission: { label: "Missions", description: "任务阶段与公开事件" },
+  clarifications: { label: "Clarifications", description: "未决问题与冲突" },
+  contract: { label: "Contracts", description: "协议记录与版本历史" },
+};
+
+export const AREA_NAV: AreaNavigationItem[] = [
+  { id: "sources", ...AREA_NAV_PRESENTATION.sources },
+  { id: "mission", ...AREA_NAV_PRESENTATION.mission },
+  { id: "clarifications", ...AREA_NAV_PRESENTATION.clarifications },
+  { id: "contract", ...AREA_NAV_PRESENTATION.contract },
 ];
 
-type ConnectionState = "connecting" | "connected" | "reconnecting";
-
-function StatusPill({ children, tone = "muted" }: { children: string; tone?: "muted" | "accent" }) {
-  return <span className={`status-pill status-pill-${tone}`}>{children}</span>;
+export function navigationForAreas(areas: WorkbenchSnapshot["areas"]): AreaNavigationItem[] {
+  return areas.map(({ id }) => ({ id, ...AREA_NAV_PRESENTATION[id] }));
 }
 
-function LoadingPanel() {
+export const AGENT_COPY = {
+  title: "Agent",
+  body: "创建 Mission 后，数契会在这里持续协作。",
+  availability: "即将开放",
+  placeholder: "等待 Mission",
+} as const;
+
+const BRAND_MARK_URL = new URL("./assets/contextox-mark.png", import.meta.url).href;
+const SOURCE_EMPTY_URL = new URL("./assets/source-empty.png", import.meta.url).href;
+const AGENT_IDLE_URL = new URL("./assets/agent-idle.png", import.meta.url).href;
+
+type ApiState = "loading" | "ready" | "error";
+type ConnectionState = "connecting" | "connected" | "reconnecting";
+
+function Brand() {
   return (
-    <div className="loading-panel" aria-live="polite">
-      <div className="skeleton skeleton-kicker" />
-      <div className="skeleton skeleton-title" />
-      <div className="skeleton skeleton-copy" />
-      <div className="skeleton skeleton-copy skeleton-copy-short" />
+    <a className="wordmark" href="/" aria-label="数契 ContextOx">
+      <img className="wordmark-mark" src={BRAND_MARK_URL} alt="" aria-hidden="true" />
+      <span className="wordmark-cn">数契</span>
+      <span className="wordmark-en">ContextOx</span>
+    </a>
+  );
+}
+
+function WorkspaceSummary() {
+  return (
+    <div className="workspace-summary" aria-label="当前工作区">
+      <span className="workspace-summary-title">本地工作区</span>
+      <span className="workspace-summary-detail">个人空间</span>
     </div>
   );
 }
 
-function EmptyPanel({ area }: { area: AreaId }) {
-  const content = AREA_CONTENT[area];
+function Sidebar({
+  areas,
+  activeArea,
+  onAreaChange,
+}: {
+  areas: AreaNavigationItem[];
+  activeArea: AreaId;
+  onAreaChange: (area: AreaId) => void;
+}) {
   return (
-    <section className="empty-panel" aria-labelledby="empty-panel-title">
-      <div className="empty-mark" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
-      <div>
-        <p className="panel-label">CURRENT STATE</p>
-        <h3 id="empty-panel-title">{content.emptyTitle}</h3>
+    <aside className="sidebar" aria-label="Workspace">
+      <div className="sidebar-heading">Workspace</div>
+      <WorkspaceSummary />
+      <nav className="area-nav" aria-label="Workbench areas">
+        <p className="nav-heading">领域</p>
+        <div className="area-nav-list">
+          {areas.map((area) => {
+            const isActive = activeArea === area.id;
+            return (
+              <button
+                key={area.id}
+                type="button"
+                className={`area-link${isActive ? " area-link-active" : ""}`}
+                aria-current={isActive ? "page" : undefined}
+                onClick={() => onAreaChange(area.id)}
+              >
+                <span className="area-link-label">{area.label}</span>
+                <span className="area-link-description">{area.description}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+    </aside>
+  );
+}
+
+function LoadingState() {
+  return (
+    <section className="state-panel loading-state" aria-label="正在读取工作区" aria-live="polite">
+      <div className="skeleton skeleton-heading" />
+      <div className="skeleton skeleton-copy" />
+      <div className="skeleton skeleton-copy skeleton-copy-short" />
+    </section>
+  );
+}
+
+function ErrorState() {
+  return (
+    <section className="state-panel error-state" role="alert">
+      <p className="state-kicker">暂时无法读取</p>
+      <h2>本地工作区暂时不可用</h2>
+      <p>请稍后再试。</p>
+    </section>
+  );
+}
+
+function EmptyState({ area, content }: { area: AreaId; content: AreaContent }) {
+  return (
+    <section className="empty-state" aria-labelledby="empty-state-title">
+      {area === "sources" ? <img className="empty-state-image" src={SOURCE_EMPTY_URL} alt="" aria-hidden="true" /> : null}
+      <div className="empty-state-copy">
+        <h2 id="empty-state-title">{content.emptyTitle}</h2>
         <p>{content.emptyBody}</p>
       </div>
     </section>
   );
 }
 
-function StageRail() {
+function AgentPanel() {
   return (
-    <ol className="stage-rail" aria-label="ContextOx definition loop">
-      {STAGES.map((stage, index) => (
-        <li key={stage.number} className="stage-item">
-          <span className="stage-index">{stage.number}</span>
-          <span className="stage-copy">
-            <strong>{stage.label}</strong>
-            <small>{stage.detail}</small>
-          </span>
-          {index < STAGES.length - 1 ? <span className="stage-line" aria-hidden="true" /> : null}
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function ReadinessPanel({ snapshot }: { snapshot: WorkbenchSnapshot | null }) {
-  const checks = snapshot?.readiness.checks ?? [];
-  return (
-    <section className="readiness-panel" aria-labelledby="readiness-title">
-      <div className="section-heading">
-        <div>
-          <p className="panel-label">SYSTEM READINESS</p>
-          <h2 id="readiness-title">N1 shell</h2>
-        </div>
-        <StatusPill tone="accent">PARTIAL</StatusPill>
+    <aside className="agent-panel" aria-label="Agent">
+      <div className="agent-panel-heading">
+        <h2>{AGENT_COPY.title}</h2>
       </div>
-      <p className="readiness-copy">{snapshot?.readiness.label ?? "Connecting to the local API…"}</p>
-      <ul className="check-list">
-        {checks.length > 0 ? (
-          checks.map((check) => (
-            <li key={check.key}>
-              <span className={`check-indicator check-${check.status}`} aria-hidden="true" />
-              <span>{check.key.replaceAll("_", " ")}</span>
-              <span className="check-status">{check.status.replaceAll("_", " ")}</span>
-            </li>
-          ))
-        ) : (
-          <li>
-            <span className="check-indicator check-not-run" aria-hidden="true" />
-            <span>api</span>
-            <span className="check-status">connecting</span>
-          </li>
-        )}
-      </ul>
-    </section>
+      <div className="agent-empty-state">
+        <img className="agent-idle-image" src={AGENT_IDLE_URL} alt="" aria-hidden="true" />
+        <p>{AGENT_COPY.body}</p>
+        <span className="agent-availability">{AGENT_COPY.availability}</span>
+      </div>
+      <div className="agent-composer">
+        <input type="text" disabled placeholder={AGENT_COPY.placeholder} aria-label={AGENT_COPY.placeholder} />
+      </div>
+    </aside>
   );
 }
 
 function App() {
   const [activeArea, setActiveArea] = useState<AreaId>("sources");
+  const [apiState, setApiState] = useState<ApiState>("loading");
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [connection, setConnection] = useState<ConnectionState>("connecting");
+  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
 
   useEffect(() => {
     let cancelled = false;
@@ -150,14 +200,15 @@ function App() {
       .then((data) => {
         if (!cancelled) {
           setSnapshot(data);
-          setLoadError(null);
+          setApiState("ready");
         }
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : "The local API could not be read.");
+          setApiState("error");
         }
       });
+
     return () => {
       cancelled = true;
     };
@@ -165,156 +216,49 @@ function App() {
 
   useEffect(() => {
     const source = new EventSource("/api/events");
-    const handleConnected = () => setConnection("connected");
+    const handleConnected = () => setConnectionState("connected");
+    const handleReconnect = () => setConnectionState("reconnecting");
+
     source.addEventListener("connected", handleConnected);
-    source.onerror = () => setConnection("reconnecting");
+    source.onerror = handleReconnect;
+
     return () => {
       source.removeEventListener("connected", handleConnected);
       source.close();
     };
   }, []);
 
-  const active = useMemo(() => AREA_CONTENT[activeArea], [activeArea]);
-  const areas = snapshot?.areas ?? DEFAULT_AREAS;
+  const content = AREA_CONTENT[activeArea];
+  const areas = snapshot ? navigationForAreas(snapshot.areas) : AREA_NAV;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-api-state={apiState} data-connection-state={connectionState}>
       <header className="topbar">
-        <a className="wordmark" href="/" aria-label="ContextOx Workbench home">
-          <span className="wordmark-mark" aria-hidden="true">CX</span>
-          <span>ContextOx</span>
-          <span className="wordmark-product">WORKBENCH</span>
-        </a>
+        <div className="topbar-brand">
+          <Brand />
+        </div>
+        <div className="topbar-context">Workspace</div>
         <div className="topbar-meta">
-          <span className="connection-state">
-            <span className={`connection-dot connection-${connection}`} aria-hidden="true" />
-            SSE {connection}
-          </span>
-          <span className="topbar-divider" aria-hidden="true" />
-          <span className="local-badge">127.0.0.1 / LOCAL ONLY</span>
+          <span className="local-cue">本地</span>
         </div>
       </header>
 
       <div className="workspace-layout">
-        <aside className="sidebar" aria-label="Workbench navigation">
-          <div className="workspace-switcher">
-            <span className="panel-label">WORKSPACE</span>
-            <button type="button" className="workspace-button" aria-label="Current workspace: local shell">
-              <span className="workspace-avatar">L</span>
-              <span className="workspace-name">local shell</span>
-              <span className="workspace-chevron" aria-hidden="true">⌄</span>
-            </button>
-            <p className="sidebar-note">Single local owner · no customer data</p>
-          </div>
+        <Sidebar areas={areas} activeArea={activeArea} onAreaChange={setActiveArea} />
 
-          <nav className="area-nav" aria-label="Workbench areas">
-            <p className="panel-label">AREAS</p>
-            {areas.map((area) => (
-              <button
-                key={area.id}
-                type="button"
-                className={`area-link ${activeArea === area.id ? "area-link-active" : ""}`}
-                aria-current={activeArea === area.id ? "page" : undefined}
-                onClick={() => setActiveArea(area.id)}
-              >
-                <span className="area-link-text">
-                  <strong>{area.label}</strong>
-                  <small>{area.description}</small>
-                </span>
-                <span className="area-status">{area.status === "ready" ? "READY" : "N/I"}</span>
-              </button>
-            ))}
-          </nav>
-
-          <div className="sidebar-footer">
-            <div className="agent-boundary">
-              <span className="boundary-icon" aria-hidden="true">—</span>
-              <div>
-                <strong>Agent boundary</strong>
-                <p>No provider configured in N1</p>
-              </div>
-            </div>
-            <span className="version-label">v0.1.0 · N1 SHELL</span>
-          </div>
-        </aside>
-
-        <main className="main-content">
+        <main className="main-content" aria-labelledby="area-title">
           <div className="content-intro">
-            <div>
-              <p className="eyebrow">{active.eyebrow}</p>
-              <h1>{active.title}</h1>
-              <p className="intro-copy">{active.description}</p>
-            </div>
-            <div className="intro-status">
-              <span className="intro-status-label">PRODUCT STATUS</span>
-              <StatusPill tone="accent">PARTIAL · N1</StatusPill>
-            </div>
+            <p className="breadcrumb">{content.label}</p>
+            <h1 id="area-title">{content.title}</h1>
+            <p className="intro-copy">{content.description}</p>
           </div>
 
-          {loadError ? (
-            <section className="error-panel" role="alert">
-              <p className="panel-label">LOCAL API ERROR</p>
-              <h2>页面没有拿到当前快照</h2>
-              <p>{loadError}</p>
-              <p className="error-help">请确认服务由 `contextox start` 在 127.0.0.1 上启动。</p>
-            </section>
-          ) : snapshot ? (
-            <EmptyPanel area={activeArea} />
-          ) : (
-            <LoadingPanel />
-          )}
-
-          <div className="lower-grid">
-            <section className="loop-panel" aria-labelledby="loop-title">
-              <div className="section-heading">
-                <div>
-                  <p className="panel-label">THE LOOP</p>
-                  <h2 id="loop-title">从资料到 Contract</h2>
-                </div>
-                <span className="section-index">0 / 4 active</span>
-              </div>
-              <StageRail />
-              <p className="panel-footnote">N1 只铺设可读的流程骨架；每个阶段的真实行为会在对应 checkpoint 单独验收。</p>
-            </section>
-
-            <section className="boundary-panel" aria-labelledby="boundary-title">
-              <p className="panel-label">TRUST BOUNDARY</p>
-              <h2 id="boundary-title">先把“不做什么”写清楚</h2>
-              <ul className="boundary-list">
-                <li><span>01</span><span>不读取任意本地文件</span></li>
-                <li><span>02</span><span>不执行 SQL、Shell 或代码</span></li>
-                <li><span>03</span><span>不调用真实模型或外部服务</span></li>
-              </ul>
-            </section>
-          </div>
+          {apiState === "loading" ? <LoadingState /> : null}
+          {apiState === "error" ? <ErrorState /> : null}
+          {apiState === "ready" ? <EmptyState area={activeArea} content={content} /> : null}
         </main>
 
-        <aside className="right-rail" aria-label="Run and evidence status">
-          <ReadinessPanel snapshot={snapshot} />
-          <section className="evidence-panel" aria-labelledby="evidence-title">
-            <div className="section-heading">
-              <div>
-                <p className="panel-label">EVIDENCE LANES</p>
-                <h2 id="evidence-title">状态分开记</h2>
-              </div>
-            </div>
-            <ul className="evidence-list">
-              {(snapshot?.evidence ?? []).map((lane) => (
-                <li key={lane.key}>
-                  <span>{lane.label}</span>
-                  <StatusPill>{lane.status.replaceAll("_", " ")}</StatusPill>
-                </li>
-              ))}
-            </ul>
-            {!snapshot ? <p className="rail-muted">等待本地快照…</p> : null}
-          </section>
-          <section className="next-panel" aria-labelledby="next-title">
-            <p className="panel-label">NEXT CHECKPOINT</p>
-            <h2 id="next-title">Source admission</h2>
-            <p>为授权资料建立 Workspace 隔离、版本与确定性解析边界。</p>
-            <span className="next-marker">N2 · NOT STARTED</span>
-          </section>
-        </aside>
+        <AgentPanel />
       </div>
     </div>
   );
