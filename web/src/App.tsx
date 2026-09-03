@@ -1,7 +1,10 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { fetchWorkbench, type WorkbenchSnapshot } from "./api/client";
+import { fetchWorkbench, type WorkbenchSnapshot, type Workspace } from "./api/client";
+import WorkspaceSwitcher from "./WorkspaceSwitcher";
 import "./styles.css";
+
+export { WORKSPACE_STORAGE_KEY } from "./WorkspaceSwitcher";
 
 export type AreaId = "sources" | "mission" | "clarifications" | "contract";
 
@@ -161,16 +164,23 @@ function Brand() {
   );
 }
 
-function Topbar() {
+function Topbar({
+  selectedWorkspace,
+  onWorkspaceChange,
+}: {
+  selectedWorkspace: Workspace | null;
+  onWorkspaceChange: (workspace: Workspace | null) => void;
+}) {
   return (
     <header className="topbar">
       <div className="topbar-brand">
         <Brand />
       </div>
       <div className="topbar-workspace">
-        <button className="workspace-switcher" type="button" aria-label="切换工作区">
-          演示工作区
-        </button>
+        <WorkspaceSwitcher
+          selectedWorkspace={selectedWorkspace}
+          onWorkspaceChange={onWorkspaceChange}
+        />
       </div>
       <div className="topbar-actions" aria-label="工作区工具">
         <button type="button" className="utility-button">
@@ -629,6 +639,7 @@ function App() {
   const [apiState, setApiState] = useState<ApiState>("loading");
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -681,7 +692,10 @@ function App() {
       data-connection-state={connectionState}
       data-demo-state="workbench-v3"
     >
-      <Topbar />
+      <Topbar
+        selectedWorkspace={selectedWorkspace}
+        onWorkspaceChange={setSelectedWorkspace}
+      />
       <div className="workspace-layout">
         <PrimaryRail areas={areas} activeArea={activeArea} onAreaChange={setActiveArea} />
         <ObjectPane selectedObject={selectedObject} onObjectSelect={handleObjectSelect} />
