@@ -10,9 +10,28 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Literal
-from uuid import uuid4
+from uuid import RFC_4122, UUID, uuid4
 
-from contextox.models import Workspace
+from contextox.models import (
+    ContextManifestInput,
+    ContextPacketManifest,
+    ContextSnapshot,
+    DefinitionDraft,
+    DomainToolCall,
+    Mission,
+    MissionDraftAttempt,
+    MissionDraftPayload,
+    ProviderReceipt,
+    RunEventEnvelope,
+    RunEventInput,
+    RunSnapshot,
+    RunToolResult,
+    SourceArtifact,
+    SourceExcerpt,
+    SourceRevision,
+    TerminalReceipt,
+    Workspace,
+)
 
 
 DB_FILENAME = "contextox.sqlite3"
@@ -53,6 +72,20 @@ class WorkspaceCreateOutcomeUnknownError(WorkspaceStoreError):
 
     def __init__(self) -> None:
         super().__init__("Workspace creation outcome is unknown.")
+
+
+class WorkspaceNotFoundError(WorkspaceStoreError):
+    code = "workspace_not_found"
+
+    def __init__(self) -> None:
+        super().__init__("Workspace was not found.")
+
+
+class Path2NotImplementedError(WorkspaceStoreError):
+    code = "path2_not_implemented"
+
+    def __init__(self) -> None:
+        super().__init__("This Path 2 capability is not implemented in W0.2.")
 
 
 class InvalidWorkspaceNameError(ValueError):
@@ -438,6 +471,151 @@ class WorkspaceStore:
             raise
         except (sqlite3.DatabaseError, OSError) as exc:
             raise _store_error(exc) from exc
+
+    @staticmethod
+    def _is_canonical_workspace_id(value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        try:
+            parsed = UUID(value)
+        except (AttributeError, ValueError):
+            return False
+        return parsed.version == 4 and parsed.variant == RFC_4122 and str(parsed) == value
+
+    def _require_path2_workspace(self, workspace_id: str) -> None:
+        """Validate the Workspace boundary before exposing a not-implemented seam."""
+
+        if not self._is_canonical_workspace_id(workspace_id):
+            raise WorkspaceNotFoundError()
+        if self.get_workspace(workspace_id) is None:
+            raise WorkspaceNotFoundError()
+
+    def get_run_snapshot(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+    ) -> RunSnapshot:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def get_context_snapshot(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+    ) -> ContextSnapshot:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def record_context_manifest(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        manifest: ContextManifestInput,
+    ) -> ContextPacketManifest:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def mark_run_running(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+    ) -> RunSnapshot:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def validate_run_tool_batch(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        calls: list[DomainToolCall],
+    ) -> None:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def execute_run_tool(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        call: DomainToolCall,
+    ) -> RunToolResult:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def record_provider_receipt(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        receipt: ProviderReceipt,
+    ) -> ProviderReceipt:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def append_run_event(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        event: RunEventInput,
+    ) -> RunEventEnvelope:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def fail_run(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        status: Literal["blocked", "failed", "partial"],
+        code: str,
+    ) -> RunSnapshot:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def save_run_final_output(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        content: str,
+    ) -> RunSnapshot:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def get_mission_draft_attempt(
+        self,
+        workspace_id: str,
+        attempt_id: str,
+    ) -> MissionDraftAttempt:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def save_mission_draft_result(
+        self,
+        workspace_id: str,
+        attempt_id: str,
+        candidate: MissionDraftPayload,
+        receipt: ProviderReceipt,
+    ) -> MissionDraftAttempt:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
+
+    def fail_mission_draft_attempt(
+        self,
+        workspace_id: str,
+        attempt_id: str,
+        status: Literal["blocked", "failed", "cancelled"],
+        code: str,
+        receipt: ProviderReceipt | None,
+    ) -> MissionDraftAttempt:
+        self._require_path2_workspace(workspace_id)
+        raise Path2NotImplementedError()
 
     def _open_connection(self) -> sqlite3.Connection:
         _validate_database_entry(self.db_path, missing_ok=False)
