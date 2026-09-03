@@ -13,6 +13,7 @@ import json
 import os
 import select
 import socket
+import ssl
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
@@ -243,13 +244,14 @@ def _response_status(response: object) -> int | None:
     return None
 
 
-def _wait_for_socket_readable(
+def _wait_for_socket_io(
     sock: socket.socket,
     *,
     deadline: float,
     cancel_event: Any | None,
+    wait_for_write: bool = False,
 ) -> None:
-    """Poll a socket without poisoning ``socket.SocketIO`` on a timeout."""
+    """Wait for socket I/O without poisoning a stdlib socket wrapper."""
 
     while True:
         if cancel_event is not None and cancel_event.is_set():
@@ -258,16 +260,56 @@ def _wait_for_socket_readable(
         if remaining <= 0:
             raise ProviderTimeoutUnknownError()
         try:
-            readable, _, _ = select.select(
+            readable, writable, exceptional = select.select(
+                [] if wait_for_write else [sock],
+                [sock] if wait_for_write else [],
                 [sock],
-                [],
-                [],
                 min(READ_POLL_INTERVAL_MS / 1000, remaining),
             )
         except InterruptedError:
             continue
-        if readable:
+        if (writable if wait_for_write else readable) or exceptional:
             return
+
+
+def _wait_for_socket_readable(
+    sock: socket.socket,
+    *,
+    deadline: float,
+    cancel_event: Any | None,
+) -> None:
+    _wait_for_socket_io(sock, deadline=deadline, cancel_event=cancel_event)
+
+
+def _recv_into_with_deadline(
+    sock: socket.socket,
+    buffer: Any,
+    *,
+    deadline: float,
+    cancel_event: Any | None,
+) -> int:
+    """Read from a non-blocking socket, including SSL WANT transitions."""
+
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProviderCancelledError()
+        if deadline - time.monotonic() <= 0:
+            raise ProviderTimeoutUnknownError()
+        try:
+            return sock.recv_into(buffer)
+        except ssl.SSLWantReadError:
+            _wait_for_socket_io(sock, deadline=deadline, cancel_event=cancel_event)
+        except ssl.SSLWantWriteError:
+            _wait_for_socket_io(
+                sock,
+                deadline=deadline,
+                cancel_event=cancel_event,
+                wait_for_write=True,
+            )
+        except BlockingIOError:
+            _wait_for_socket_io(sock, deadline=deadline, cancel_event=cancel_event)
+        except InterruptedError:
+            continue
 
 
 def _response_socket(response: object) -> socket.socket | None:
@@ -327,7 +369,7 @@ def _response_has_buffered_bytes(response: object, sock: socket.socket) -> bool:
     try:
         try:
             return bool(peek(1))
-        except BlockingIOError:
+        except (BlockingIOError, ssl.SSLWantReadError, ssl.SSLWantWriteError):
             return False
     finally:
         sock.settimeout(previous_timeout)
@@ -376,15 +418,13 @@ class _DeadlineSocketRaw(io.RawIOBase):
             self._body_prefix = self._body_prefix[count:]
             return count
         if self._deadline is not None:
-            _wait_for_socket_readable(
+            return _recv_into_with_deadline(
                 self._sock,
+                buffer,
                 deadline=self._deadline,
                 cancel_event=self._cancel_event,
             )
-        try:
-            return self._sock.recv_into(buffer)
-        except BlockingIOError:
-            return None
+        raise ProviderTimeoutUnknownError()
 
     def close(self) -> None:
         if not self.closed:
@@ -444,16 +484,20 @@ def _read_response_headers(
     received = bytearray()
     block_start = 0
     interim_count = 0
+    sock.setblocking(False)
     while True:
         marker = received.find(b"\r\n\r\n", block_start)
         while marker < 0:
-            _wait_for_socket_readable(sock, deadline=deadline, cancel_event=cancel_event)
-            try:
-                chunk = sock.recv(READ_CHUNK_BYTES)
-            except BlockingIOError:
-                continue
-            if not chunk:
+            chunk_buffer = bytearray(READ_CHUNK_BYTES)
+            count = _recv_into_with_deadline(
+                sock,
+                chunk_buffer,
+                deadline=deadline,
+                cancel_event=cancel_event,
+            )
+            if count == 0:
                 raise ProviderUnavailableError()
+            chunk = bytes(chunk_buffer[:count])
             if len(received) + len(chunk) > max_context_bytes:
                 raise ProviderContextBudgetError()
             received.extend(chunk)
@@ -533,7 +577,7 @@ class _UrllibTransport:
                 body=request.data,
                 headers=dict(request.header_items()),
             )
-            sock.settimeout(None)
+            sock.setblocking(False)
             header_deadline = min(first_event_deadline, total_deadline)
             header_prefix, body_prefix = _read_response_headers(
                 sock,
@@ -855,7 +899,7 @@ class DeepSeekProvider:
                     started_at + timeouts.total_ms / 1000,
                     last_event_at + phase_timeout / 1000,
                 )
-                response_sock.settimeout(None)
+                response_sock.setblocking(False)
                 context_set = _set_response_read_context(
                     response,
                     deadline=response_deadline,

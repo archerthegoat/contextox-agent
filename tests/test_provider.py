@@ -1,6 +1,10 @@
+import http.client
 import json
 import os
 import socket
+import ssl
+import subprocess
+import tempfile
 import time
 import unittest
 from http.client import HTTPResponse
@@ -140,6 +144,79 @@ def _start_loopback_server(callback):
     return server, thread
 
 
+class _TemporaryTLSMaterial:
+    def __init__(self) -> None:
+        self.directory = tempfile.TemporaryDirectory(prefix="contextox-provider-tls-")
+        self.cert_path = os.path.join(self.directory.name, "cert.pem")
+        self.key_path = os.path.join(self.directory.name, "key.pem")
+        openssl = next(
+            (
+                path
+                for path in ("/usr/bin/openssl", "/opt/homebrew/bin/openssl")
+                if os.path.isfile(path)
+            ),
+            None,
+        )
+        if openssl is None:
+            self.close()
+            raise RuntimeError("a system openssl executable is required for TLS tests")
+        try:
+            subprocess.run(
+                [
+                    openssl,
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-keyout",
+                    self.key_path,
+                    "-out",
+                    self.cert_path,
+                    "-days",
+                    "1",
+                    "-subj",
+                    "/CN=127.0.0.1",
+                    "-addext",
+                    "subjectAltName=IP:127.0.0.1",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        self.directory.cleanup()
+
+
+def _start_tls_http_server(cert_path: str, key_path: str, callback):
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(cert_path, key_path)
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            callback(self)
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    server.timeout = 1.0
+    original_get_request = server.get_request
+
+    def get_request():
+        sock, address = original_get_request()
+        return server_context.wrap_socket(sock, server_side=True), address
+
+    server.get_request = get_request
+    thread = Thread(target=server.handle_request)
+    thread.start()
+    return server, thread
+
+
 class FakeTransport:
     def __init__(self, response: FakeResponse) -> None:
         self.response = response
@@ -166,7 +243,126 @@ def _event(payload: object) -> bytes:
     return b"data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n\n"
 
 
+class _PartialTLSResponse:
+    def __init__(self, cert_path: str, key_path: str, *, prefix_body: bytes, partial_body: bytes) -> None:
+        self.server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.server_context.load_cert_chain(cert_path, key_path)
+        self.listen = socket.socket()
+        self.listen.bind(("127.0.0.1", 0))
+        self.listen.listen(1)
+        self.prefix_body = prefix_body
+        self.partial_body = partial_body
+        self.release = Event()
+        self.partial_sent = Event()
+        self.errors: list[str] = []
+        self.thread = Thread(target=self._serve)
+
+    @property
+    def port(self) -> int:
+        return int(self.listen.getsockname()[1])
+
+    @staticmethod
+    def _flush(outgoing: ssl.MemoryBIO, conn: socket.socket) -> None:
+        while True:
+            data = outgoing.read()
+            if not data:
+                return
+            conn.sendall(data)
+
+    def _serve(self) -> None:
+        conn: socket.socket | None = None
+        try:
+            conn, _ = self.listen.accept()
+            conn.settimeout(2.0)
+            incoming = ssl.MemoryBIO()
+            outgoing = ssl.MemoryBIO()
+            tls = self.server_context.wrap_bio(incoming, outgoing, server_side=True)
+            while True:
+                try:
+                    tls.do_handshake()
+                    self._flush(outgoing, conn)
+                    break
+                except ssl.SSLWantReadError:
+                    self._flush(outgoing, conn)
+                    data = conn.recv(16384)
+                    if not data:
+                        return
+                    incoming.write(data)
+                except ssl.SSLWantWriteError:
+                    self._flush(outgoing, conn)
+
+            request = bytearray()
+            while b"\r\n\r\n" not in request:
+                try:
+                    data = tls.read(16384)
+                    if not data:
+                        return
+                    request.extend(data)
+                except ssl.SSLWantReadError:
+                    self._flush(outgoing, conn)
+                    data = conn.recv(16384)
+                    if not data:
+                        return
+                    incoming.write(data)
+                except ssl.SSLWantWriteError:
+                    self._flush(outgoing, conn)
+
+            tls.write(
+                b"HTTP/1.0 200 OK\r\n"
+                b"Content-Type: text/event-stream\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            self._flush(outgoing, conn)
+            if self.prefix_body:
+                tls.write(self.prefix_body)
+                self._flush(outgoing, conn)
+            tls.write(self.partial_body)
+            encrypted = outgoing.read()
+            if len(encrypted) <= 6:
+                raise RuntimeError("partial TLS record is unexpectedly short")
+            conn.sendall(encrypted[:6])
+            self.partial_sent.set()
+            self.release.wait(2.0)
+            conn.sendall(encrypted[6:])
+        except OSError as exc:
+            if not self.release.is_set():
+                self.errors.append(repr(exc))
+        except BaseException as exc:
+            self.errors.append(repr(exc))
+        finally:
+            if conn is not None:
+                conn.close()
+            self.listen.close()
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self.release.set()
+        self.thread.join(2.0)
+
+
 class ProviderTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls._tls_material = _TemporaryTLSMaterial()
+        try:
+            cls._tls_client_context = ssl.create_default_context(cafile=cls._tls_material.cert_path)
+            if (
+                not cls._tls_client_context.check_hostname
+                or cls._tls_client_context.verify_mode != ssl.CERT_REQUIRED
+            ):
+                raise AssertionError("TLS tests must keep certificate and hostname verification enabled")
+        except BaseException:
+            cls._tls_material.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tls_material.close()
+        super().tearDownClass()
+
     def test_nonstream_payload_is_fixed_and_has_no_tools(self) -> None:
         response = FakeResponse(
             body=json.dumps(
@@ -939,6 +1135,326 @@ class ProviderTests(unittest.TestCase):
             server_thread.join(2.0)
             server.server_close()
         self.assertFalse(server_thread.is_alive())
+
+    def test_real_tls_buffered_plaintext_supports_stream_and_nonstream(self) -> None:
+        import contextox.provider as provider_module
+
+        large_content = "x" * 5000
+        stream_body = (
+            _event(
+                {
+                    "id": "tls-buffered",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": large_content},
+                            "finish_reason": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            )
+            + _event(
+                {
+                    "id": "tls-buffered",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "usage": _usage(),
+                }
+            )
+            + b"data: [DONE]\n\n"
+        )
+        nonstream_body = json.dumps(
+            {
+                "id": "tls-nonstream",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": large_content},
+                    }
+                ],
+                "usage": _usage(),
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        cases = (
+            (
+                True,
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/event-stream\r\n"
+                + b"Content-Length: "
+                + str(len(stream_body)).encode("ascii")
+                + b"\r\nConnection: keep-alive\r\n\r\n"
+                + stream_body,
+            ),
+            (
+                False,
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                + b"Content-Length: "
+                + str(len(nonstream_body)).encode("ascii")
+                + b"\r\nConnection: keep-alive\r\n\r\n"
+                + nonstream_body,
+            ),
+        )
+        for stream, payload in cases:
+            state = {"requests": 0, "sent": Event(), "release": Event(), "errors": []}
+
+            def callback(handler):
+                try:
+                    state["requests"] += 1
+                    length = int(handler.headers.get("Content-Length", "0"))
+                    handler.rfile.read(length)
+                    handler.connection.sendall(payload)
+                    state["sent"].set()
+                    state["release"].wait(2.0)
+                except OSError as exc:
+                    if not state["release"].is_set():
+                        state["errors"].append(repr(exc))
+
+            server, server_thread = _start_tls_http_server(
+                self._tls_material.cert_path,
+                self._tls_material.key_path,
+                callback,
+            )
+            content_deltas: list[str] = []
+            try:
+                with patch.object(
+                    http.client,
+                    "_create_https_context",
+                    return_value=self._tls_client_context,
+                ), patch.object(
+                    provider_module,
+                    "DEEPSEEK_ENDPOINT",
+                    "https://127.0.0.1:%d/chat/completions" % server.server_port,
+                ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                    completion = DeepSeekProvider().complete(
+                        [{"role": "user", "content": "synthetic"}],
+                        stream=stream,
+                        tools=[] if stream else None,
+                        user_id="ws-opaque",
+                        timeouts=ProviderTimeouts(
+                            connect_ms=500,
+                            first_event_ms=1000,
+                            idle_ms=1000,
+                            total_ms=3000,
+                        ),
+                        on_content=content_deltas.append if stream else None,
+                    )
+                self.assertEqual(completion.content, large_content)
+                self.assertEqual(completion.usage, ProviderUsage(7, 4, 2, 5))
+                self.assertEqual(content_deltas, [large_content] if stream else [])
+                self.assertTrue(state["sent"].is_set())
+                self.assertEqual(state["requests"], 1)
+            finally:
+                state["release"].set()
+                server_thread.join(2.0)
+                server.server_close()
+            self.assertFalse(server_thread.is_alive())
+            self.assertEqual(state["errors"], [])
+
+    def test_real_tls_partial_records_honor_first_idle_total_and_cancel(self) -> None:
+        import contextox.provider as provider_module
+
+        first_event = _event(
+            {
+                "id": "tls-partial",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": "first"},
+                        "finish_reason": None,
+                    }
+                ],
+                "usage": None,
+            }
+        )
+        timeout_cases = (
+            (
+                b"",
+                b": keep-alive\n\n",
+                ProviderTimeouts(connect_ms=500, first_event_ms=180, idle_ms=500, total_ms=800),
+            ),
+            (
+                b"",
+                b": keep-alive\n\n",
+                ProviderTimeouts(connect_ms=500, first_event_ms=700, idle_ms=700, total_ms=180),
+            ),
+            (
+                first_event,
+                b'data: {"id":"partial"',
+                ProviderTimeouts(connect_ms=500, first_event_ms=700, idle_ms=180, total_ms=800),
+            ),
+        )
+        for prefix_body, partial_body, timeouts in timeout_cases:
+            source = _PartialTLSResponse(
+                self._tls_material.cert_path,
+                self._tls_material.key_path,
+                prefix_body=prefix_body,
+                partial_body=partial_body,
+            )
+            source.start()
+            try:
+                with patch.object(
+                    http.client,
+                    "_create_https_context",
+                    return_value=self._tls_client_context,
+                ), patch.object(
+                    provider_module,
+                    "DEEPSEEK_ENDPOINT",
+                    "https://127.0.0.1:%d/chat/completions" % source.port,
+                ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                    with self.assertRaises(ProviderTimeoutUnknownError):
+                        DeepSeekProvider().complete(
+                            [{"role": "user", "content": "synthetic"}],
+                            stream=True,
+                            tools=[],
+                            user_id="ws-opaque",
+                            timeouts=timeouts,
+                        )
+                self.assertTrue(source.partial_sent.is_set())
+            finally:
+                source.close()
+            self.assertFalse(source.thread.is_alive())
+            self.assertEqual(source.errors, [])
+
+        source = _PartialTLSResponse(
+            self._tls_material.cert_path,
+            self._tls_material.key_path,
+            prefix_body=b"",
+            partial_body=b": keep-alive\n\n",
+        )
+        source.start()
+        cancel_event = Event()
+        provider_errors: list[BaseException] = []
+
+        def run_provider() -> None:
+            try:
+                with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                    DeepSeekProvider().complete(
+                        [{"role": "user", "content": "synthetic"}],
+                        stream=True,
+                        tools=[],
+                        user_id="ws-opaque",
+                        timeouts=ProviderTimeouts(
+                            connect_ms=500,
+                            first_event_ms=1000,
+                            idle_ms=1000,
+                            total_ms=3000,
+                        ),
+                        cancel_event=cancel_event,
+                    )
+            except BaseException as exc:
+                provider_errors.append(exc)
+
+        provider_thread = Thread(target=run_provider)
+        try:
+            with patch.object(
+                http.client,
+                "_create_https_context",
+                return_value=self._tls_client_context,
+            ), patch.object(
+                provider_module,
+                "DEEPSEEK_ENDPOINT",
+                "https://127.0.0.1:%d/chat/completions" % source.port,
+            ):
+                provider_thread.start()
+                self.assertTrue(source.partial_sent.wait(1.0))
+                cancel_event.set()
+                provider_thread.join(1.0)
+            self.assertFalse(provider_thread.is_alive())
+            self.assertEqual(len(provider_errors), 1)
+            self.assertIsInstance(provider_errors[0], ProviderCancelledError)
+        finally:
+            source.close()
+            provider_thread.join(2.0)
+        self.assertFalse(source.thread.is_alive())
+        self.assertFalse(provider_thread.is_alive())
+        self.assertEqual(source.errors, [])
+
+    def test_ssl_want_write_path_waits_for_writable_socket(self) -> None:
+        import contextox.provider as provider_module
+
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(
+            self._tls_material.cert_path,
+            self._tls_material.key_path,
+        )
+        client_raw, server_raw = socket.socketpair()
+        server = server_context.wrap_socket(
+            server_raw,
+            server_side=True,
+            do_handshake_on_connect=False,
+        )
+        client = self._tls_client_context.wrap_socket(
+            client_raw,
+            server_hostname="127.0.0.1",
+            do_handshake_on_connect=False,
+        )
+        server_errors: list[BaseException] = []
+
+        def serve() -> None:
+            try:
+                server.do_handshake()
+                server.sendall(b"ok")
+            except BaseException as exc:
+                server_errors.append(exc)
+
+        server_thread = Thread(target=serve)
+        server_thread.start()
+        try:
+            client.do_handshake()
+        except BaseException:
+            client.close()
+            server.close()
+            server_thread.join(2.0)
+            raise
+        client.setblocking(False)
+
+        class WantWriteOnce:
+            def __init__(self, sock):
+                self.sock = sock
+                self.first = True
+
+            def fileno(self):
+                return self.sock.fileno()
+
+            def recv_into(self, buffer):
+                if self.first:
+                    self.first = False
+                    raise ssl.SSLWantWriteError(ssl.SSL_ERROR_WANT_WRITE, "synthetic")
+                return self.sock.recv_into(buffer)
+
+        calls: list[bool] = []
+        original_wait = provider_module._wait_for_socket_io
+
+        def observed_wait(sock, *, deadline, cancel_event, wait_for_write=False):
+            calls.append(wait_for_write)
+            return original_wait(
+                sock,
+                deadline=deadline,
+                cancel_event=cancel_event,
+                wait_for_write=wait_for_write,
+            )
+
+        try:
+            with patch.object(provider_module, "_wait_for_socket_io", observed_wait):
+                buffer = bytearray(2)
+                count = provider_module._recv_into_with_deadline(
+                    WantWriteOnce(client),
+                    buffer,
+                    deadline=time.monotonic() + 1.0,
+                    cancel_event=None,
+                )
+            self.assertEqual(count, 2)
+            self.assertEqual(bytes(buffer), b"ok")
+            self.assertIn(True, calls)
+        finally:
+            server_thread.join(2.0)
+            client.close()
+            server.close()
+        self.assertFalse(server_thread.is_alive())
+        self.assertEqual(server_errors, [])
 
 
 if __name__ == "__main__":
