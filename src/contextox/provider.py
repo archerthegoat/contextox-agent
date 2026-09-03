@@ -7,14 +7,18 @@ permissions, tool execution, persistence, and terminal semantics.
 
 from __future__ import annotations
 
+import http.client
+import io
 import json
 import os
+import select
 import socket
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.parse import urlsplit
+from urllib.request import Request
 
 from contextox.models import ProviderConfigSnapshot
 
@@ -239,29 +243,330 @@ def _response_status(response: object) -> int | None:
     return None
 
 
+def _wait_for_socket_readable(
+    sock: socket.socket,
+    *,
+    deadline: float,
+    cancel_event: Any | None,
+) -> None:
+    """Poll a socket without poisoning ``socket.SocketIO`` on a timeout."""
+
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProviderCancelledError()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProviderTimeoutUnknownError()
+        try:
+            readable, _, _ = select.select(
+                [sock],
+                [],
+                [],
+                min(READ_POLL_INTERVAL_MS / 1000, remaining),
+            )
+        except InterruptedError:
+            continue
+        if readable:
+            return
+
+
+def _response_socket(response: object) -> socket.socket | None:
+    candidate: object | None = response
+    seen: set[int] = set()
+    for _ in range(12):
+        if candidate is None or id(candidate) in seen:
+            return None
+        seen.add(id(candidate))
+        if isinstance(candidate, socket.socket):
+            return candidate
+        next_candidate = None
+        for attribute in ("_contextox_socket", "_sock", "sock", "raw", "fp"):
+            value = getattr(candidate, attribute, None)
+            if value is not None and id(value) not in seen:
+                next_candidate = value
+                break
+        candidate = next_candidate
+    return None
+
+
+def _set_response_read_context(
+    response: object,
+    *,
+    deadline: float,
+    cancel_event: Any | None,
+) -> bool:
+    candidate: object | None = response
+    seen: set[int] = set()
+    for _ in range(12):
+        if candidate is None or id(candidate) in seen:
+            return False
+        seen.add(id(candidate))
+        setter = getattr(candidate, "set_read_context", None)
+        if callable(setter):
+            setter(deadline, cancel_event)
+            return True
+        next_candidate = None
+        for attribute in ("raw", "fp", "_sock", "sock", "_contextox_socket"):
+            value = getattr(candidate, attribute, None)
+            if value is not None and id(value) not in seen:
+                next_candidate = value
+                break
+        candidate = next_candidate
+    return False
+
+
+def _response_has_buffered_bytes(response: object, sock: socket.socket) -> bool:
+    """Inspect an existing HTTPResponse buffer without blocking or timing out."""
+
+    file_object = getattr(response, "fp", None)
+    peek = getattr(file_object, "peek", None)
+    if not callable(peek):
+        return False
+    previous_timeout = sock.gettimeout()
+    sock.setblocking(False)
+    try:
+        try:
+            return bool(peek(1))
+        except BlockingIOError:
+            return False
+    finally:
+        sock.settimeout(previous_timeout)
+
+
+class _DeadlineSocketRaw(io.RawIOBase):
+    """A bounded raw reader used below ``http.client.HTTPResponse``."""
+
+    def __init__(self, sock: socket.socket, header_prefix: bytes, body_prefix: bytes) -> None:
+        super().__init__()
+        self._sock = sock
+        self._header_prefix = memoryview(header_prefix)
+        self._body_prefix = memoryview(body_prefix)
+        self._body_enabled = False
+        self._deadline: float | None = None
+        self._cancel_event: Any | None = None
+
+    def readable(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        return self._sock.fileno()
+
+    def activate_body(self) -> None:
+        self._body_enabled = True
+
+    def set_read_context(self, deadline: float, cancel_event: Any | None) -> None:
+        self._deadline = deadline
+        self._cancel_event = cancel_event
+
+    def readinto(self, buffer: Any) -> int | None:
+        self._checkClosed()
+        self._checkReadable()
+        if not buffer:
+            return 0
+        if self._header_prefix:
+            count = min(len(buffer), len(self._header_prefix))
+            buffer[:count] = self._header_prefix[:count]
+            self._header_prefix = self._header_prefix[count:]
+            return count
+        if not self._body_enabled:
+            return None
+        if self._body_prefix:
+            count = min(len(buffer), len(self._body_prefix))
+            buffer[:count] = self._body_prefix[:count]
+            self._body_prefix = self._body_prefix[count:]
+            return count
+        if self._deadline is not None:
+            _wait_for_socket_readable(
+                self._sock,
+                deadline=self._deadline,
+                cancel_event=self._cancel_event,
+            )
+        try:
+            return self._sock.recv_into(buffer)
+        except BlockingIOError:
+            return None
+
+    def close(self) -> None:
+        if not self.closed:
+            try:
+                self._sock.close()
+            finally:
+                super().close()
+
+
+class _ResponseSocket:
+    """Feed parsed headers to HTTPResponse, then read the live body."""
+
+    def __init__(self, sock: socket.socket, header_prefix: bytes, body_prefix: bytes) -> None:
+        self._sock = sock
+        self._header_prefix = header_prefix
+        self._body_prefix = body_prefix
+        self._raw: _DeadlineSocketRaw | None = None
+
+    def makefile(self, mode: str) -> io.BufferedReader:
+        if self._raw is not None:
+            raise OSError("response file is already open")
+        self._raw = _DeadlineSocketRaw(self._sock, self._header_prefix, self._body_prefix)
+        return io.BufferedReader(self._raw, buffer_size=READ_CHUNK_BYTES)
+
+    def activate_body(self) -> None:
+        if self._raw is None:
+            raise OSError("response file is not open")
+        self._raw.activate_body()
+
+    def close(self) -> None:
+        self._sock.close()
+
+
+class _OwnedHTTPResponse(http.client.HTTPResponse):
+    """An HTTPResponse whose connection is owned by the private transport."""
+
+    def __init__(self, sock: _ResponseSocket, connection: http.client.HTTPConnection) -> None:
+        self._contextox_connection = connection
+        super().__init__(sock)
+
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            self._contextox_connection.close()
+
+
+def _read_response_headers(
+    sock: socket.socket,
+    *,
+    deadline: float,
+    cancel_event: Any | None,
+    max_context_bytes: int,
+) -> tuple[bytes, bytes]:
+    """Read complete HTTP header blocks without a short socket timeout."""
+
+    received = bytearray()
+    block_start = 0
+    interim_count = 0
+    while True:
+        marker = received.find(b"\r\n\r\n", block_start)
+        while marker < 0:
+            _wait_for_socket_readable(sock, deadline=deadline, cancel_event=cancel_event)
+            try:
+                chunk = sock.recv(READ_CHUNK_BYTES)
+            except BlockingIOError:
+                continue
+            if not chunk:
+                raise ProviderUnavailableError()
+            if len(received) + len(chunk) > max_context_bytes:
+                raise ProviderContextBudgetError()
+            received.extend(chunk)
+            marker = received.find(b"\r\n\r\n", block_start)
+
+        block_end = marker + 4
+        line_end = received.find(b"\r\n", block_start, marker)
+        status_line = bytes(received[block_start:line_end]) if line_end >= 0 else b""
+        status_code: int | None = None
+        status_parts = status_line.split(None, 2)
+        if len(status_parts) >= 2 and status_parts[0].startswith(b"HTTP/"):
+            try:
+                status_code = int(status_parts[1])
+            except ValueError:
+                status_code = None
+        if status_code == 100:
+            interim_count += 1
+            if interim_count > 100:
+                raise ProviderProtocolError()
+            block_start = block_end
+            continue
+        return bytes(received[:block_end]), bytes(received[block_end:])
+
+
 class _UrllibTransport:
     """The only production transport; tests inject a local fake object."""
 
-    def open(self, request: Request, timeout: float) -> object:
-        return _NO_REDIRECT_OPENER.open(request, timeout=timeout)
-
-
-class _NoRedirectHandler(HTTPRedirectHandler):
-    """Prevent urllib from sending a second request to a new URL."""
-
-    def redirect_request(
+    def open(
         self,
-        req: Request,
-        fp: object,
-        code: int,
-        msg: str,
-        headers: object,
-        newurl: str,
-    ) -> None:
-        return None
+        request: Request,
+        timeout: float,
+        *,
+        connect_deadline: float | None = None,
+        first_event_deadline: float | None = None,
+        total_deadline: float | None = None,
+        cancel_event: Any | None = None,
+        max_context_bytes: int = MAX_CONTEXT_BYTES,
+    ) -> object:
+        parsed = urlsplit(request.full_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ProviderUnavailableError()
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ProviderUnavailableError() from exc
 
-
-_NO_REDIRECT_OPENER = build_opener(_NoRedirectHandler())
+        now = time.monotonic()
+        connect_deadline = now + timeout if connect_deadline is None else connect_deadline
+        first_event_deadline = now + timeout if first_event_deadline is None else first_event_deadline
+        total_deadline = now + timeout if total_deadline is None else total_deadline
+        connection_type = (
+            http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        )
+        connection = connection_type(parsed.hostname, port, timeout=timeout)
+        response: _OwnedHTTPResponse | None = None
+        try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderCancelledError()
+            connection.connect()
+            sock = connection.sock
+            if sock is None:
+                raise ProviderUnreachableError()
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderCancelledError()
+            now = time.monotonic()
+            if now >= connect_deadline:
+                raise ProviderUnreachableError()
+            if now >= first_event_deadline or now >= total_deadline:
+                raise ProviderTimeoutUnknownError()
+            sock.settimeout(min(first_event_deadline, total_deadline) - now)
+            selector = parsed.path or "/"
+            if parsed.query:
+                selector += "?" + parsed.query
+            connection.request(
+                request.get_method(),
+                selector,
+                body=request.data,
+                headers=dict(request.header_items()),
+            )
+            sock.settimeout(None)
+            header_deadline = min(first_event_deadline, total_deadline)
+            header_prefix, body_prefix = _read_response_headers(
+                sock,
+                deadline=header_deadline,
+                cancel_event=cancel_event,
+                max_context_bytes=max_context_bytes,
+            )
+            response_socket = _ResponseSocket(sock, header_prefix, body_prefix)
+            response = _OwnedHTTPResponse(response_socket, connection)
+            response.begin()
+            response_socket.activate_body()
+            response._contextox_socket = sock
+            return response
+        except ProviderError:
+            if response is not None:
+                response.close()
+            else:
+                connection.close()
+            raise
+        except (TimeoutError, socket.timeout) as exc:
+            if response is not None:
+                response.close()
+            else:
+                connection.close()
+            if time.monotonic() >= min(first_event_deadline, total_deadline):
+                raise ProviderTimeoutUnknownError() from exc
+            raise ProviderUnreachableError() from exc
+        except (http.client.HTTPException, OSError, ValueError) as exc:
+            if response is not None:
+                response.close()
+            else:
+                connection.close()
+            raise ProviderUnavailableError() from exc
 
 
 class DeepSeekProvider:
@@ -382,7 +687,13 @@ class DeepSeekProvider:
         )
         started_at = time.monotonic()
         try:
-            response = self._open(request, timeouts, started_at)
+            response = self._open(
+                request,
+                timeouts,
+                started_at,
+                cancel_event=cancel_event,
+                max_context_bytes=max_context_bytes,
+            )
         except ProviderError:
             raise
         except HTTPError as exc:
@@ -427,16 +738,42 @@ class DeepSeekProvider:
             if callable(close):
                 close()
 
-    def _open(self, request: Request, timeouts: ProviderTimeouts, started_at: float) -> object:
-        remaining_seconds = timeouts.total_ms / 1000 - (time.monotonic() - started_at)
-        if remaining_seconds <= 0:
+    def _open(
+        self,
+        request: Request,
+        timeouts: ProviderTimeouts,
+        started_at: float,
+        *,
+        cancel_event: Any | None,
+        max_context_bytes: int,
+    ) -> object:
+        elapsed = time.monotonic() - started_at
+        remaining_seconds = timeouts.total_ms / 1000 - elapsed
+        first_event_remaining = timeouts.first_event_ms / 1000 - elapsed
+        if remaining_seconds <= 0 or first_event_remaining <= 0:
             raise ProviderTimeoutUnknownError()
+        if timeouts.connect_ms <= 0:
+            raise ProviderUnreachableError()
         timeout_seconds = min(
-            max(0.001, timeouts.connect_ms / 1000),
+            timeouts.connect_ms / 1000,
+            first_event_remaining,
             remaining_seconds,
         )
+        if timeout_seconds <= 0:
+            raise ProviderTimeoutUnknownError()
         open_method = getattr(self.transport, "open", None)
-        if callable(open_method):
+        if isinstance(self.transport, _UrllibTransport) and callable(open_method):
+            deadline = started_at + timeouts.total_ms / 1000
+            response = open_method(
+                request,
+                timeout_seconds,
+                connect_deadline=min(started_at + timeouts.connect_ms / 1000, deadline),
+                first_event_deadline=min(started_at + timeouts.first_event_ms / 1000, deadline),
+                total_deadline=deadline,
+                cancel_event=cancel_event,
+                max_context_bytes=max_context_bytes,
+            )
+        elif callable(open_method):
             response = open_method(request, timeout_seconds)
         elif callable(self.transport):
             response = self.transport(request, timeout_seconds)
@@ -477,7 +814,7 @@ class DeepSeekProvider:
                 setter(timeout_seconds)
                 return
             next_candidate = None
-            for attribute in ("_sock", "raw", "fp"):
+            for attribute in ("_sock", "sock", "raw", "fp"):
                 value = getattr(candidate, attribute, None)
                 if value is not None and id(value) not in seen:
                     next_candidate = value
@@ -498,6 +835,9 @@ class DeepSeekProvider:
         while True:
             if cancel_event is not None and cancel_event.is_set():
                 raise ProviderCancelledError()
+            is_closed = getattr(response, "isclosed", None)
+            if callable(is_closed) and is_closed():
+                return b""
             now = time.monotonic()
             total_remaining = timeouts.total_ms / 1000 - (now - started_at)
             phase_timeout = timeouts.idle_ms if saw_event else timeouts.first_event_ms
@@ -509,10 +849,31 @@ class DeepSeekProvider:
                 phase_remaining,
                 READ_POLL_INTERVAL_MS / 1000,
             )
-            self._set_response_read_timeout(response, read_timeout)
+            response_sock = _response_socket(response)
+            if response_sock is not None:
+                response_deadline = min(
+                    started_at + timeouts.total_ms / 1000,
+                    last_event_at + phase_timeout / 1000,
+                )
+                response_sock.settimeout(None)
+                context_set = _set_response_read_context(
+                    response,
+                    deadline=response_deadline,
+                    cancel_event=cancel_event,
+                )
+                if not context_set and not _response_has_buffered_bytes(response, response_sock):
+                    _wait_for_socket_readable(
+                        response_sock,
+                        deadline=response_deadline,
+                        cancel_event=cancel_event,
+                    )
+            else:
+                self._set_response_read_timeout(response, read_timeout)
             try:
                 return read(READ_CHUNK_BYTES)
             except (TimeoutError, socket.timeout):
+                if response_sock is not None:
+                    raise ProviderTimeoutUnknownError()
                 continue
 
     @staticmethod
