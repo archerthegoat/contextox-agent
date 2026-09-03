@@ -36,6 +36,17 @@ def _usage() -> ProviderUsage:
     return ProviderUsage(input_tokens=9, output_tokens=5, cache_hit_tokens=1, cache_miss_tokens=8)
 
 
+class ControlledClock:
+    def __init__(self, values: list[float], default: float | None = None) -> None:
+        self.values = list(values)
+        self.default = values[-1] if default is None else default
+
+    def monotonic(self) -> float:
+        if self.values:
+            return self.values.pop(0)
+        return self.default
+
+
 def _attempt() -> MissionDraftAttempt:
     return MissionDraftAttempt(
         workspace_id=_id(1),
@@ -165,7 +176,11 @@ class FakeStore:
 
     def mark_run_running(self, workspace_id: str, mission_id: str, run_id: str):
         self.mark_calls += 1
-        return self.context.run
+        run_data = self.context.run.model_dump(mode="python")
+        run_data.update({"status": "running"})
+        running = RunSnapshot(**run_data)
+        self.context = self.context.model_copy(update={"run": running})
+        return running
 
     def record_context_manifest(self, workspace_id, mission_id, run_id, manifest):
         self.manifests.append(manifest)
@@ -200,7 +215,11 @@ class FakeStore:
 
     def fail_run(self, workspace_id, mission_id, run_id, status, code):
         self.failures.append(("run", status, code))
-        return self.context.run
+        run_data = self.context.run.model_dump(mode="python")
+        run_data.update({"status": status, "error_code": code})
+        stopped = RunSnapshot(**run_data)
+        self.context = self.context.model_copy(update={"run": stopped})
+        return stopped
 
     def save_run_final_output(self, workspace_id, mission_id, run_id, content):
         self.saved_outputs.append(content)
@@ -251,7 +270,7 @@ def _tool_result(call, *, terminal: bool = False, rejected: bool = False, ordina
         ordinal=ordinal,
         call_id=call.call_id,
         name=call.name,
-        arguments_sha256="0" * 64,
+        arguments_sha256=canonical_sha256(call.arguments),
         status=status,
         created_at="2026-09-03T00:00:00+00:00",
         source_refs=[],
@@ -315,7 +334,7 @@ def _clarification_result(call) -> RunToolResult:
         ordinal=1,
         call_id=call.call_id,
         name=call.name,
-        arguments_sha256="0" * 64,
+        arguments_sha256=canonical_sha256(call.arguments),
         status="succeeded",
         created_at="2026-09-03T00:00:00+00:00",
         source_refs=[],
@@ -431,6 +450,92 @@ class AgentTests(unittest.TestCase):
         self.assertFalse(store.failures)
         self.assertTrue(any(event.event_type == "run_partial" for event in store.events))
 
+    def test_run_shortens_provider_timeouts_to_remaining_elapsed_budget(self) -> None:
+        provider = FakeProvider([_completion("No terminal.")])
+        store = FakeStore(context=_context_snapshot())
+        clock = ControlledClock([0.0, 299.0, 299.0, 299.0, 299.0])
+        with patch.object(agent, "get_provider", return_value=provider), patch.object(
+            agent.time, "monotonic", side_effect=clock.monotonic
+        ):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+
+        timeouts = provider.calls[0]["kwargs"]["timeouts"]
+        self.assertEqual(
+            (timeouts.connect_ms, timeouts.first_event_ms, timeouts.idle_ms, timeouts.total_ms),
+            (1000, 1000, 1000, 1000),
+        )
+        self.assertEqual(store.failures[0][1:], ("failed", "terminal_result_missing"))
+
+    def test_run_stops_before_a_later_tool_when_elapsed_budget_is_consumed(self) -> None:
+        first = ProviderToolCall("call-1", "list_sources", "{}")
+        second = ProviderToolCall("call-2", "list_sources", "{}")
+        from contextox.models import ListSourcesCall
+
+        store = FakeStore(context=_context_snapshot())
+        store.tool_results = {
+            "call-1": _tool_result(
+                ListSourcesCall(call_id="call-1", name="list_sources", arguments={}), ordinal=1
+            ),
+            "call-2": _tool_result(
+                ListSourcesCall(call_id="call-2", name="list_sources", arguments={}), ordinal=2
+            ),
+        }
+        original_execute = store.execute_run_tool
+        clock = ControlledClock([0.0, 0.0, 0.0, 299.0, 299.0], default=299.0)
+
+        def execute(workspace_id, mission_id, run_id, call):
+            result = original_execute(workspace_id, mission_id, run_id, call)
+            if call.call_id == "call-1":
+                clock.default = 300.001
+            return result
+
+        store.execute_run_tool = execute
+        provider = FakeProvider([_completion("", (first, second))])
+        with patch.object(agent, "get_provider", return_value=provider), patch.object(
+            agent.time, "monotonic", side_effect=clock.monotonic
+        ):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+
+        self.assertEqual([call.call_id for call in store.executed_calls], ["call-1"])
+        self.assertEqual(store.failures[0][1:], ("blocked", "elapsed_budget_exceeded"))
+
+    def test_run_enforces_fixed_eight_turn_and_twenty_four_tool_budgets(self) -> None:
+        eight_store = FakeStore(context=_context_snapshot())
+        eight_calls = []
+        eight_completions = []
+        from contextox.models import ListSourcesCall
+
+        for index in range(1, 9):
+            call_id = f"turn-call-{index}"
+            raw_call = ProviderToolCall(call_id, "list_sources", "{}")
+            domain_call = ListSourcesCall(call_id=call_id, name="list_sources", arguments={})
+            eight_calls.append(raw_call)
+            eight_completions.append(_completion("", (raw_call,)))
+            eight_store.tool_results[call_id] = _tool_result(domain_call, ordinal=index)
+        eight_provider = FakeProvider(eight_completions)
+        with patch.object(agent, "get_provider", return_value=eight_provider):
+            agent.run_agent(eight_store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual(len(eight_provider.calls), 8)
+        self.assertEqual(len(eight_store.executed_calls), 8)
+        self.assertEqual(eight_store.failures[0][1:], ("blocked", "model_turn_budget_exceeded"))
+
+        tool_store = FakeStore(context=_context_snapshot())
+        tool_calls = []
+        for index in range(1, 25):
+            call_id = f"tool-call-{index}"
+            raw_call = ProviderToolCall(call_id, "list_sources", "{}")
+            tool_calls.append(raw_call)
+            tool_store.tool_results[call_id] = _tool_result(
+                ListSourcesCall(call_id=call_id, name="list_sources", arguments={}),
+                ordinal=index,
+            )
+        tool_provider = FakeProvider([_completion("", tuple(tool_calls))])
+        with patch.object(agent, "get_provider", return_value=tool_provider):
+            agent.run_agent(tool_store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual(len(tool_provider.calls), 1)
+        self.assertEqual(len(tool_store.executed_calls), 24)
+        self.assertEqual(tool_store.failures[0][1:], ("blocked", "tool_call_budget_exceeded"))
+
     def test_invalid_mixed_terminal_batch_is_not_executed(self) -> None:
         calls = (
             ProviderToolCall("call-list", "list_sources", "{}"),
@@ -446,6 +551,122 @@ class AgentTests(unittest.TestCase):
             agent.run_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(store.executed_calls, [])
         self.assertEqual(store.failures[0][1:], ("failed", "terminal_tool_mixed_batch"))
+
+    def test_tool_result_arguments_hash_must_match_the_normalized_call(self) -> None:
+        from contextox.models import ListSourcesCall
+
+        raw_call = ProviderToolCall("call-list", "list_sources", "{}")
+        domain_call = ListSourcesCall(call_id="call-list", name="list_sources", arguments={})
+        result = _tool_result(domain_call)
+        bad_receipt = result.tool_receipt.model_copy(update={"arguments_sha256": "0" * 64})
+        store = FakeStore(context=_context_snapshot())
+        store.tool_results = {raw_call.call_id: result.model_copy(update={"tool_receipt": bad_receipt})}
+        provider = FakeProvider([_completion("", (raw_call,))])
+        with patch.object(agent, "get_provider", return_value=provider):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual([call.call_id for call in store.executed_calls], ["call-list"])
+        self.assertEqual(store.failures[0][1:], ("failed", "tool_result_invalid"))
+
+    def test_successful_terminal_without_snapshot_cannot_continue_the_run(self) -> None:
+        from contextox.models import FinishRunCall
+
+        raw_call = ProviderToolCall(
+            "call-finish",
+            "finish_run",
+            '{"outcome":"partial","reason":"incomplete","source_refs":[]}',
+        )
+        domain_call = FinishRunCall(
+            call_id="call-finish",
+            name="finish_run",
+            arguments={"outcome": "partial", "reason": "incomplete", "source_refs": []},
+        )
+        result = _tool_result(domain_call, terminal=True).model_copy(update={"terminal_snapshot": None})
+        store = FakeStore(context=_context_snapshot())
+        store.tool_results = {raw_call.call_id: result}
+        provider = FakeProvider([_completion("", (raw_call,))])
+        with patch.object(agent, "get_provider", return_value=provider):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(store.saved_outputs, [])
+        self.assertEqual(store.failures[0][1:], ("failed", "terminal_result_invalid"))
+
+    def test_terminal_clarification_draft_binding_must_match_request(self) -> None:
+        from contextox.models import CreateClarificationCall
+
+        arguments = {
+            "draft_version": 2,
+            "draft_sha256": "1" * 64,
+            "questions": [
+                {
+                    "question": "Which grain should be used?",
+                    "why_needed": "The authorized evidence does not settle the grain.",
+                    "expected_answer_type": "text",
+                    "suggested_owner_role": None,
+                    "related_definition_paths": [],
+                    "evidence_requested": [],
+                    "examples_or_options": [],
+                    "blocking_impact": "blocking",
+                    "source_refs": [],
+                }
+            ],
+        }
+        raw_call = ProviderToolCall(
+            "call-clarify",
+            "create_clarification",
+            json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
+        domain_call = CreateClarificationCall(
+            call_id=raw_call.call_id,
+            name=raw_call.name,
+            arguments=arguments,
+        )
+        store = FakeStore(context=_context_snapshot())
+        store.tool_results = {raw_call.call_id: _clarification_result(domain_call)}
+        provider = FakeProvider([_completion("Need a decision.", (raw_call,))])
+        with patch.object(agent, "get_provider", return_value=provider):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual(store.saved_outputs, [])
+        self.assertEqual(store.failures[0][1:], ("failed", "terminal_result_invalid"))
+
+    def test_rejected_terminal_tool_can_continue_without_a_terminal_snapshot(self) -> None:
+        from contextox.models import FinishRunCall
+
+        rejected_raw = ProviderToolCall(
+            "call-rejected-finish",
+            "finish_run",
+            '{"outcome":"partial","reason":"not yet","source_refs":[]}',
+        )
+        rejected_domain = FinishRunCall(
+            call_id=rejected_raw.call_id,
+            name=rejected_raw.name,
+            arguments={"outcome": "partial", "reason": "not yet", "source_refs": []},
+        )
+        success_raw = ProviderToolCall(
+            "call-finish",
+            "finish_run",
+            '{"outcome":"partial","reason":"now complete enough","source_refs":[]}',
+        )
+        success_domain = FinishRunCall(
+            call_id=success_raw.call_id,
+            name=success_raw.name,
+            arguments={"outcome": "partial", "reason": "now complete enough", "source_refs": []},
+        )
+        store = FakeStore(context=_context_snapshot())
+        store.tool_results = {
+            rejected_raw.call_id: _tool_result(rejected_domain, rejected=True, ordinal=1),
+            success_raw.call_id: _tool_result(success_domain, terminal=True, ordinal=2),
+        }
+        provider = FakeProvider(
+            [
+                _completion("The terminal precondition is not met.", (rejected_raw,)),
+                _completion("Partial.", (success_raw,)),
+            ]
+        )
+        with patch.object(agent, "get_provider", return_value=provider):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(store.saved_outputs, ["The terminal precondition is not met.Partial."])
+        self.assertFalse(store.failures)
 
     def test_business_rejection_continues_to_a_single_terminal_batch(self) -> None:
         list_call = ProviderToolCall("call-list", "list_sources", "{}")
@@ -546,6 +767,18 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(store.failures[0][1:], ("blocked", "provider_usage_unknown"))
         self.assertEqual(store.receipts[0].status, "blocked")
 
+    def test_public_model_delta_total_bytes_are_bounded(self) -> None:
+        provider = FakeProvider([_completion("x" * (262144 + 1))])
+        store = FakeStore(context=_context_snapshot())
+        with patch.object(agent, "get_provider", return_value=provider):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual(store.failures[0][1:], ("blocked", "context_budget_exceeded"))
+        self.assertEqual(store.receipts[0].status, "blocked")
+        deltas = [event for event in store.events if event.event_type == "model_delta"]
+        self.assertTrue(deltas)
+        self.assertTrue(all(len(event.public_payload.content.encode("utf-8")) <= 4096 for event in deltas))
+        self.assertEqual(store.saved_outputs, [])
+
     def test_natural_stop_fails_without_persisting_final_output(self) -> None:
         provider = FakeProvider([_completion("No terminal.")])
         store = FakeStore(context=_context_snapshot())
@@ -582,6 +815,56 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(store.receipts[0].error_code, "cancelled")
         self.assertEqual(store.failures, [])
         self.assertEqual(store.executed_calls, [])
+
+    def test_nonrunning_mark_readback_prevents_starting_a_provider(self) -> None:
+        class WaitingMarkStore(FakeStore):
+            def mark_run_running(self, workspace_id, mission_id, run_id):
+                self.mark_calls += 1
+                return _context_snapshot(status="waiting_for_human").run
+
+        store = WaitingMarkStore(context=_context_snapshot())
+        provider = FakeProvider([])
+        with patch.object(agent, "get_provider", return_value=provider):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(store.events, [])
+
+    def test_failure_event_respects_cancelled_or_terminal_store_readback(self) -> None:
+        class StateRaceStore(FakeStore):
+            def __init__(self, returned_status, **kwargs):
+                super().__init__(**kwargs)
+                self.returned_status = returned_status
+
+            def fail_run(self, workspace_id, mission_id, run_id, status, code):
+                self.failures.append(("run", status, code))
+                return _context_snapshot(status=self.returned_status).run
+
+        for returned_status in ("cancelled", "waiting_for_human", "partial"):
+            store = StateRaceStore(returned_status, context=_context_snapshot())
+            agent._stop_run(store, _id(1), _id(3), _id(4), "failed", "provider_protocol_error")
+            self.assertFalse(any(event.event_type == "run_failed" for event in store.events))
+
+    def test_nonrunning_context_snapshot_stops_before_the_next_provider_turn(self) -> None:
+        from contextox.models import ListSourcesCall
+
+        class WaitingAfterFirstStore(FakeStore):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                self.waiting = _context_snapshot(status="waiting_for_human")
+
+            def get_context_snapshot(self, workspace_id, mission_id, run_id):
+                self.context_calls += 1
+                return self.context if self.context_calls == 1 else self.waiting
+
+        raw_call = ProviderToolCall("call-list", "list_sources", "{}")
+        domain_call = ListSourcesCall(call_id="call-list", name="list_sources", arguments={})
+        store = WaitingAfterFirstStore(context=_context_snapshot())
+        store.tool_results = {raw_call.call_id: _tool_result(domain_call, ordinal=1)}
+        provider = FakeProvider([_completion("Evidence.", (raw_call,))])
+        with patch.object(agent, "get_provider", return_value=provider):
+            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(store.failures, [])
 
 
 if __name__ == "__main__":

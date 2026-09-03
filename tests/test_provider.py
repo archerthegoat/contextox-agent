@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import unittest
 from threading import Event
 from unittest.mock import patch
@@ -8,9 +9,12 @@ from contextox.provider import (
     DEEPSEEK_ENDPOINT,
     DeepSeekProvider,
     ProviderAuthError,
+    ProviderCancelledError,
     ProviderContextBudgetError,
     ProviderProtocolError,
     ProviderStreamInterruptedError,
+    ProviderTimeoutUnknownError,
+    ProviderTimeouts,
     ProviderUsage,
 )
 
@@ -21,14 +25,52 @@ class FakeResponse:
         self.body = body
         self.chunks = chunks or []
         self.closed = False
+        self.offset = 0
 
     def read(self, size: int = -1) -> bytes:
-        if size != -1:
-            raise AssertionError("stream tests should use iter_bytes")
-        return self.body
+        if size == -1:
+            return self.body
+        chunk = self.body[self.offset : self.offset + size]
+        self.offset += len(chunk)
+        return chunk
 
     def iter_bytes(self):
         yield from self.chunks
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class ReadPathResponse:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.status = 200
+        self.chunks = list(chunks)
+        self.read_sizes: list[int] = []
+        self.closed = False
+
+    def read1(self, size: int) -> bytes:
+        self.read_sizes.append(size)
+        if not self.chunks:
+            return b""
+        return self.chunks.pop(0)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TimeoutReadResponse:
+    status = 200
+
+    def __init__(self, cancel_event: Event | None = None) -> None:
+        self.cancel_event = cancel_event
+        self.read_calls = 0
+        self.closed = False
+
+    def read1(self, size: int) -> bytes:
+        self.read_calls += 1
+        if self.cancel_event is not None:
+            self.cancel_event.set()
+        raise socket.timeout()
 
     def close(self) -> None:
         self.closed = True
@@ -293,6 +335,111 @@ class ProviderTests(unittest.TestCase):
                 )
             self.assertEqual(getattr(context.exception, "code", None), "cancelled")
         self.assertEqual(transport.requests, [])
+
+    def test_read1_path_emits_small_sse_events_and_stops_after_done(self) -> None:
+        event = _event(
+            {
+                "id": "completion-read1",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": "x"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": _usage(),
+            }
+        )
+        split = len(event) // 2
+        response = ReadPathResponse(
+            [b": keepalive\n\n", event[:split], event[split:], b"data: [DONE]\n\n", b"must-not-read"]
+        )
+        provider = DeepSeekProvider(transport=lambda request, timeout: response)
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+            completion = provider.complete(
+                [{"role": "user", "content": "x"}],
+                stream=True,
+                tools=[],
+                user_id="ws-opaque",
+            )
+
+        self.assertEqual(completion.content, "x")
+        self.assertEqual(completion.usage, ProviderUsage(7, 4, 2, 5))
+        self.assertEqual(response.read_sizes, [1024, 1024, 1024, 1024])
+        self.assertTrue(response.closed)
+
+    def test_read_path_rechecks_cancel_and_deadline_between_socket_reads(self) -> None:
+        cancelled = Event()
+        cancel_response = TimeoutReadResponse(cancel_event=cancelled)
+        provider = DeepSeekProvider(transport=lambda request, timeout: cancel_response)
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+            with self.assertRaises(ProviderCancelledError):
+                provider.complete(
+                    [{"role": "user", "content": "x"}],
+                    stream=True,
+                    tools=[],
+                    user_id="ws-opaque",
+                    cancel_event=cancelled,
+                )
+        self.assertTrue(cancel_response.closed)
+
+        deadline_response = TimeoutReadResponse()
+        provider = DeepSeekProvider(transport=lambda request, timeout: deadline_response)
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+            with self.assertRaises(ProviderTimeoutUnknownError):
+                provider.complete(
+                    [{"role": "user", "content": "x"}],
+                    stream=True,
+                    tools=[],
+                    user_id="ws-opaque",
+                    timeouts=ProviderTimeouts(
+                        connect_ms=1000,
+                        first_event_ms=1000,
+                        idle_ms=1000,
+                        total_ms=5,
+                    ),
+                )
+        self.assertTrue(deadline_response.closed)
+
+    def test_nonstream_and_sse_receive_buffers_are_bounded(self) -> None:
+        body_response = ReadPathResponse([b"x" * 1024])
+        provider = DeepSeekProvider(transport=lambda request, timeout: body_response)
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+            with self.assertRaises(ProviderContextBudgetError):
+                provider.complete(
+                    [{"role": "user", "content": "x"}],
+                    stream=False,
+                    tools=None,
+                    user_id="ws-opaque",
+                    max_context_bytes=512,
+                )
+        self.assertEqual(body_response.read_sizes, [1024])
+        self.assertTrue(body_response.closed)
+
+        sse_response = ReadPathResponse([b"x" * 1024])
+        provider = DeepSeekProvider(transport=lambda request, timeout: sse_response)
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+            with self.assertRaises(ProviderContextBudgetError):
+                provider.complete(
+                    [{"role": "user", "content": "x"}],
+                    stream=True,
+                    tools=[],
+                    user_id="ws-opaque",
+                    max_context_bytes=512,
+                )
+        self.assertEqual(sse_response.read_sizes, [1024])
+        self.assertTrue(sse_response.closed)
+
+    def test_production_transport_uses_a_no_redirect_handler(self) -> None:
+        import contextox.provider as provider_module
+
+        handler = provider_module._NoRedirectHandler()
+        self.assertIsNone(
+            handler.redirect_request(object(), object(), 302, "Found", {}, "http://127.0.0.1/next")
+        )
+        self.assertTrue(
+            any(type(item).__name__ == "_NoRedirectHandler" for item in provider_module._NO_REDIRECT_OPENER.handlers)
+        )
 
 
 if __name__ == "__main__":

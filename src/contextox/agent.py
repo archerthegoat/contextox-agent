@@ -67,6 +67,7 @@ from contextox.provider import (
     DeepSeekProvider,
     ProviderCancelledError,
     ProviderCompletion,
+    ProviderContextBudgetError,
     ProviderError,
     ProviderTimeouts,
     ProviderUsage,
@@ -173,12 +174,23 @@ def _opaque_user_id(workspace_id: str, provider: Any) -> str:
     return "ws-" + _sha256_text(workspace_id)
 
 
-def _provider_timeouts(budget: RunBudget) -> ProviderTimeouts:
+def _remaining_run_ms(*, budget: RunBudget, started_at: float) -> int:
+    elapsed_ms = max(0, int((time.monotonic() - started_at) * 1000))
+    return max(0, budget.max_elapsed_ms - elapsed_ms)
+
+
+def _provider_timeouts(
+    budget: RunBudget,
+    remaining_ms: int | None = None,
+) -> ProviderTimeouts:
+    def bounded(value: int) -> int:
+        return value if remaining_ms is None else min(value, remaining_ms)
+
     return ProviderTimeouts(
-        connect_ms=budget.connect_timeout_ms,
-        first_event_ms=budget.first_event_timeout_ms,
-        idle_ms=budget.idle_timeout_ms,
-        total_ms=budget.total_timeout_ms,
+        connect_ms=bounded(budget.connect_timeout_ms),
+        first_event_ms=bounded(budget.first_event_timeout_ms),
+        idle_ms=bounded(budget.idle_timeout_ms),
+        total_ms=bounded(budget.total_timeout_ms),
     )
 
 
@@ -638,12 +650,18 @@ def _append_model_delta(
     turn_index: int,
     content: str,
     public_parts: list[str],
+    public_bytes: list[int],
+    max_bytes: int,
 ) -> None:
     for start in range(0, len(content), 4096):
         piece = content[start : start + 4096]
         if not piece:
             continue
+        piece_bytes = len(piece.encode("utf-8"))
+        if public_bytes[0] + piece_bytes > max_bytes:
+            raise ProviderContextBudgetError()
         public_parts.append(piece)
+        public_bytes[0] += piece_bytes
         _append_event(
             store,
             workspace_id,
@@ -792,8 +810,35 @@ def _stop_run(
     status: Literal["blocked", "failed"],
     code: str,
 ) -> None:
-    store.fail_run(workspace_id, mission_id, run_id, status, code)
-    _append_run_failure_event(store, workspace_id, mission_id, run_id, status, code)
+    stopped = store.fail_run(workspace_id, mission_id, run_id, status, code)
+    if not _run_snapshot_matches_identity(stopped, workspace_id, mission_id, run_id):
+        raise WorkspaceStoreError("fail_run returned an invalid RunSnapshot.")
+    if stopped.status in {"cancelled", "waiting_for_human", "partial", "completed"}:
+        return
+    if stopped.status not in {"blocked", "failed"}:
+        raise WorkspaceStoreError("fail_run did not return a terminal RunSnapshot.")
+    _append_run_failure_event(
+        store,
+        workspace_id,
+        mission_id,
+        run_id,
+        stopped.status,
+        stopped.error_code or code,
+    )
+
+
+def _run_snapshot_matches_identity(
+    snapshot: object,
+    workspace_id: str,
+    mission_id: str,
+    run_id: str,
+) -> bool:
+    return (
+        isinstance(snapshot, RunSnapshot)
+        and snapshot.workspace_id == workspace_id
+        and snapshot.mission_id == mission_id
+        and snapshot.run_id == run_id
+    )
 
 
 def _store_failure(exc: WorkspaceStoreError) -> tuple[Literal["blocked", "failed"], str]:
@@ -814,7 +859,7 @@ def _check_turn_budget(
         return "model_turn_budget_exceeded"
     if tool_count >= budget.max_tool_calls:
         return "tool_call_budget_exceeded"
-    if (time.monotonic() - started_at) * 1000 >= budget.max_elapsed_ms:
+    if _remaining_run_ms(budget=budget, started_at=started_at) <= 0:
         return "elapsed_budget_exceeded"
     return None
 
@@ -930,6 +975,8 @@ def _handle_terminal(
     if isinstance(result.output, ClarificationRequest):
         if (
             result.output.clarification_id not in terminal_receipt.clarification_ids
+            or result.output.draft_version != call.arguments.draft_version
+            or result.output.draft_sha256 != call.arguments.draft_sha256
             or (
                 terminal_receipt.draft_version is not None
                 and (
@@ -942,13 +989,19 @@ def _handle_terminal(
     elif isinstance(result.output, DefinitionDraft):
         if (
             result.output.status != "in_review"
+            or result.output.version != call.arguments.draft_version
+            or result.output.sha256 != call.arguments.draft_sha256
             or terminal_receipt.draft_id != result.output.draft_id
             or terminal_receipt.draft_version != result.output.version
             or terminal_receipt.draft_sha256 != result.output.sha256
         ):
             raise _AgentFailure("terminal_result_invalid", "failed")
     elif isinstance(result.output, TerminalReceipt):
-        if result.output.model_dump(mode="json") != terminal_receipt.model_dump(mode="json"):
+        if (
+            result.output.model_dump(mode="json") != terminal_receipt.model_dump(mode="json")
+            or result.output.outcome != call.arguments.outcome
+            or result.output.source_refs != call.arguments.source_refs
+        ):
             raise _AgentFailure("terminal_result_invalid", "failed")
     final_text = "".join(public_parts)
     if final_text and len(final_text) <= 32768:
@@ -996,13 +1049,17 @@ def run_agent(
         return
 
     running_snapshot = store.mark_run_running(workspace_id, mission_id, run_id)
-    if isinstance(running_snapshot, RunSnapshot):
-        snapshot = snapshot.model_copy(update={"run": running_snapshot})
+    if not _run_snapshot_matches_identity(running_snapshot, workspace_id, mission_id, run_id):
+        raise WorkspaceStoreError("mark_run_running returned an invalid RunSnapshot.")
+    if running_snapshot.status != "running":
+        return
+    snapshot = snapshot.model_copy(update={"run": running_snapshot})
     _append_run_started(store, workspace_id, mission_id, run_id)
 
     tool_receipt_ids: list[str] = []
     tool_count = 0
     public_parts: list[str] = []
+    public_bytes = [0]
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": P0_RUN},
         {"role": "user", "content": _context_message(snapshot, tool_receipt_ids)},
@@ -1023,8 +1080,6 @@ def run_agent(
 
         if turn_index > 1:
             snapshot = store.get_context_snapshot(workspace_id, mission_id, run_id)
-            if snapshot.run.status == "cancelled":
-                return
             if (
                 snapshot.mission.workspace_id != workspace_id
                 or snapshot.mission.mission_id != mission_id
@@ -1033,6 +1088,8 @@ def run_agent(
                 or snapshot.run.run_id != run_id
             ):
                 raise WorkspaceStoreError("ContextSnapshot identity does not match the requested Run.")
+            if snapshot.run.status != "running":
+                return
             messages.append(
                 {"role": "user", "content": _context_message(snapshot, tool_receipt_ids)}
             )
@@ -1078,6 +1135,10 @@ def run_agent(
             return
 
         _append_model_started(store, workspace_id, mission_id, run_id, turn_index)
+        remaining_ms = _remaining_run_ms(budget=budget, started_at=started_at)
+        if remaining_ms <= 0:
+            _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
+            return
         try:
             completion = provider.complete(
                 messages,
@@ -1085,7 +1146,7 @@ def run_agent(
                 tools=[dict(definition) for definition in TOOL_DEFINITIONS],
                 max_tokens=budget.max_output_tokens,
                 user_id=_opaque_user_id(workspace_id, provider),
-                timeouts=_provider_timeouts(budget),
+                timeouts=_provider_timeouts(budget, remaining_ms),
                 cancel_event=cancel_event,
                 max_context_bytes=budget.max_context_bytes,
                 on_content=lambda content: _append_model_delta(
@@ -1096,6 +1157,8 @@ def run_agent(
                     turn_index,
                     content,
                     public_parts,
+                    public_bytes,
+                    budget.max_context_bytes,
                 ),
             )
         except ProviderCancelledError as exc:
@@ -1241,10 +1304,13 @@ def run_agent(
 
         batch_terminal = False
         for call in calls:
-            tool_count += 1
-            ordinal = tool_count
             if cancel_event.is_set():
                 return
+            if _remaining_run_ms(budget=budget, started_at=started_at) <= 0:
+                _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
+                return
+            tool_count += 1
+            ordinal = tool_count
             _append_tool_requested(
                 store,
                 workspace_id,
@@ -1276,6 +1342,7 @@ def run_agent(
                 _append_tool_failed(store, workspace_id, mission_id, run_id, call, "tool_result_invalid")
                 _stop_run(store, workspace_id, mission_id, run_id, "failed", "tool_result_invalid")
                 return
+            expected_arguments_sha256 = canonical_sha256(call.arguments)
             if (
                 result.call_id != call.call_id
                 or result.tool_receipt.workspace_id != workspace_id
@@ -1284,10 +1351,20 @@ def run_agent(
                 or result.tool_receipt.call_id != call.call_id
                 or result.tool_receipt.name != call.name
                 or result.tool_receipt.ordinal != ordinal
+                or result.tool_receipt.arguments_sha256 != expected_arguments_sha256
             ):
                 _append_tool_failed(store, workspace_id, mission_id, run_id, call, "tool_result_invalid")
                 _stop_run(store, workspace_id, mission_id, run_id, "failed", "tool_result_invalid")
                 return
+            if call.name in _TERMINAL_TOOL_NAMES:
+                if result.status == "succeeded" and result.terminal_snapshot is None:
+                    _append_tool_failed(store, workspace_id, mission_id, run_id, call, "terminal_result_invalid")
+                    _stop_run(store, workspace_id, mission_id, run_id, "failed", "terminal_result_invalid")
+                    return
+                if result.status == "rejected" and result.terminal_snapshot is not None:
+                    _append_tool_failed(store, workspace_id, mission_id, run_id, call, "terminal_result_invalid")
+                    _stop_run(store, workspace_id, mission_id, run_id, "failed", "terminal_result_invalid")
+                    return
             _append_tool_completed(store, workspace_id, mission_id, run_id, result)
             tool_receipt_ids.append(result.tool_receipt.receipt_id)
             messages.append(_tool_message(result))

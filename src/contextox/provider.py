@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from contextox.models import ProviderConfigSnapshot
 
@@ -23,6 +23,8 @@ DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 DEFAULT_MODEL = "deepseek-v4-flash"
 MAX_OUTPUT_TOKENS = 4096
 MAX_CONTEXT_BYTES = 262144
+READ_CHUNK_BYTES = 1024
+READ_POLL_INTERVAL_MS = 100
 
 
 class ProviderError(RuntimeError):
@@ -194,6 +196,38 @@ def _text_or_empty(value: object, field_name: str) -> str:
     return value
 
 
+def _bounded_text_append(
+    parts: list[str],
+    value: str,
+    *,
+    max_bytes: int,
+    used_bytes: list[int],
+) -> None:
+    if not value:
+        return
+    value_bytes = len(value.encode("utf-8"))
+    if used_bytes[0] + value_bytes > max_bytes:
+        raise ProviderContextBudgetError()
+    parts.append(value)
+    used_bytes[0] += value_bytes
+
+
+def _bounded_text_concat(
+    current: str,
+    value: str,
+    *,
+    max_bytes: int,
+    used_bytes: list[int],
+) -> str:
+    if not value:
+        return current
+    value_bytes = len(value.encode("utf-8"))
+    if used_bytes[0] + value_bytes > max_bytes:
+        raise ProviderContextBudgetError()
+    used_bytes[0] += value_bytes
+    return current + value
+
+
 def _response_status(response: object) -> int | None:
     status = getattr(response, "status", None)
     if type(status) is int:
@@ -209,7 +243,25 @@ class _UrllibTransport:
     """The only production transport; tests inject a local fake object."""
 
     def open(self, request: Request, timeout: float) -> object:
-        return urlopen(request, timeout=timeout)
+        return _NO_REDIRECT_OPENER.open(request, timeout=timeout)
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Prevent urllib from sending a second request to a new URL."""
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+_NO_REDIRECT_OPENER = build_opener(_NoRedirectHandler())
 
 
 class DeepSeekProvider:
@@ -348,9 +400,16 @@ class DeepSeekProvider:
                     started_at=started_at,
                     timeouts=timeouts,
                     cancel_event=cancel_event,
+                    max_context_bytes=max_context_bytes,
                     on_content=on_content,
                 )
-            return self._read_nonstream(response, cancel_event=cancel_event)
+            return self._read_nonstream(
+                response,
+                started_at=started_at,
+                timeouts=timeouts,
+                cancel_event=cancel_event,
+                max_context_bytes=max_context_bytes,
+            )
         except ProviderError:
             raise
         except (TimeoutError, socket.timeout) as exc:
@@ -388,6 +447,75 @@ class DeepSeekProvider:
         return response
 
     @staticmethod
+    def _response_reader(response: object) -> Callable[[int], object]:
+        read1 = getattr(response, "read1", None)
+        if callable(read1):
+            return read1
+        read = getattr(response, "read", None)
+        if callable(read):
+            return read
+        raise ProviderProtocolError()
+
+    @staticmethod
+    def _set_response_read_timeout(response: object, timeout_seconds: float) -> None:
+        """Apply a short socket deadline to the standard-library response.
+
+        ``HTTPResponse`` exposes its socket through a small CPython wrapper
+        chain.  The traversal is deliberately bounded and best-effort for
+        injected test responses; production urllib responses expose
+        ``settimeout`` on the underlying socket.
+        """
+
+        candidate: object | None = response
+        seen: set[int] = set()
+        for _ in range(8):
+            if candidate is None or id(candidate) in seen:
+                return
+            seen.add(id(candidate))
+            setter = getattr(candidate, "settimeout", None)
+            if callable(setter):
+                setter(timeout_seconds)
+                return
+            next_candidate = None
+            for attribute in ("_sock", "raw", "fp"):
+                value = getattr(candidate, attribute, None)
+                if value is not None and id(value) not in seen:
+                    next_candidate = value
+                    break
+            candidate = next_candidate
+
+    def _read_response_chunk(
+        self,
+        response: object,
+        *,
+        started_at: float,
+        last_event_at: float,
+        saw_event: bool,
+        timeouts: ProviderTimeouts,
+        cancel_event: Any | None,
+    ) -> object:
+        read = self._response_reader(response)
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderCancelledError()
+            now = time.monotonic()
+            total_remaining = timeouts.total_ms / 1000 - (now - started_at)
+            phase_timeout = timeouts.idle_ms if saw_event else timeouts.first_event_ms
+            phase_remaining = phase_timeout / 1000 - (now - last_event_at)
+            if total_remaining <= 0 or phase_remaining <= 0:
+                raise ProviderTimeoutUnknownError()
+            read_timeout = min(
+                total_remaining,
+                phase_remaining,
+                READ_POLL_INTERVAL_MS / 1000,
+            )
+            self._set_response_read_timeout(response, read_timeout)
+            try:
+                return read(READ_CHUNK_BYTES)
+            except (TimeoutError, socket.timeout):
+                continue
+
+    @staticmethod
     def _http_error(status: int | None) -> ProviderError:
         if status == 401:
             return ProviderAuthError()
@@ -401,23 +529,53 @@ class DeepSeekProvider:
             return ProviderUnavailableError()
         return ProviderUnavailableError()
 
-    def _read_nonstream(self, response: object, *, cancel_event: Any | None) -> ProviderCompletion:
+    def _read_nonstream(
+        self,
+        response: object,
+        *,
+        started_at: float,
+        timeouts: ProviderTimeouts,
+        cancel_event: Any | None,
+        max_context_bytes: int,
+    ) -> ProviderCompletion:
         if cancel_event is not None and cancel_event.is_set():
             raise ProviderCancelledError()
-        read = getattr(response, "read", None)
-        if callable(read):
-            raw = read()
-        elif isinstance(response, (bytes, bytearray)):
+        if isinstance(response, (bytes, bytearray)):
             raw = bytes(response)
+            if len(raw) > max_context_bytes:
+                raise ProviderContextBudgetError()
         else:
-            raise ProviderProtocolError()
-        if isinstance(raw, str):
-            raw = raw.encode("utf-8")
-        if not isinstance(raw, (bytes, bytearray)):
-            raise ProviderProtocolError()
+            body = bytearray()
+            saw_data = False
+            last_data_at = started_at
+            while True:
+                chunk = self._read_response_chunk(
+                    response,
+                    started_at=started_at,
+                    last_event_at=last_data_at,
+                    saw_event=saw_data,
+                    timeouts=timeouts,
+                    cancel_event=cancel_event,
+                )
+                if isinstance(chunk, str):
+                    try:
+                        chunk = chunk.encode("utf-8")
+                    except UnicodeEncodeError as exc:
+                        raise ProviderProtocolError() from exc
+                if not isinstance(chunk, (bytes, bytearray)):
+                    raise ProviderProtocolError()
+                chunk_bytes = bytes(chunk)
+                if not chunk_bytes:
+                    break
+                if len(body) + len(chunk_bytes) > max_context_bytes:
+                    raise ProviderContextBudgetError()
+                body.extend(chunk_bytes)
+                saw_data = True
+                last_data_at = time.monotonic()
+            raw = bytes(body)
         if cancel_event is not None and cancel_event.is_set():
             raise ProviderCancelledError()
-        payload = _strict_json_loads(bytes(raw).decode("utf-8"))
+        payload = _strict_json_loads(raw.decode("utf-8"))
         return self._completion_from_nonstream(payload)
 
     def _completion_from_nonstream(self, payload: object) -> ProviderCompletion:
@@ -485,6 +643,7 @@ class DeepSeekProvider:
         started_at: float,
         timeouts: ProviderTimeouts,
         cancel_event: Any | None,
+        max_context_bytes: int,
         on_content: Callable[[str], None] | None,
     ) -> ProviderCompletion:
         completion_id: str | None = None
@@ -498,15 +657,30 @@ class DeepSeekProvider:
         last_event_at = started_at
         content_cursor = 0
         final_usage_present = False
+        transcript_bytes = [0]
+
+        def read_chunk() -> object:
+            return self._read_response_chunk(
+                response,
+                started_at=started_at,
+                last_event_at=last_event_at,
+                saw_event=saw_event,
+                timeouts=timeouts,
+                cancel_event=cancel_event,
+            )
 
         try:
-            for data in self._iter_sse_data(response):
+            for data in self._iter_sse_data(
+                response,
+                read_chunk=read_chunk,
+                max_bytes=max_context_bytes,
+            ):
                 now = time.monotonic()
                 if cancel_event is not None and cancel_event.is_set():
                     raise ProviderCancelledError()
-                if now - started_at > timeouts.total_ms / 1000:
+                if now - started_at >= timeouts.total_ms / 1000:
                     raise ProviderTimeoutUnknownError()
-                if now - last_event_at > (
+                if now - last_event_at >= (
                     timeouts.first_event_ms if not saw_event else timeouts.idle_ms
                 ) / 1000:
                     raise ProviderTimeoutUnknownError()
@@ -514,7 +688,7 @@ class DeepSeekProvider:
                     raise ProviderProtocolError(usage=usage)
                 if data == "[DONE]":
                     done = True
-                    continue
+                    break
                 if not data:
                     continue
                 saw_event = True
@@ -525,6 +699,8 @@ class DeepSeekProvider:
                     tool_slots=tool_slots,
                     content_parts=content_parts,
                     reasoning_parts=reasoning_parts,
+                    max_bytes=max_context_bytes,
+                    used_bytes=transcript_bytes,
                 )
                 if completion_id is None:
                     completion_id = chunk_id
@@ -581,6 +757,8 @@ class DeepSeekProvider:
         tool_slots: dict[int, dict[str, str]],
         content_parts: list[str],
         reasoning_parts: list[str],
+        max_bytes: int,
+        used_bytes: list[int],
     ) -> tuple[str, ProviderUsage | None]:
         if not isinstance(chunk, dict):
             raise ProviderProtocolError()
@@ -613,12 +791,18 @@ class DeepSeekProvider:
             raise ProviderProtocolError()
         if reasoning is not None and not isinstance(reasoning, str):
             raise ProviderProtocolError()
-        if content:
-            content_parts.append(content)
-        else:
-            content_parts.append("")
-        if reasoning:
-            reasoning_parts.append(reasoning)
+        _bounded_text_append(
+            content_parts,
+            content or "",
+            max_bytes=max_bytes,
+            used_bytes=used_bytes,
+        )
+        _bounded_text_append(
+            reasoning_parts,
+            reasoning or "",
+            max_bytes=max_bytes,
+            used_bytes=used_bytes,
+        )
         raw_tool_calls = delta.get("tool_calls")
         if raw_tool_calls is not None:
             if not isinstance(raw_tool_calls, list):
@@ -650,11 +834,21 @@ class DeepSeekProvider:
                     if name is not None:
                         if not isinstance(name, str):
                             raise ProviderProtocolError()
-                        slot["name"] = slot.get("name", "") + name
+                        slot["name"] = _bounded_text_concat(
+                            slot.get("name", ""),
+                            name,
+                            max_bytes=max_bytes,
+                            used_bytes=used_bytes,
+                        )
                     if arguments is not None:
                         if not isinstance(arguments, str):
                             raise ProviderProtocolError()
-                        slot["arguments"] = slot.get("arguments", "") + arguments
+                        slot["arguments"] = _bounded_text_concat(
+                            slot.get("arguments", ""),
+                            arguments,
+                            max_bytes=max_bytes,
+                            used_bytes=used_bytes,
+                        )
         raw_usage = chunk.get("usage")
         if raw_usage is None:
             return chunk_id, None
@@ -682,7 +876,12 @@ class DeepSeekProvider:
         return tuple(calls)
 
     @staticmethod
-    def _iter_sse_data(response: object) -> Iterable[str]:
+    def _iter_sse_data(
+        response: object,
+        *,
+        read_chunk: Callable[[], object] | None = None,
+        max_bytes: int | None = None,
+    ) -> Iterable[str]:
         """Yield complete SSE data events from arbitrarily split byte chunks."""
 
         iterator = getattr(response, "iter_bytes", None)
@@ -690,10 +889,10 @@ class DeepSeekProvider:
             chunks = iterator()
         else:
             read = getattr(response, "read", None)
-            if callable(read):
+            if callable(read) or read_chunk is not None:
                 def read_chunks() -> Iterable[bytes]:
                     while True:
-                        chunk = read(8192)
+                        chunk = read_chunk() if read_chunk is not None else read(READ_CHUNK_BYTES)
                         if not chunk:
                             break
                         yield chunk
@@ -707,13 +906,23 @@ class DeepSeekProvider:
         decoder = __import__("codecs").getincrementaldecoder("utf-8")()
         buffer = ""
         data_lines: list[str] = []
+        received_bytes = 0
         for chunk in chunks:
             if isinstance(chunk, str):
+                try:
+                    chunk_bytes = len(chunk.encode("utf-8"))
+                except UnicodeEncodeError as exc:
+                    raise ProviderProtocolError() from exc
                 text = chunk
             elif isinstance(chunk, (bytes, bytearray)):
-                text = decoder.decode(bytes(chunk), final=False)
+                raw_chunk = bytes(chunk)
+                chunk_bytes = len(raw_chunk)
+                text = decoder.decode(raw_chunk, final=False)
             else:
                 raise ProviderProtocolError()
+            if max_bytes is not None and received_bytes + chunk_bytes > max_bytes:
+                raise ProviderContextBudgetError()
+            received_bytes += chunk_bytes
             buffer += text
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
