@@ -75,6 +75,22 @@ a:focus-visible {
   border: 0;
 }
 
+.icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  background: currentColor;
+  -webkit-mask-image: var(--icon-url);
+  mask-image: var(--icon-url);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
 .app-shell {
   width: 100%;
   min-width: 1100px;
@@ -190,6 +206,8 @@ a:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-direction: column;
+  gap: 9px;
   width: 100%;
   min-height: 112px;
   padding: 22px 8px;
@@ -213,10 +231,20 @@ a:focus-visible {
 
 .primary-nav-label {
   display: block;
-  max-width: 96px;
+  max-width: 100%;
   font-size: 13px;
   font-weight: 650;
   line-height: 1.25;
+}
+
+.primary-nav-icon {
+  display: inline-flex;
+  color: currentColor;
+}
+
+.primary-nav-icon .icon {
+  width: 21px;
+  height: 21px;
 }
 
 .object-pane {
@@ -355,29 +383,28 @@ a:focus-visible {
 }
 
 .tree-disclosure {
-  width: 31px;
-  flex: 0 0 31px;
-  overflow: hidden;
+  display: inline-flex;
+  width: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-  text-indent: -100px;
 }
 
-.tree-disclosure::after {
-  display: block;
-  width: 6px;
-  height: 6px;
-  margin-left: 3px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  content: "";
-  transform: rotate(45deg) translateY(-2px);
+.tree-disclosure .icon {
+  width: 14px;
+  height: 14px;
 }
 
-.tree-folder .tree-disclosure::after {
-  transform: rotate(45deg) translateY(-2px);
+.tree-row-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: #60738e;
+}
+
+.tree-row-icon .icon {
+  width: 17px;
+  height: 17px;
 }
 
 .tree-row-label {
@@ -402,22 +429,35 @@ a:focus-visible {
 .file-badge {
   width: 20px;
   height: 20px;
-  color: #ffffff;
+  color: #1b9c60;
+  border-radius: 4px;
 }
 
 .file-badge-csv {
-  background: #1bb36a;
+  background: #e7f8ef;
 }
 
 .file-badge-md {
-  background: #2176dd;
+  color: #2176dd;
+  background: #edf5ff;
+}
+
+.file-badge .icon {
+  width: 14px;
+  height: 14px;
 }
 
 .object-type-tag {
   width: 20px;
   height: 20px;
+  border-radius: 4px;
   background: #edf1f7;
   color: #64738a;
+}
+
+.object-type-tag .icon {
+  width: 14px;
+  height: 14px;
 }
 
 .center-panel {
@@ -439,12 +479,10 @@ a:focus-visible {
   padding-left: 19px;
 }
 
-.object-tab,
-.object-tab-add {
+.object-tab {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 17px;
   height: 59px;
   padding: 0 16px;
   background: transparent;
@@ -454,8 +492,7 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-.object-tab:hover,
-.object-tab-add:hover {
+.object-tab:hover {
   color: var(--blue);
 }
 
@@ -472,19 +509,6 @@ a:focus-visible {
   height: 2px;
   background: var(--blue);
   content: "";
-}
-
-.object-tab-close {
-  color: #9aa6b6;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.object-tab-add {
-  padding-right: 10px;
-  padding-left: 10px;
-  color: #5b6e85;
-  font-size: 12px;
 }
 
 .center-toolbar {
@@ -514,8 +538,29 @@ a:focus-visible {
   position: relative;
   min-height: 0;
   flex: 1;
-  overflow: hidden;
+  overflow: auto;
   background: #ffffff;
+}
+
+.relationship-canvas-inner {
+  position: relative;
+  width: 100%;
+  min-width: 720px;
+  height: 100%;
+  min-height: 540px;
+  --node-radius: 26px;
+  --source-center-x: 11%;
+  --source-branch-x: 20.8%;
+  --entity-center-x: 35.5%;
+  --entity-join-x: 46.8%;
+  --conflict-center-x: 57.8%;
+  --confirmation-center-x: 73.8%;
+  --contract-center-x: 89.05%;
+}
+
+.relationship-canvas:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -3px;
 }
 
 .graph-wires {
@@ -532,52 +577,67 @@ a:focus-visible {
 }
 
 .wire-source-branch {
-  top: 22%;
-  bottom: 44%;
-  left: 23.2%;
+  top: calc(7% + var(--node-radius));
+  bottom: calc(33% - var(--node-radius));
+  left: var(--source-branch-x);
   width: 1px;
 }
 
 .wire-source-top,
 .wire-source-middle,
 .wire-source-bottom {
-  left: 22%;
-  width: 9.5%;
+  left: calc(var(--source-center-x) + var(--node-radius));
+  width: calc(var(--source-branch-x) - var(--source-center-x) - var(--node-radius));
   height: 1px;
 }
 
 .wire-source-top {
-  top: 22%;
+  top: calc(7% + var(--node-radius));
 }
 
 .wire-source-middle {
-  top: 39%;
+  top: calc(37% + var(--node-radius));
 }
 
 .wire-source-bottom {
-  top: 56%;
+  top: calc(67% + var(--node-radius));
+}
+
+.wire-source-to-entity-top,
+.wire-source-to-entity-bottom {
+  left: var(--source-branch-x);
+  width: calc(var(--entity-center-x) - var(--source-branch-x) - var(--node-radius));
+  height: 1px;
+}
+
+.wire-source-to-entity-top {
+  top: calc(20% + var(--node-radius));
+}
+
+.wire-source-to-entity-bottom {
+  top: calc(56% + var(--node-radius));
 }
 
 .wire-entity-join {
-  top: 29%;
-  bottom: 41%;
-  left: 49.2%;
+  top: calc(20% + var(--node-radius));
+  bottom: calc(44% - var(--node-radius));
+  left: var(--entity-join-x);
   width: 1px;
 }
 
 .wire-entity-top,
 .wire-entity-bottom {
-  left: 46.5%;
-  width: 2.8%;
+  left: calc(var(--entity-center-x) + var(--node-radius));
+  width: calc(var(--entity-join-x) - var(--entity-center-x) - var(--node-radius));
   height: 1px;
 }
 
 .wire-entity-top {
-  top: 29%;
+  top: calc(20% + var(--node-radius));
 }
 
 .wire-entity-bottom {
-  top: 56%;
+  top: calc(56% + var(--node-radius));
 }
 
 .wire-conflict,
@@ -587,26 +647,25 @@ a:focus-visible {
 }
 
 .wire-conflict {
-  top: 42%;
-  left: 49.2%;
-  width: 1.8%;
+  top: calc(37% + var(--node-radius));
+  left: var(--entity-join-x);
+  width: calc(var(--conflict-center-x) - var(--entity-join-x) - var(--node-radius));
 }
 
 .wire-confirmation {
-  top: 42%;
-  left: 66.5%;
-  width: 2.3%;
+  top: calc(37% + var(--node-radius));
+  left: calc(var(--conflict-center-x) + var(--node-radius));
+  width: calc(var(--confirmation-center-x) - var(--conflict-center-x) - var(--node-radius) - var(--node-radius));
 }
 
 .wire-contract {
-  top: 42%;
-  left: 80.1%;
-  width: 2.7%;
+  top: calc(37% + var(--node-radius));
+  left: calc(var(--confirmation-center-x) + var(--node-radius));
+  width: calc(var(--contract-center-x) - var(--confirmation-center-x) - var(--node-radius) - var(--node-radius));
 }
 
-.wire-source-top::after,
-.wire-source-middle::after,
-.wire-source-bottom::after,
+.wire-source-to-entity-top::after,
+.wire-source-to-entity-bottom::after,
 .wire-conflict::after,
 .wire-confirmation::after,
 .wire-contract::after {
@@ -628,123 +687,151 @@ a:focus-visible {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  min-height: 64px;
-  padding: 8px 11px 7px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #ffffff;
-  box-shadow: 0 2px 8px rgba(26, 48, 77, 0.035);
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
   color: var(--ink);
-  text-align: left;
-  transition: border-color 130ms ease, box-shadow 130ms ease, background-color 130ms ease;
+  text-align: center;
 }
 
 .graph-node:hover,
 .graph-node-selected {
-  border-color: var(--blue);
-  background: #fbfdff;
-  box-shadow: 0 0 0 2px rgba(22, 116, 243, 0.1);
+  background: transparent;
+  box-shadow: none;
 }
 
 .graph-source {
-  width: 21%;
+  left: var(--source-center-x);
+  width: 128px;
+  transform: translateX(-50%);
 }
 
 .graph-source-top {
-  top: 17%;
-  left: 2%;
+  top: 7%;
 }
 
 .graph-source-middle {
-  top: 34%;
-  left: 2%;
+  top: 37%;
 }
 
 .graph-source-bottom {
-  top: 51%;
-  left: 2%;
+  top: 67%;
 }
 
 .graph-entity {
-  width: 16%;
+  left: var(--entity-center-x);
+  width: 112px;
+  transform: translateX(-50%);
 }
 
 .graph-entity-top {
-  top: 24%;
-  left: 30.3%;
+  top: 20%;
 }
 
 .graph-entity-bottom {
-  top: 51%;
-  left: 30.3%;
+  top: 56%;
 }
 
 .graph-conflict {
-  top: 34%;
-  left: 51%;
-  width: 15.7%;
-  border-color: #f2c8cc;
-  background: var(--conflict-soft);
+  top: 37%;
+  left: var(--conflict-center-x);
+  width: 112px;
+  transform: translateX(-50%);
 }
 
 .graph-confirmation {
-  top: 34%;
-  left: 66.7%;
-  width: 13.8%;
-  border-color: #f1d6a3;
-  background: var(--confirm-soft);
+  top: 37%;
+  left: var(--confirmation-center-x);
+  width: 122px;
+  transform: translateX(-50%);
 }
 
 .graph-contract {
-  top: 34%;
-  left: 80.5%;
-  width: 17.7%;
-  border-color: #d9caff;
-  background: var(--contract-soft);
+  top: 37%;
+  left: var(--contract-center-x);
+  width: 136px;
+  transform: translateX(-50%);
 }
 
-.graph-node-kind {
-  margin-bottom: 6px;
+.graph-node-icon {
+  display: inline-flex;
+  width: 52px;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--blue-line);
+  border-radius: 50%;
+  background: var(--blue-soft);
   color: var(--blue);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-  white-space: nowrap;
+  transition: border-color 130ms ease, box-shadow 130ms ease, background-color 130ms ease;
+}
+
+.graph-node-icon .icon {
+  width: 23px;
+  height: 23px;
+}
+
+.graph-node:hover .graph-node-icon,
+.graph-node-selected .graph-node-icon {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(22, 116, 243, 0.12);
 }
 
 .graph-node-title {
-  max-width: 100%;
-  overflow: hidden;
+  display: block;
+  width: 100%;
+  min-height: 2.6em;
+  margin-top: 9px;
   color: var(--ink);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.graph-node-selected .graph-node-title {
+  color: var(--blue);
 }
 
 .graph-node-subtitle {
-  max-width: 100%;
-  margin-top: 4px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: #5d6f86;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: normal;
 }
 
-.graph-conflict .graph-node-kind {
+.graph-source .graph-node-icon,
+.graph-entity .graph-node-icon {
+  border-color: var(--blue-line);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.graph-conflict .graph-node-icon {
+  border-color: #f2c8cc;
+  background: var(--conflict-soft);
   color: var(--conflict);
 }
 
-.graph-confirmation .graph-node-kind {
+.graph-confirmation .graph-node-icon {
+  border-color: #f1d6a3;
+  background: var(--confirm-soft);
   color: var(--confirm);
 }
 
-.graph-contract .graph-node-kind {
+.graph-contract .graph-node-icon {
+  border-color: #d9caff;
+  background: var(--contract-soft);
   color: var(--contract);
 }
 
@@ -829,8 +916,34 @@ a:focus-visible {
 }
 
 .agent-panel-toggle {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
   color: #53657c;
   font-size: 11px;
+}
+
+.agent-panel-toggle .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.agent-panel-toggle:hover {
+  background: var(--blue-soft);
+}
+
+.agent-panel-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.agent-panel-content[hidden] {
+  display: none;
 }
 
 .agent-conversation {
@@ -936,7 +1049,6 @@ a:focus-visible {
   }
 
   .object-tab {
-    gap: 9px;
     padding-right: 11px;
     padding-left: 11px;
   }

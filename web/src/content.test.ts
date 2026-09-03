@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 
 import {
   AGENT_COPY,
@@ -6,9 +8,11 @@ import {
   AREA_NAV,
   AREA_NAV_PRESENTATION,
   DEMO_MESSAGES,
+  ICON_URLS,
   OBJECT_TABS,
   navigationForAreas,
 } from "./App";
+import App from "./App";
 import type { WorkbenchSnapshot } from "./api/client";
 
 describe("ContextOx Workbench v3 content boundaries", () => {
@@ -20,10 +24,10 @@ describe("ContextOx Workbench v3 content boundaries", () => {
       "contract",
     ]);
     expect(AREA_NAV.map((area) => area.label)).toEqual([
-      "Sources",
-      "Mission",
-      "Clarifications",
-      "Contract",
+      "资料来源",
+      "任务",
+      "待澄清",
+      "业务契约",
     ]);
   });
 
@@ -41,7 +45,7 @@ describe("ContextOx Workbench v3 content boundaries", () => {
 
   it("keeps the Mission relationship demo grounded in synthetic objects", () => {
     expect(OBJECT_TABS).toEqual([
-      { id: "mission", label: "统一-高潜客户定义" },
+      { id: "mission", label: "高潜客户定义" },
       { id: "relationship", label: "客户粒度关系" },
     ]);
     expect(DEMO_MESSAGES.map(({ role }) => role)).toEqual(["agent", "user", "agent"]);
@@ -52,11 +56,43 @@ describe("ContextOx Workbench v3 content boundaries", () => {
     expect(Object.values(AREA_CONTENT)).toHaveLength(4);
     expect(Object.values(AREA_CONTENT).every((area) => area.emptyTitle && area.emptyBody)).toBe(true);
     expect(Object.values(AREA_CONTENT).map((area) => area.label)).toEqual([
-      "Sources",
-      "Mission",
-      "Clarifications",
-      "Contract",
+      "资料来源",
+      "任务",
+      "待澄清",
+      "业务契约",
     ]);
+  });
+
+  it("keeps the approved static icon set local and package-free", () => {
+    expect(Object.keys(ICON_URLS)).toEqual([
+      "archive",
+      "target",
+      "question-mark-circled",
+      "file-text",
+      "reader",
+      "cube",
+      "mix",
+      "double-arrow-left",
+      "double-arrow-right",
+      "chevron-down",
+    ]);
+    expect(Object.values(ICON_URLS).every((url) => url.includes("/assets/icons/"))).toBe(true);
+  });
+
+  it("renders the icon navigation and truthful control seams", () => {
+    const markup = renderToStaticMarkup(createElement(App));
+
+    expect(markup.match(/primary-nav-icon/g)).toHaveLength(4);
+    expect(markup.match(/graph-node-icon/g)).toHaveLength(8);
+    expect(markup).toContain("tabindex=\"0\"");
+    expect(markup).toContain("aria-label=\"客户粒度关系图，可横向滚动查看\"");
+    expect(markup).toContain("aria-expanded=\"true\"");
+    expect(markup).toContain("aria-controls=\"agent-panel-content\"");
+    expect(markup).not.toContain("object-tab-close");
+    expect(markup).not.toContain("object-tab-add");
+    expect(markup).not.toContain("aria-label=\"打开对象\"");
+    expect(markup).not.toContain(">关闭<");
+    expect(markup).not.toContain(">打开<");
   });
 
   it("labels the Agent composer as disabled demo mode and the human speaker as 用户", () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 import { fetchWorkbench, type WorkbenchSnapshot } from "./api/client";
 import "./styles.css";
@@ -13,34 +13,64 @@ export type AreaContent = {
   emptyBody: string;
 };
 
+export type IconName =
+  | "archive"
+  | "target"
+  | "question-mark-circled"
+  | "file-text"
+  | "reader"
+  | "cube"
+  | "mix"
+  | "double-arrow-left"
+  | "double-arrow-right"
+  | "chevron-down";
+
+export const ICON_URLS: Record<IconName, string> = {
+  archive: new URL("./assets/icons/archive.svg", import.meta.url).href,
+  target: new URL("./assets/icons/target.svg", import.meta.url).href,
+  "question-mark-circled": new URL("./assets/icons/question-mark-circled.svg", import.meta.url).href,
+  "file-text": new URL("./assets/icons/file-text.svg", import.meta.url).href,
+  reader: new URL("./assets/icons/reader.svg", import.meta.url).href,
+  cube: new URL("./assets/icons/cube.svg", import.meta.url).href,
+  mix: new URL("./assets/icons/mix.svg", import.meta.url).href,
+  "double-arrow-left": new URL("./assets/icons/double-arrow-left.svg", import.meta.url).href,
+  "double-arrow-right": new URL("./assets/icons/double-arrow-right.svg", import.meta.url).href,
+  "chevron-down": new URL("./assets/icons/chevron-down.svg", import.meta.url).href,
+};
+
+function Icon({ name, className = "" }: { name: IconName; className?: string }) {
+  const style = { "--icon-url": `url("${ICON_URLS[name]}")` } as CSSProperties;
+  return <span className={`icon ${className}`.trim()} aria-hidden="true" style={style} />;
+}
+
 export const AREA_CONTENT: Record<AreaId, AreaContent> = {
   sources: {
-    label: "Sources",
-    title: "授权来源",
+    label: "资料来源",
+    title: "资料来源",
     description: "查看已授权的资料与它们在定义工作中的位置。",
-    emptyTitle: "暂无来源对象",
+    emptyTitle: "暂无资料来源",
     emptyBody: "来源导入将在下一阶段开放。",
   },
   mission: {
-    label: "Mission",
-    title: "统一-高潜客户定义",
+    label: "任务",
+    title: "高潜客户定义",
     description: "围绕一个清晰目标，把来源、实体、冲突和确认串成可回看的工作链。",
-    emptyTitle: "暂无 Mission",
+    emptyTitle: "暂无任务",
     emptyBody: "任务入口将在下一阶段开放。",
   },
   clarifications: {
-    label: "Clarifications",
-    title: "待确认问题",
+    label: "待澄清",
+    title: "待澄清问题",
     description: "把定义中的未知交给合适的人确认，再回到同一个工作对象。",
     emptyTitle: "暂无澄清请求",
     emptyBody: "澄清入口将在下一阶段开放。",
   },
   contract: {
-    label: "Contract",
-    title: "Contract 草案",
+    label: "业务契约",
+    title: "业务契约草案",
     description: "让已经确认的定义保留来源、版本和责任边界。",
-    emptyTitle: "暂无 Contract",
-    emptyBody: "Contract 入口将在下一阶段开放。",
+    emptyTitle: "暂无业务契约",
+    emptyBody: "业务契约入口将在下一阶段开放。",
   },
 };
 
@@ -51,10 +81,17 @@ export type AreaNavigationItem = {
 };
 
 export const AREA_NAV_PRESENTATION: Record<AreaId, Omit<AreaNavigationItem, "id">> = {
-  sources: { label: "Sources", description: "授权资料" },
-  mission: { label: "Mission", description: "任务对象" },
-  clarifications: { label: "Clarifications", description: "待确认问题" },
-  contract: { label: "Contract", description: "定义版本" },
+  sources: { label: "资料来源", description: "授权资料" },
+  mission: { label: "任务", description: "当前任务" },
+  clarifications: { label: "待澄清", description: "待澄清问题" },
+  contract: { label: "业务契约", description: "定义版本" },
+};
+
+export const AREA_NAV_ICONS: Record<AreaId, IconName> = {
+  sources: "archive",
+  mission: "target",
+  clarifications: "question-mark-circled",
+  contract: "file-text",
 };
 
 export const AREA_NAV: AreaNavigationItem[] = [
@@ -105,7 +142,7 @@ export const DEMO_MESSAGES: AgentMessage[] = [
 export type ObjectTabId = "mission" | "relationship";
 
 export const OBJECT_TABS: Array<{ id: ObjectTabId; label: string }> = [
-  { id: "mission", label: "统一-高潜客户定义" },
+  { id: "mission", label: "高潜客户定义" },
   { id: "relationship", label: "客户粒度关系" },
 ];
 
@@ -163,7 +200,7 @@ function PrimaryRail({
   onAreaChange: (area: AreaId) => void;
 }) {
   return (
-    <aside className="primary-rail" aria-label="Workspace modules">
+    <aside className="primary-rail" aria-label="工作区模块">
       <nav className="primary-nav" aria-label="主要模块">
         {areas.map((area) => {
           const isActive = activeArea === area.id;
@@ -173,8 +210,12 @@ function PrimaryRail({
               type="button"
               className={`primary-nav-item${isActive ? " primary-nav-item-active" : ""}`}
               aria-current={isActive ? "page" : undefined}
+              title={area.description}
               onClick={() => onAreaChange(area.id)}
             >
+              <span className="primary-nav-icon">
+                <Icon name={AREA_NAV_ICONS[area.id]} />
+              </span>
               <span className="primary-nav-label">{area.label}</span>
             </button>
           );
@@ -194,9 +235,9 @@ function ObjectPane({
   onObjectSelect: (objectId: MissionObjectId) => void;
 }) {
   return (
-    <aside className="object-pane" aria-label="Mission 对象">
+    <aside className="object-pane" aria-label="任务对象">
       <div className="object-pane-header">
-        <h2>Mission</h2>
+        <h2>任务</h2>
         <div className="object-pane-actions">
           <button type="button" aria-label="新增对象">
             新增
@@ -208,11 +249,11 @@ function ObjectPane({
       </div>
 
       <label className="object-search">
-        <span className="sr-only">搜索 Mission 内容</span>
-        <input type="search" placeholder="搜索 Mission 内容" />
+        <span className="sr-only">搜索任务内容</span>
+        <input type="search" placeholder="搜索任务内容" />
       </label>
 
-      <div className="object-tree" role="tree" aria-label="Mission 对象树">
+      <div className="object-tree" role="tree" aria-label="任务对象树">
         <button
           type="button"
           className={`tree-row tree-root${selectedObject === "mission" ? " tree-row-selected" : ""}`}
@@ -221,15 +262,21 @@ function ObjectPane({
           onClick={() => onObjectSelect("mission")}
         >
           <span className="tree-disclosure" aria-hidden="true">
-            展开
+            <Icon name="chevron-down" />
           </span>
-          <span className="tree-row-label">统一-高潜客户定义</span>
+          <span className="tree-row-icon">
+            <Icon name="target" />
+          </span>
+          <span className="tree-row-label">高潜客户定义</span>
         </button>
 
         <div className="tree-children" role="group">
           <button type="button" className="tree-row tree-folder" role="treeitem" aria-expanded="true">
             <span className="tree-disclosure" aria-hidden="true">
-              展开
+              <Icon name="chevron-down" />
+            </span>
+            <span className="tree-row-icon">
+              <Icon name="archive" />
             </span>
             <span className="tree-row-label">数据与文档</span>
           </button>
@@ -243,7 +290,7 @@ function ObjectPane({
               onClick={() => onObjectSelect("customers")}
             >
               <span className="file-badge file-badge-csv" aria-hidden="true">
-                CSV
+                <Icon name="file-text" />
               </span>
               <span className="tree-row-label">客户主数据.csv</span>
             </button>
@@ -255,7 +302,7 @@ function ObjectPane({
               onClick={() => onObjectSelect("orders")}
             >
               <span className="file-badge file-badge-csv" aria-hidden="true">
-                CSV
+                <Icon name="file-text" />
               </span>
               <span className="tree-row-label">订单明细.csv</span>
             </button>
@@ -267,7 +314,7 @@ function ObjectPane({
               onClick={() => onObjectSelect("notes")}
             >
               <span className="file-badge file-badge-md" aria-hidden="true">
-                MD
+                <Icon name="reader" />
               </span>
               <span className="tree-row-label">业务口径说明.md</span>
             </button>
@@ -282,10 +329,10 @@ function ObjectPane({
           onClick={() => onObjectSelect("relationship")}
         >
           <span className="tree-disclosure" aria-hidden="true">
-            展开
+            <Icon name="chevron-down" />
           </span>
           <span className="object-type-tag" aria-hidden="true">
-            图
+            <Icon name="mix" />
           </span>
           <span className="tree-row-label">客户粒度关系</span>
         </button>
@@ -296,25 +343,18 @@ function ObjectPane({
 
 function OpenObjectTabs({ activeTab, onTabChange }: { activeTab: ObjectTabId; onTabChange: (tab: ObjectTabId) => void }) {
   return (
-    <div className="center-tabs" role="tablist" aria-label="已打开对象">
+    <div className="center-tabs" aria-label="已打开对象">
       {OBJECT_TABS.map((tab) => (
         <button
           key={tab.id}
           type="button"
-          role="tab"
-          aria-selected={activeTab === tab.id}
+          aria-pressed={activeTab === tab.id}
           className={`object-tab${activeTab === tab.id ? " object-tab-active" : ""}`}
           onClick={() => onTabChange(tab.id)}
         >
-          <span>{tab.label}</span>
-          <span className="object-tab-close" aria-hidden="true">
-            关闭
-          </span>
+          {tab.label}
         </button>
       ))}
-      <button type="button" className="object-tab-add" aria-label="打开对象">
-        打开
-      </button>
     </div>
   );
 }
@@ -331,6 +371,7 @@ type GraphNodeId =
 
 type GraphNodeProps = {
   id: GraphNodeId;
+  icon: IconName;
   kind: string;
   title: string;
   subtitle: string;
@@ -339,16 +380,18 @@ type GraphNodeProps = {
   onSelect: (id: GraphNodeProps["id"]) => void;
 };
 
-function GraphNode({ id, kind, title, subtitle, className, selected, onSelect }: GraphNodeProps) {
+function GraphNode({ id, icon, kind, title, subtitle, className, selected, onSelect }: GraphNodeProps) {
   return (
     <button
       type="button"
       className={`graph-node ${className}${selected ? " graph-node-selected" : ""}`}
       aria-pressed={selected}
-      aria-label={`${title}，${subtitle}`}
+      aria-label={`${title}，${kind}，${subtitle}`}
       onClick={() => onSelect(id)}
     >
-      <span className="graph-node-kind">{kind}</span>
+      <span className="graph-node-icon">
+        <Icon name={icon} />
+      </span>
       <span className="graph-node-title">{title}</span>
       <span className="graph-node-subtitle">{subtitle}</span>
     </button>
@@ -362,6 +405,8 @@ function GraphWires() {
       <span className="wire wire-source-top" />
       <span className="wire wire-source-middle" />
       <span className="wire wire-source-bottom" />
+      <span className="wire wire-source-to-entity-top" />
+      <span className="wire wire-source-to-entity-bottom" />
       <span className="wire wire-entity-join" />
       <span className="wire wire-entity-top" />
       <span className="wire wire-entity-bottom" />
@@ -380,80 +425,90 @@ function RelationshipGraph({
   onNodeSelect: (id: GraphNodeProps["id"]) => void;
 }) {
   return (
-    <section className="relationship-canvas" aria-label="客户粒度关系图">
-      <GraphWires />
-      <GraphNode
-        id="customers-source"
-        kind="来源 · CSV"
-        title="客户主数据.csv"
-        subtitle="数据文件"
-        className="graph-source graph-source-top"
-        selected={selectedNode === "customers-source"}
-        onSelect={onNodeSelect}
-      />
-      <GraphNode
-        id="orders-source"
-        kind="来源 · CSV"
-        title="订单明细.csv"
-        subtitle="数据文件"
-        className="graph-source graph-source-middle"
-        selected={selectedNode === "orders-source"}
-        onSelect={onNodeSelect}
-      />
-      <GraphNode
-        id="notes-source"
-        kind="来源 · MD"
-        title="业务口径说明.md"
-        subtitle="文档文件"
-        className="graph-source graph-source-bottom"
-        selected={selectedNode === "notes-source"}
-        onSelect={onNodeSelect}
-      />
-      <GraphNode
-        id="customers-entity"
-        kind="实体"
-        title="客户实体"
-        subtitle="核心实体"
-        className="graph-entity graph-entity-top"
-        selected={selectedNode === "customers-entity"}
-        onSelect={onNodeSelect}
-      />
-      <GraphNode
-        id="orders-entity"
-        kind="实体"
-        title="订单实体"
-        subtitle="核心实体"
-        className="graph-entity graph-entity-bottom"
-        selected={selectedNode === "orders-entity"}
-        onSelect={onNodeSelect}
-      />
-      <GraphNode
-        id="conflict"
-        kind="定义冲突"
-        title="口径冲突"
-        subtitle="客户粒度不同"
-        className="graph-conflict"
-        selected={selectedNode === "conflict"}
-        onSelect={onNodeSelect}
-      />
-      <GraphNode
-        id="confirmation"
-        kind="用户确认"
-        title="待用户确认"
-        subtitle="退款订单是否计入净收入"
-        className="graph-confirmation"
-        selected={selectedNode === "confirmation"}
-        onSelect={onNodeSelect}
-      />
-      <GraphNode
-        id="contract"
-        kind="Contract draft"
-        title="Contract 草案"
-        subtitle="定义与规则草案"
-        className="graph-contract"
-        selected={selectedNode === "contract"}
-        onSelect={onNodeSelect}
-      />
+    <section className="relationship-canvas" aria-label="客户粒度关系图，可横向滚动查看" tabIndex={0}>
+      <div className="relationship-canvas-inner">
+        <GraphWires />
+        <GraphNode
+          id="customers-source"
+          icon="file-text"
+          kind="来源"
+          title="客户主数据.csv"
+          subtitle="CSV 文件"
+          className="graph-source graph-source-top"
+          selected={selectedNode === "customers-source"}
+          onSelect={onNodeSelect}
+        />
+        <GraphNode
+          id="orders-source"
+          icon="file-text"
+          kind="来源"
+          title="订单明细.csv"
+          subtitle="CSV 文件"
+          className="graph-source graph-source-middle"
+          selected={selectedNode === "orders-source"}
+          onSelect={onNodeSelect}
+        />
+        <GraphNode
+          id="notes-source"
+          icon="reader"
+          kind="来源"
+          title="业务口径说明.md"
+          subtitle="MD 文档"
+          className="graph-source graph-source-bottom"
+          selected={selectedNode === "notes-source"}
+          onSelect={onNodeSelect}
+        />
+        <GraphNode
+          id="customers-entity"
+          icon="cube"
+          kind="实体"
+          title="客户实体"
+          subtitle="核心实体"
+          className="graph-entity graph-entity-top"
+          selected={selectedNode === "customers-entity"}
+          onSelect={onNodeSelect}
+        />
+        <GraphNode
+          id="orders-entity"
+          icon="cube"
+          kind="实体"
+          title="订单实体"
+          subtitle="核心实体"
+          className="graph-entity graph-entity-bottom"
+          selected={selectedNode === "orders-entity"}
+          onSelect={onNodeSelect}
+        />
+        <GraphNode
+          id="conflict"
+          icon="mix"
+          kind="定义冲突"
+          title="口径冲突"
+          subtitle="客户粒度不同"
+          className="graph-conflict"
+          selected={selectedNode === "conflict"}
+          onSelect={onNodeSelect}
+        />
+        <GraphNode
+          id="confirmation"
+          icon="question-mark-circled"
+          kind="用户确认"
+          title="待用户确认"
+          subtitle="退款订单是否计入净收入"
+          className="graph-confirmation"
+          selected={selectedNode === "confirmation"}
+          onSelect={onNodeSelect}
+        />
+        <GraphNode
+          id="contract"
+          icon="file-text"
+          kind="业务契约"
+          title="业务契约草案"
+          subtitle="定义与规则草案"
+          className="graph-contract"
+          selected={selectedNode === "contract"}
+          onSelect={onNodeSelect}
+        />
+      </div>
     </section>
   );
 }
@@ -524,6 +579,8 @@ function AgentMessage({ message }: { message: AgentMessage }) {
 
 function AgentPanel() {
   const [isOpen, setIsOpen] = useState(true);
+  const contentId = "agent-panel-content";
+  const toggleLabel = isOpen ? "折叠演示对话" : "展开演示对话";
 
   return (
     <aside className={`agent-panel${isOpen ? "" : " agent-panel-collapsed"}`} aria-label="演示对话">
@@ -535,29 +592,31 @@ function AgentPanel() {
         <button
           type="button"
           className="agent-panel-toggle"
-          aria-label={isOpen ? "关闭演示对话" : "打开演示对话"}
+          aria-label={toggleLabel}
+          aria-expanded={isOpen}
+          aria-controls={contentId}
+          title={toggleLabel}
           onClick={() => setIsOpen((value) => !value)}
         >
-          {isOpen ? "关闭" : "打开"}
+          <Icon name={isOpen ? "double-arrow-right" : "double-arrow-left"} />
+          <span className="sr-only">{toggleLabel}</span>
         </button>
       </div>
-      {isOpen ? (
-        <>
-          <div className="agent-conversation" aria-label="演示消息">
-            {DEMO_MESSAGES.map((message) => (
-              <AgentMessage key={message.id} message={message} />
-            ))}
-          </div>
-          <div className="agent-composer">
-            <textarea
-              disabled
-              rows={3}
-              placeholder={AGENT_COPY.composerPlaceholder}
-              aria-label={AGENT_COPY.composerPlaceholder}
-            />
-          </div>
-        </>
-      ) : null}
+      <div id={contentId} className="agent-panel-content" hidden={!isOpen}>
+        <div className="agent-conversation" aria-label="演示消息">
+          {DEMO_MESSAGES.map((message) => (
+            <AgentMessage key={message.id} message={message} />
+          ))}
+        </div>
+        <div className="agent-composer">
+          <textarea
+            disabled
+            rows={3}
+            placeholder={AGENT_COPY.composerPlaceholder}
+            aria-label={AGENT_COPY.composerPlaceholder}
+          />
+        </div>
+      </div>
     </aside>
   );
 }
