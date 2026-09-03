@@ -114,3 +114,18 @@ WorkspaceSwitcher.tsx/测试、生成类型/client、后端、图片/图标资�
 保守翻译版：只做本卡目标和 owned files 内的一个检查点，有证据地报告，不补不存在的业务事实。
 增强执行版：先核验授权与基线，再按 §5 顺序实现，用 §7 公共行为反例验证，并按 §8 交付；任何新范围先报告。
 可直接复制版本：请完整阅读本执行卡和 §3 权威材料，逐项核验正式派发消息的 card hash、共享契约批准、base/worktree 与权限。当前 PENDING 未解除就不要写产品代码；解除后只按 §4–7 做一个检查点，不改其他 worker 文件、不再委派，最后按 §8 回报并等待主协调者复核。
+
+## 11. 实施绑定记录（2026-09-03）
+
+本节只追加本次调度事实，解除的是本卡模块实现的开工等待，不改变前文目标、文件所有权、验证要求与停止条件。真实材料、真实模型、完整集成和人工验收门未解除。各代码 worktree 继续使用共同基线内的 v1.0 启动卡；下面的启动卡 hash 指该不可变版本，不包含本节新增记录。
+
+- 共享契约：path2-shared-contract-v0.1；SHA-256：883aa4d4e7752ae8445f65f6d592effa52524ce156957a14c5b8c79c24ef017b。人已在主协调会话确认，批准记录见本地提交 bfdb97fd0321455a1d12d6412cf7ad589046e212 的 commit body 与本次正式派发。
+- 共同代码基线：73ff723ca1859e569351fb7d1047ce706c560f99（codex/path2-shared-contract），已由主协调者复核。
+- 启动卡：PATH2-W3 v1.0；派发 hash：0aa114e9828da5f50b23b852f4d6ea5c49bfc10669c246bd874c3ccbb34be5a9。
+- 执行会话：路径二 W3 Workbench交互；thread_id：01a066d9-216f-74f3-91a6-6f03a4fac27f；host：local。
+- 执行模型：gpt-5.6-luna；reasoning：max；唯一执行者，不再委派。
+- worktree：/Users/archer/.codex/worktrees/544c/contextox-agent。
+- 执行分支：codex/path2-w3-workbench；已读回 HEAD 从共同代码基线起步。
+- 本次派发状态：RUNNING，任务已接单并完成基线核对，不是仅创建文档。模块交付与其最终检查结果仍待该任务提交后复核；本节不自动更新后续进度。
+- Git 权限：仅本地限定文件与小步 commit；不 push、不 merge main、不发布/部署、不删除分支或 worktree。
+- 真实案例：NOT RUN；真实模型：NOT RUN；人工验收：PENDING。共享基线检查通过不替代本模块或端到端验证。
