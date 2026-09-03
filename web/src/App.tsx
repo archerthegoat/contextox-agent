@@ -1,6 +1,15 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
 import { fetchWorkbench, type WorkbenchSnapshot, type Workspace } from "./api/client";
+import {
+  Path2AgentContent,
+  Path2Workbench,
+  statusLabel,
+  usePath2Workbench,
+  type DefinitionDraft,
+  type Path2WorkbenchState,
+  type SourceRevision,
+} from "./Path2Workbench";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
 import "./styles.css";
 
@@ -109,38 +118,10 @@ export function navigationForAreas(areas: WorkbenchSnapshot["areas"]): AreaNavig
 }
 
 export const AGENT_COPY = {
-  title: "演示对话",
-  mode: "演示模式",
-  composerPlaceholder: "演示模式，暂不可发送",
+  title: "Agent Run",
+  mode: "公开状态",
+  composerPlaceholder: "当前版本不提供自由对话输入",
 } as const;
-
-export type AgentMessage = {
-  id: string;
-  role: "agent" | "user";
-  time: string;
-  body: string;
-};
-
-export const DEMO_MESSAGES: AgentMessage[] = [
-  {
-    id: "agent-1",
-    role: "agent",
-    time: "13:22",
-    body: "我发现订单表和客户表对“客户”的粒度不同。",
-  },
-  {
-    id: "user-1",
-    role: "user",
-    time: "13:23",
-    body: "按企业客户统计，门店属于企业。",
-  },
-  {
-    id: "agent-2",
-    role: "agent",
-    time: "13:23",
-    body: "收到。我会把企业作为主实体，并把门店映射列为待确认规则。",
-  },
-];
 
 export type ObjectTabId = "mission" | "relationship";
 
@@ -235,14 +216,18 @@ function PrimaryRail({
   );
 }
 
-type MissionObjectId = "mission" | "customers" | "orders" | "notes" | "relationship";
+type MissionObjectId = string;
 
 function ObjectPane({
   selectedObject,
   onObjectSelect,
+  sources,
+  missionTitle,
 }: {
   selectedObject: MissionObjectId;
   onObjectSelect: (objectId: MissionObjectId) => void;
+  sources: SourceRevision[];
+  missionTitle: string;
 }) {
   return (
     <aside className="object-pane" aria-label="任务对象">
@@ -277,7 +262,7 @@ function ObjectPane({
           <span className="tree-row-icon">
             <Icon name="target" />
           </span>
-          <span className="tree-row-label">高潜客户定义</span>
+          <span className="tree-row-label">{missionTitle}</span>
         </button>
 
         <div className="tree-children" role="group">
@@ -292,42 +277,26 @@ function ObjectPane({
           </button>
 
           <div className="tree-file-list" role="group">
-            <button
-              type="button"
-              className={`tree-row tree-file${selectedObject === "customers" ? " tree-row-selected" : ""}`}
-              role="treeitem"
-              aria-selected={selectedObject === "customers"}
-              onClick={() => onObjectSelect("customers")}
-            >
-              <span className="file-badge file-badge-csv" aria-hidden="true">
-                <Icon name="file-text" />
-              </span>
-              <span className="tree-row-label">客户主数据.csv</span>
-            </button>
-            <button
-              type="button"
-              className={`tree-row tree-file${selectedObject === "orders" ? " tree-row-selected" : ""}`}
-              role="treeitem"
-              aria-selected={selectedObject === "orders"}
-              onClick={() => onObjectSelect("orders")}
-            >
-              <span className="file-badge file-badge-csv" aria-hidden="true">
-                <Icon name="file-text" />
-              </span>
-              <span className="tree-row-label">订单明细.csv</span>
-            </button>
-            <button
-              type="button"
-              className={`tree-row tree-file${selectedObject === "notes" ? " tree-row-selected" : ""}`}
-              role="treeitem"
-              aria-selected={selectedObject === "notes"}
-              onClick={() => onObjectSelect("notes")}
-            >
-              <span className="file-badge file-badge-md" aria-hidden="true">
-                <Icon name="reader" />
-              </span>
-              <span className="tree-row-label">业务口径说明.md</span>
-            </button>
+            {sources.slice(0, 8).map((source) => {
+              const objectId = `source:${source.revision_id}`;
+              const isMarkdown = source.media_type === "text/markdown" || source.media_type === "text/plain";
+              return (
+                <button
+                  type="button"
+                  className={`tree-row tree-file${selectedObject === objectId ? " tree-row-selected" : ""}`}
+                  role="treeitem"
+                  aria-selected={selectedObject === objectId}
+                  key={source.revision_id}
+                  onClick={() => onObjectSelect(objectId)}
+                >
+                  <span className={`file-badge ${isMarkdown ? "file-badge-md" : "file-badge-csv"}`} aria-hidden="true">
+                    <Icon name={isMarkdown ? "reader" : "file-text"} />
+                  </span>
+                  <span className="tree-row-label">{source.original_name}</span>
+                </button>
+              );
+            })}
+            {sources.length === 0 ? <p className="tree-empty">当前 Workspace 尚无已回读来源</p> : null}
           </div>
         </div>
 
@@ -430,20 +399,38 @@ function GraphWires() {
 function RelationshipGraph({
   selectedNode,
   onNodeSelect,
+  draft,
+  sources,
+  hasWorkspace,
 }: {
   selectedNode: GraphNodeProps["id"];
   onNodeSelect: (id: GraphNodeProps["id"]) => void;
+  draft: DefinitionDraft | null;
+  sources: SourceRevision[];
+  hasWorkspace: boolean;
 }) {
+  const relationship = draft?.relationships[0] ?? null;
+  const sourceTitles = [0, 1, 2].map((index) => sources[index]?.original_name ?? (hasWorkspace ? "暂无来源" : "来源待导入"));
+  const sourceSubtitle = hasWorkspace ? "当前 Workspace 来源" : "请选择 Workspace";
+  const leftEntity = relationship?.left.table_id || (hasWorkspace ? "实体待识别" : "实体待加载");
+  const rightEntity = relationship?.right.table_id || (hasWorkspace ? "实体待识别" : "实体待加载");
+  const relationshipStatus = relationship ? statusLabel(relationship.evidence_status) : "尚无关系草案";
+  const canvasNote = !hasWorkspace
+    ? "请先选择 Workspace；下方仅保留关系区域的空状态框架。"
+    : draft
+      ? "仅展示当前 Workspace 已回读的草案身份；关系语义仍待确认。"
+      : "当前 Workspace 尚无 DefinitionDraft；不显示预置业务结果。";
   return (
     <section className="relationship-canvas" aria-label="客户粒度关系图，可横向滚动查看" tabIndex={0}>
       <div className="relationship-canvas-inner">
+        <div className="relationship-canvas-note" role="status">{canvasNote}</div>
         <GraphWires />
         <GraphNode
           id="customers-source"
           icon="file-text"
           kind="来源"
-          title="客户主数据.csv"
-          subtitle="CSV 文件"
+          title={sourceTitles[0]}
+          subtitle={sourceSubtitle}
           className="graph-source graph-source-top"
           selected={selectedNode === "customers-source"}
           onSelect={onNodeSelect}
@@ -452,8 +439,8 @@ function RelationshipGraph({
           id="orders-source"
           icon="file-text"
           kind="来源"
-          title="订单明细.csv"
-          subtitle="CSV 文件"
+          title={sourceTitles[1]}
+          subtitle={sourceSubtitle}
           className="graph-source graph-source-middle"
           selected={selectedNode === "orders-source"}
           onSelect={onNodeSelect}
@@ -462,8 +449,8 @@ function RelationshipGraph({
           id="notes-source"
           icon="reader"
           kind="来源"
-          title="业务口径说明.md"
-          subtitle="MD 文档"
+          title={sourceTitles[2]}
+          subtitle={sourceSubtitle}
           className="graph-source graph-source-bottom"
           selected={selectedNode === "notes-source"}
           onSelect={onNodeSelect}
@@ -472,8 +459,8 @@ function RelationshipGraph({
           id="customers-entity"
           icon="cube"
           kind="实体"
-          title="客户实体"
-          subtitle="核心实体"
+          title={leftEntity}
+          subtitle={relationship ? "左侧表" : "尚未识别"}
           className="graph-entity graph-entity-top"
           selected={selectedNode === "customers-entity"}
           onSelect={onNodeSelect}
@@ -482,8 +469,8 @@ function RelationshipGraph({
           id="orders-entity"
           icon="cube"
           kind="实体"
-          title="订单实体"
-          subtitle="核心实体"
+          title={rightEntity}
+          subtitle={relationship ? "右侧表" : "尚未识别"}
           className="graph-entity graph-entity-bottom"
           selected={selectedNode === "orders-entity"}
           onSelect={onNodeSelect}
@@ -492,8 +479,8 @@ function RelationshipGraph({
           id="conflict"
           icon="mix"
           kind="定义冲突"
-          title="口径冲突"
-          subtitle="客户粒度不同"
+          title={relationship?.evidence_status === "conflict" ? "关系冲突" : "定义检查"}
+          subtitle={relationshipStatus}
           className="graph-conflict"
           selected={selectedNode === "conflict"}
           onSelect={onNodeSelect}
@@ -503,7 +490,7 @@ function RelationshipGraph({
           icon="question-mark-circled"
           kind="用户确认"
           title="待用户确认"
-          subtitle="退款订单是否计入净收入"
+          subtitle={draft?.unresolved_items.length ? `${draft.unresolved_items.length} 个未决项` : "尚无问题"}
           className="graph-confirmation"
           selected={selectedNode === "confirmation"}
           onSelect={onNodeSelect}
@@ -512,26 +499,13 @@ function RelationshipGraph({
           id="contract"
           icon="file-text"
           kind="业务契约"
-          title="业务契约草案"
-          subtitle="定义与规则草案"
+          title="定义草案"
+          subtitle={draft ? `version ${draft.version}` : "尚未生成"}
           className="graph-contract"
           selected={selectedNode === "contract"}
           onSelect={onNodeSelect}
         />
       </div>
-    </section>
-  );
-}
-
-function ModuleSurface({ content }: { content: AreaContent }) {
-  return (
-    <section className="module-surface" aria-labelledby="module-surface-title">
-      <p className="module-surface-kicker">{content.label}</p>
-      <h2 id="module-surface-title">{content.title}</h2>
-      <p>{content.description}</p>
-      <span>
-        {content.emptyTitle} · {content.emptyBody}
-      </span>
     </section>
   );
 }
@@ -542,12 +516,14 @@ function CenterPanel({
   onTabChange,
   selectedNode,
   onNodeSelect,
+  path2,
 }: {
   activeArea: AreaId;
   activeTab: ObjectTabId;
   onTabChange: (tab: ObjectTabId) => void;
   selectedNode: GraphNodeId;
   onNodeSelect: (id: GraphNodeId) => void;
+  path2: Path2WorkbenchState;
 }) {
   const content = AREA_CONTENT[activeArea];
   const title = activeArea === "mission" && activeTab === "relationship" ? "客户粒度关系" : content.title;
@@ -565,35 +541,27 @@ function CenterPanel({
         </div>
       </div>
       {activeArea === "mission" && activeTab === "relationship" ? (
-        <RelationshipGraph selectedNode={selectedNode} onNodeSelect={onNodeSelect} />
+        <RelationshipGraph
+          selectedNode={selectedNode}
+          onNodeSelect={onNodeSelect}
+          draft={path2.latestDraft}
+          sources={path2.sourceState.items}
+          hasWorkspace={Boolean(path2.workspaceId)}
+        />
       ) : (
-        <ModuleSurface content={content} />
+        <Path2Workbench state={path2} activeArea={activeArea} />
       )}
     </main>
   );
 }
 
-function AgentMessage({ message }: { message: AgentMessage }) {
-  const isUser = message.role === "user";
-  return (
-    <article className={`agent-message agent-message-${message.role}`}>
-      <div className="agent-message-meta">
-        {isUser ? <time dateTime={`2026-09-02T${message.time}:00+08:00`}>{message.time}</time> : null}
-        <span>{isUser ? "用户" : "Agent"}</span>
-        {!isUser ? <time dateTime={`2026-09-02T${message.time}:00+08:00`}>{message.time}</time> : null}
-      </div>
-      <p>{message.body}</p>
-    </article>
-  );
-}
-
-function AgentPanel() {
+function AgentPanel({ path2 }: { path2: Path2WorkbenchState }) {
   const [isOpen, setIsOpen] = useState(true);
   const contentId = "agent-panel-content";
-  const toggleLabel = isOpen ? "折叠演示对话" : "展开演示对话";
+  const toggleLabel = isOpen ? "折叠 Agent Run" : "展开 Agent Run";
 
   return (
-    <aside className={`agent-panel${isOpen ? "" : " agent-panel-collapsed"}`} aria-label="演示对话">
+    <aside className={`agent-panel${isOpen ? "" : " agent-panel-collapsed"}`} aria-label="Agent Run 公开状态">
       <div className="agent-panel-header">
         <div className="agent-panel-title-group">
           <h2>{AGENT_COPY.title}</h2>
@@ -613,19 +581,7 @@ function AgentPanel() {
         </button>
       </div>
       <div id={contentId} className="agent-panel-content" hidden={!isOpen}>
-        <div className="agent-conversation" aria-label="演示消息">
-          {DEMO_MESSAGES.map((message) => (
-            <AgentMessage key={message.id} message={message} />
-          ))}
-        </div>
-        <div className="agent-composer">
-          <textarea
-            disabled
-            rows={3}
-            placeholder={AGENT_COPY.composerPlaceholder}
-            aria-label={AGENT_COPY.composerPlaceholder}
-          />
-        </div>
+        <Path2AgentContent state={path2} />
       </div>
     </aside>
   );
@@ -640,6 +596,7 @@ function App() {
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const path2 = usePath2Workbench(selectedWorkspace);
 
   useEffect(() => {
     let cancelled = false;
@@ -678,9 +635,14 @@ function App() {
   const areas = snapshot ? navigationForAreas(snapshot.areas) : AREA_NAV;
   const handleObjectSelect = (objectId: MissionObjectId) => {
     setSelectedObject(objectId);
-    if (objectId === "relationship") {
+    if (objectId.startsWith("source:")) {
+      setActiveArea("sources");
+      path2.selectSource(objectId.slice("source:".length));
+    } else if (objectId === "relationship") {
+      setActiveArea("mission");
       setActiveTab("relationship");
     } else if (objectId === "mission") {
+      setActiveArea("mission");
       setActiveTab("mission");
     }
   };
@@ -690,7 +652,7 @@ function App() {
       className="app-shell"
       data-api-state={apiState}
       data-connection-state={connectionState}
-      data-demo-state="workbench-v3"
+      data-path2-state="workbench"
     >
       <Topbar
         selectedWorkspace={selectedWorkspace}
@@ -698,15 +660,21 @@ function App() {
       />
       <div className="workspace-layout">
         <PrimaryRail areas={areas} activeArea={activeArea} onAreaChange={setActiveArea} />
-        <ObjectPane selectedObject={selectedObject} onObjectSelect={handleObjectSelect} />
+        <ObjectPane
+          selectedObject={selectedObject}
+          onObjectSelect={handleObjectSelect}
+          sources={path2.sourceState.items}
+          missionTitle={path2.selectedMission?.title ?? "当前 Mission"}
+        />
         <CenterPanel
           activeArea={activeArea}
           activeTab={activeTab}
           onTabChange={setActiveTab}
           selectedNode={selectedNode}
           onNodeSelect={setSelectedNode}
+          path2={path2}
         />
-        <AgentPanel />
+        <AgentPanel path2={path2} />
       </div>
     </div>
   );
