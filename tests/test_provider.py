@@ -1295,6 +1295,7 @@ class ProviderTests(unittest.TestCase):
             )
             source.start()
             try:
+                started_at = time.monotonic()
                 with patch.object(
                     http.client,
                     "_create_https_context",
@@ -1312,6 +1313,8 @@ class ProviderTests(unittest.TestCase):
                             user_id="ws-opaque",
                             timeouts=timeouts,
                         )
+                elapsed = time.monotonic() - started_at
+                self.assertLess(elapsed, 1.5)
                 self.assertTrue(source.partial_sent.is_set())
             finally:
                 source.close()
