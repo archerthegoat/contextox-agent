@@ -5,8 +5,9 @@ import {
   Path2AgentContent,
   Path2Workbench,
   statusLabel,
+  sourceIdentityEquals,
+  sourceIdentityFromRevision,
   usePath2Workbench,
-  type DefinitionDraft,
   type Path2WorkbenchState,
   type SourceRevision,
 } from "./Path2Workbench";
@@ -399,27 +400,58 @@ function GraphWires() {
 function RelationshipGraph({
   selectedNode,
   onNodeSelect,
-  draft,
-  sources,
-  hasWorkspace,
+  path2,
 }: {
   selectedNode: GraphNodeProps["id"];
   onNodeSelect: (id: GraphNodeProps["id"]) => void;
-  draft: DefinitionDraft | null;
-  sources: SourceRevision[];
-  hasWorkspace: boolean;
+  path2: Path2WorkbenchState;
 }) {
-  const relationship = draft?.relationships[0] ?? null;
-  const sourceTitles = [0, 1, 2].map((index) => sources[index]?.original_name ?? (hasWorkspace ? "暂无来源" : "来源待导入"));
-  const sourceSubtitle = hasWorkspace ? "当前 Workspace 来源" : "请选择 Workspace";
+  const relationshipCandidates = path2.latestDraft?.relationships ?? [];
+  const relationship = relationshipCandidates[0] ?? null;
+  const sources = path2.sourceState.items;
+  const hasWorkspace = Boolean(path2.workspaceId);
+
+  const sourceForTable = (table: NonNullable<typeof relationship>["left"]) => {
+    const match = sources.find((source) => sourceIdentityEquals(
+      table.source_ref,
+      sourceIdentityFromRevision(source),
+    ));
+    return {
+      title: match
+        ? `${match.original_name}${table.table_id ? ` · ${table.table_id}` : ""}`
+        : hasWorkspace
+          ? "关系来源待核验"
+          : "来源待导入",
+      subtitle: match ? "候选绑定的 SourceRevision" : "来源身份未匹配",
+    };
+  };
+  const leftSource = relationship ? sourceForTable(relationship.left) : null;
+  const rightSource = relationship ? sourceForTable(relationship.right) : null;
+  const sourceTitles = [
+    leftSource?.title ?? (hasWorkspace ? "尚无关系候选" : "来源待导入"),
+    rightSource?.title ?? (hasWorkspace ? "尚无关系候选" : "来源待导入"),
+    relationship ? "尚无第三方关系来源" : (hasWorkspace ? "尚无关系候选" : "来源待导入"),
+  ];
+  const sourceSubtitles = [
+    leftSource?.subtitle ?? (hasWorkspace ? "等待 DefinitionDraft" : "请选择 Workspace"),
+    rightSource?.subtitle ?? (hasWorkspace ? "等待 DefinitionDraft" : "请选择 Workspace"),
+    relationship ? "不使用其它来源代替" : (hasWorkspace ? "等待 DefinitionDraft" : "请选择 Workspace"),
+  ];
   const leftEntity = relationship?.left.table_id || (hasWorkspace ? "实体待识别" : "实体待加载");
   const rightEntity = relationship?.right.table_id || (hasWorkspace ? "实体待识别" : "实体待加载");
   const relationshipStatus = relationship ? statusLabel(relationship.evidence_status) : "尚无关系草案";
+  const hasSourceMismatch = Boolean(
+    relationship && (!leftSource || !rightSource),
+  );
   const canvasNote = !hasWorkspace
     ? "请先选择 Workspace；下方仅保留关系区域的空状态框架。"
-    : draft
-      ? "仅展示当前 Workspace 已回读的草案身份；关系语义仍待确认。"
-      : "当前 Workspace 尚无 DefinitionDraft；不显示预置业务结果。";
+    : path2.missionSnapshotState.issue
+      ? "当前 Mission/Run 快照不可用；关系图不显示预置业务结果。"
+      : path2.missionSnapshotState.status === "loading"
+        ? "正在回读当前 Workspace 的 DefinitionDraft…"
+        : relationship
+          ? `仅展示当前 Workspace 快照中的关系候选；共 ${relationshipCandidates.length} 条，语义仍待确认。`
+          : "当前 Workspace 尚无 DefinitionDraft；不显示预置业务结果。";
   return (
     <section className="relationship-canvas" aria-label="客户粒度关系图，可横向滚动查看" tabIndex={0}>
       <div className="relationship-canvas-inner">
@@ -430,7 +462,7 @@ function RelationshipGraph({
           icon="file-text"
           kind="来源"
           title={sourceTitles[0]}
-          subtitle={sourceSubtitle}
+          subtitle={sourceSubtitles[0]}
           className="graph-source graph-source-top"
           selected={selectedNode === "customers-source"}
           onSelect={onNodeSelect}
@@ -440,7 +472,7 @@ function RelationshipGraph({
           icon="file-text"
           kind="来源"
           title={sourceTitles[1]}
-          subtitle={sourceSubtitle}
+          subtitle={sourceSubtitles[1]}
           className="graph-source graph-source-middle"
           selected={selectedNode === "orders-source"}
           onSelect={onNodeSelect}
@@ -450,7 +482,7 @@ function RelationshipGraph({
           icon="reader"
           kind="来源"
           title={sourceTitles[2]}
-          subtitle={sourceSubtitle}
+          subtitle={sourceSubtitles[2]}
           className="graph-source graph-source-bottom"
           selected={selectedNode === "notes-source"}
           onSelect={onNodeSelect}
@@ -480,7 +512,7 @@ function RelationshipGraph({
           icon="mix"
           kind="定义冲突"
           title={relationship?.evidence_status === "conflict" ? "关系冲突" : "定义检查"}
-          subtitle={relationshipStatus}
+          subtitle={hasSourceMismatch ? "来源身份未匹配" : relationshipStatus}
           className="graph-conflict"
           selected={selectedNode === "conflict"}
           onSelect={onNodeSelect}
@@ -490,7 +522,7 @@ function RelationshipGraph({
           icon="question-mark-circled"
           kind="用户确认"
           title="待用户确认"
-          subtitle={draft?.unresolved_items.length ? `${draft.unresolved_items.length} 个未决项` : "尚无问题"}
+          subtitle={path2.latestDraft?.unresolved_items.length ? `${path2.latestDraft.unresolved_items.length} 个未决项` : "尚无问题"}
           className="graph-confirmation"
           selected={selectedNode === "confirmation"}
           onSelect={onNodeSelect}
@@ -500,16 +532,27 @@ function RelationshipGraph({
           icon="file-text"
           kind="业务契约"
           title="定义草案"
-          subtitle={draft ? `version ${draft.version}` : "尚未生成"}
+          subtitle={path2.latestDraft ? `version ${path2.latestDraft.version}` : "尚未生成"}
           className="graph-contract"
           selected={selectedNode === "contract"}
           onSelect={onNodeSelect}
         />
+        {relationshipCandidates.length > 0 ? (
+          <div className="relationship-candidate-strip" aria-label="关系候选列表">
+            <strong>关系候选</strong>
+            {relationshipCandidates.map((candidate) => (
+              <div className="relationship-candidate-item" key={candidate.relationship_key}>
+                <code>{candidate.relationship_key}</code>
+                <span>{candidate.left.table_id || "根表"} ↔ {candidate.right.table_id || "根表"}</span>
+                <span className="relationship-candidate-status">{statusLabel(candidate.evidence_status)}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );
 }
-
 function CenterPanel({
   activeArea,
   activeTab,
@@ -544,9 +587,7 @@ function CenterPanel({
         <RelationshipGraph
           selectedNode={selectedNode}
           onNodeSelect={onNodeSelect}
-          draft={path2.latestDraft}
-          sources={path2.sourceState.items}
-          hasWorkspace={Boolean(path2.workspaceId)}
+          path2={path2}
         />
       ) : (
         <Path2Workbench state={path2} activeArea={activeArea} />

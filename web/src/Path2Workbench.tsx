@@ -46,6 +46,8 @@ export type RunSnapshot = components["schemas"]["RunSnapshot"];
 export type DefinitionDraft = components["schemas"]["DefinitionDraft"];
 export type ClarificationRequest = components["schemas"]["ClarificationRequest"];
 export type RunEventEnvelope = components["schemas"]["RunEventEnvelope"];
+export type SourceIdentity = components["schemas"]["SourceIdentity"];
+export type EvidenceRef = components["schemas"]["EvidenceRef"];
 export type EvidenceLocator = components["schemas"]["CsvRowsLocator"] |
   components["schemas"]["JsonPointerLocator"] |
   components["schemas"]["TextLinesLocator"];
@@ -64,6 +66,22 @@ export function sourceRevisionMatchesWorkspace(
   workspaceId: string,
 ): boolean {
   return revision.workspace_id === workspaceId;
+}
+
+export function sourceIdentityEquals(left: SourceIdentity, right: SourceIdentity): boolean {
+  return (
+    left.workspace_id === right.workspace_id &&
+    left.source_id === right.source_id &&
+    left.revision_id === right.revision_id &&
+    left.sha256 === right.sha256
+  );
+}
+
+export function sourceIdentityListEquals(left: SourceIdentity[], right: SourceIdentity[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((reference, index) => sourceIdentityEquals(reference, right[index]))
+  );
 }
 
 export function missionMatchesWorkspace(mission: Mission, workspaceId: string): boolean {
@@ -111,6 +129,212 @@ export function runSnapshotMatchesIdentity(snapshot: RunSnapshot, identity: RunI
         snapshot.terminal_receipt.mission_id === identity.missionId &&
         snapshot.terminal_receipt.run_id === identity.runId))
   );
+}
+
+const TERMINAL_RUN_STATUSES: RunSnapshot["status"][] = [
+  "waiting_for_human",
+  "partial",
+  "completed",
+  "blocked",
+  "failed",
+  "cancelled",
+];
+
+function isTerminalRunStatus(status: RunSnapshot["status"]): boolean {
+  return TERMINAL_RUN_STATUSES.includes(status);
+}
+
+const RUN_STATUS_ORDER: Record<RunSnapshot["status"], number> = {
+  queued: 0,
+  running: 1,
+  waiting_for_human: 2,
+  partial: 2,
+  completed: 2,
+  blocked: 2,
+  failed: 2,
+  cancelled: 2,
+};
+
+export function runSnapshotIsMonotonic(
+  current: RunSnapshot,
+  next: RunSnapshot,
+): boolean {
+  if (
+    current.workspace_id !== next.workspace_id ||
+    current.mission_id !== next.mission_id ||
+    current.run_id !== next.run_id ||
+    next.last_sequence < current.last_sequence ||
+    (current.finished_at !== null && next.finished_at === null) ||
+    (current.draft && (!next.draft || next.draft.version < current.draft.version)) ||
+    (current.final_output !== null && next.final_output === null) ||
+    (current.terminal_receipt !== null && next.terminal_receipt === null) ||
+    (current.terminal_receipt && next.terminal_receipt && current.terminal_receipt.receipt_id !== next.terminal_receipt.receipt_id) ||
+    RUN_STATUS_ORDER[next.status] < RUN_STATUS_ORDER[current.status]
+  ) {
+    return false;
+  }
+  if (current.clarifications.some((currentClarification) =>
+    !next.clarifications.some((nextClarification) => nextClarification.clarification_id === currentClarification.clarification_id))) {
+    return false;
+  }
+  if (isTerminalRunStatus(current.status)) {
+    return next.status === current.status;
+  }
+  return true;
+}
+
+export function missionSnapshotIsMonotonic(
+  current: MissionSnapshot,
+  next: MissionSnapshot,
+): boolean {
+  if (
+    current.mission.workspace_id !== next.mission.workspace_id ||
+    current.mission.mission_id !== next.mission.mission_id ||
+    next.mission.state_version < current.mission.state_version
+  ) {
+    return false;
+  }
+  if (current.draft && (!next.draft || next.draft.version < current.draft.version)) {
+    return false;
+  }
+  if (current.latest_run && !next.latest_run) {
+    return false;
+  }
+  if (current.latest_run && next.latest_run && !runSnapshotIsMonotonic(current.latest_run, next.latest_run)) {
+    return false;
+  }
+  if (current.clarifications.some((currentClarification) =>
+    !next.clarifications.some((nextClarification) => nextClarification.clarification_id === currentClarification.clarification_id))) {
+    return false;
+  }
+  return true;
+}
+
+export function missionDraftAttemptMatchesIdentity(
+  attempt: MissionDraftAttempt,
+  workspaceId: string,
+  attemptId: string,
+  expectedOriginalInput?: string,
+): boolean {
+  return (
+    attempt.workspace_id === workspaceId &&
+    attempt.attempt_id === attemptId &&
+    (expectedOriginalInput === undefined || attempt.original_input === expectedOriginalInput)
+  );
+}
+
+type OperationKind =
+  | "sources"
+  | "artifact"
+  | "excerpt"
+  | "missions"
+  | "mission_snapshot"
+  | "attempt"
+  | "confirm"
+  | "upload"
+  | "run_snapshot"
+  | "run_start"
+  | "cancel";
+
+type OperationScope = {
+  workspaceId: string;
+  missionId?: string | null;
+  attemptId?: string | null;
+  runId?: string | null;
+};
+
+export type OperationToken = OperationScope & {
+  kind: OperationKind;
+  generation: number;
+  epoch: number;
+};
+
+type OperationGenerations = Partial<Record<OperationKind, number>>;
+
+export function isCurrentOperation(
+  token: OperationToken,
+  currentEpoch: number,
+  generations: OperationGenerations,
+  currentScope: OperationScope,
+): boolean {
+  if (
+    !isCurrentWorkspaceResponse(
+      token.epoch,
+      currentEpoch,
+      token.workspaceId,
+      currentScope.workspaceId,
+    ) ||
+    token.generation !== generations[token.kind]
+  ) {
+    return false;
+  }
+  if (token.missionId !== undefined && token.missionId !== currentScope.missionId) {
+    return false;
+  }
+  if (token.attemptId !== undefined && token.attemptId !== currentScope.attemptId) {
+    return false;
+  }
+  if (token.runId !== undefined && token.runId !== currentScope.runId) {
+    return false;
+  }
+  return true;
+}
+
+export type Path2ObjectPointers = {
+  attemptId: string | null;
+  missionId: string | null;
+  runId: string | null;
+  runMissionId: string | null;
+};
+
+const PATH2_OBJECT_POINTERS_PREFIX = "contextox.path2.object-pointers.";
+
+function emptyPath2ObjectPointers(): Path2ObjectPointers {
+  return { attemptId: null, missionId: null, runId: null, runMissionId: null };
+}
+
+export function readPath2ObjectPointers(workspaceId: string): Path2ObjectPointers {
+  if (typeof window === "undefined") {
+    return emptyPath2ObjectPointers();
+  }
+  try {
+    const raw = window.sessionStorage.getItem(`${PATH2_OBJECT_POINTERS_PREFIX}${workspaceId}`);
+    if (!raw) {
+      return emptyPath2ObjectPointers();
+    }
+    const value: unknown = JSON.parse(raw);
+    if (!isRecord(value)) {
+      return emptyPath2ObjectPointers();
+    }
+    const stringOrNull = (candidate: unknown): string | null =>
+      typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+    return {
+      attemptId: stringOrNull(value.attemptId),
+      missionId: stringOrNull(value.missionId),
+      runId: stringOrNull(value.runId),
+      runMissionId: stringOrNull(value.runMissionId),
+    };
+  } catch {
+    return emptyPath2ObjectPointers();
+  }
+}
+
+export function writePath2ObjectPointers(
+  workspaceId: string,
+  patch: Partial<Path2ObjectPointers>,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    const next = { ...readPath2ObjectPointers(workspaceId), ...patch };
+    window.sessionStorage.setItem(
+      `${PATH2_OBJECT_POINTERS_PREFIX}${workspaceId}`,
+      JSON.stringify(next),
+    );
+  } catch {
+    // The in-memory state remains authoritative when sessionStorage is unavailable.
+  }
 }
 
 function scopeIssue(): ApiIssue {
@@ -537,22 +761,31 @@ export type Path2WorkbenchState = {
   toggleSource: (revisionId: string) => void;
   loadSourceArtifact: (revisionId: string) => Promise<void>;
   readSourceExcerpt: (revisionId: string) => Promise<void>;
+  refreshSources: () => Promise<void>;
   uploadState: ActionState & { result: SourceBatchResult | null };
   uploadSourceBatch: (request: SourceUploadRequest) => Promise<SourceBatchResult | null>;
+  acknowledgeUploadUnknown: () => void;
   missionState: CollectionState<Mission>;
   selectedMission: Mission | null;
   missionSnapshot: MissionSnapshot | null;
   missionSnapshotState: CollectionState<Mission>;
+  refreshMission: () => Promise<void>;
   attempt: MissionDraftAttempt | null;
   attemptAction: ActionState;
   submitAttempt: (request: MissionDraftAttemptCreateRequest) => Promise<MissionDraftAttempt | null>;
+  reconcileAttempt: () => Promise<void>;
+  acknowledgeAttemptUnknown: () => void;
   confirmAction: ActionState;
   confirmAttempt: () => Promise<Mission | null>;
+  acknowledgeConfirmUnknown: () => void;
   runSnapshot: RunSnapshot | null;
   runAction: ActionState;
   startRun: (providerSendConfirmed: boolean) => Promise<RunSnapshot | null>;
+  acknowledgeRunUnknown: () => void;
   cancelAction: ActionState;
   cancelActiveRun: () => Promise<RunSnapshot | null>;
+  reconcileRun: () => Promise<void>;
+  acknowledgeCancelUnknown: () => void;
   runConnectionState: "idle" | "connecting" | "connected" | "reconnecting" | "blocked" | "closed";
   runReadbackIssue: ApiIssue | null;
   runEventIssue: string | null;
@@ -561,6 +794,140 @@ export type Path2WorkbenchState = {
   clarifications: ClarificationRequest[];
 };
 
+export type WorkbenchSurfaceSummary = {
+  status: CollectionStatus | "partial";
+  label: string;
+};
+
+export function workbenchSurfaceSummary(state: Pick<
+  Path2WorkbenchState,
+  "workspaceId" | "sourceState" | "missionState" | "missionSnapshotState"
+>): WorkbenchSurfaceSummary {
+  if (!state.workspaceId) {
+    return { status: "empty", label: "未选择 Workspace" };
+  }
+  const statuses = [state.sourceState.status, state.missionState.status, state.missionSnapshotState.status];
+  if (statuses.includes("unknown")) {
+    return { status: "unknown", label: "结果未知，已阻塞" };
+  }
+  if (statuses.includes("blocked")) {
+    return { status: "blocked", label: "当前能力已阻塞" };
+  }
+  if (statuses.includes("failed")) {
+    return { status: "failed", label: "读取失败" };
+  }
+  if (statuses.includes("loading")) {
+    return { status: "loading", label: "正在回读" };
+  }
+  if (statuses.every((status) => status === "empty" || status === "idle")) {
+    return { status: "empty", label: "已回读，暂无对象" };
+  }
+  if (statuses.includes("empty")) {
+    return { status: "partial", label: "部分对象已回读" };
+  }
+  return { status: "ready", label: "来源与 Mission 已回读" };
+}
+
+const ATTEMPT_POLL_LIMIT = 5;
+const ATTEMPT_POLL_DELAY_MS = 180;
+
+const ATTEMPT_STATUS_ORDER: Record<MissionDraftAttempt["status"], number> = {
+  queued: 0,
+  running: 1,
+  ready: 2,
+  confirmed: 3,
+  blocked: 3,
+  failed: 3,
+  cancelled: 3,
+};
+
+export function missionDraftAttemptIsMonotonic(
+  current: MissionDraftAttempt,
+  next: MissionDraftAttempt,
+): boolean {
+  if (
+    current.workspace_id !== next.workspace_id ||
+    current.attempt_id !== next.attempt_id ||
+    current.original_input !== next.original_input ||
+    ATTEMPT_STATUS_ORDER[next.status] < ATTEMPT_STATUS_ORDER[current.status] ||
+    (current.candidate !== null && next.candidate === null) ||
+    (current.candidate_version !== null && next.candidate_version === null) ||
+    (current.candidate_sha256 !== null && next.candidate_sha256 === null) ||
+    (current.provider_receipt_id !== null && next.provider_receipt_id === null) ||
+    (current.mission_id !== null && next.mission_id === null)
+  ) {
+    return false;
+  }
+  if (current.status === "confirmed" && next.status !== "confirmed") {
+    return false;
+  }
+  if (["blocked", "failed", "cancelled"].includes(current.status) && next.status !== current.status) {
+    return false;
+  }
+  if (current.status === "ready" && next.status !== "ready" && next.status !== "confirmed") {
+    return false;
+  }
+  if (
+    current.candidate_version !== null &&
+    next.candidate_version !== null &&
+    current.candidate_version !== next.candidate_version
+  ) {
+    return false;
+  }
+  if (
+    current.candidate_sha256 !== null &&
+    next.candidate_sha256 !== null &&
+    current.candidate_sha256 !== next.candidate_sha256
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function attemptActionForResult(result: MissionDraftAttempt): ActionState {
+  if (result.status === "blocked") {
+    return {
+      status: "blocked",
+      issue: result.error_code
+        ? { kind: "blocked", code: result.error_code, message: result.error_code }
+        : null,
+    };
+  }
+  if (result.status === "failed" || result.status === "cancelled") {
+    return {
+      status: "failed",
+      issue: result.error_code
+        ? { kind: "failed", code: result.error_code, message: result.error_code }
+        : null,
+    };
+  }
+  return { status: "success", issue: null };
+}
+
+function staleRunSnapshotIssue(): ApiIssue {
+  return {
+    kind: "failed",
+    code: "stale_run_snapshot",
+    message: "收到较旧或已回退的 Run 快照，已保留当前较新状态。",
+  };
+}
+
+function staleAttemptIssue(): ApiIssue {
+  return {
+    kind: "failed",
+    code: "stale_attempt",
+    message: "收到较旧或已回退的 Attempt 快照，已保留当前较新状态。",
+  };
+}
+
+function selectionChangedIssue(objectName: string): ApiIssue {
+  return {
+    kind: "failed",
+    code: "selection_changed",
+    message: `当前 ${objectName} 或来源选择已变化，旧请求结果已拒绝显示。`,
+  };
+}
+
 export function usePath2Workbench(
   workspace: Workspace | null,
   api: Path2Api = productionPath2Api,
@@ -568,8 +935,20 @@ export function usePath2Workbench(
 ): Path2WorkbenchState {
   const workspaceId = workspace?.workspace_id ?? null;
   const epochRef = useRef(0);
+  const operationGenerationsRef = useRef<OperationGenerations>({});
+  const workspaceIdRef = useRef<string | null>(workspaceId);
+  const selectedMissionIdRef = useRef<string | null>(null);
+  const selectedSourceRefsRef = useRef<SourceIdentity[]>([]);
+  const attemptRef = useRef<MissionDraftAttempt | null>(null);
+  const pendingAttemptIdRef = useRef<string | null>(null);
+  const missionSnapshotRef = useRef<MissionSnapshot | null>(null);
   const clientRequestIdRef = useRef<string | null>(null);
+  const startRequestKeyRef = useRef<string | null>(null);
+  const preferredRunIdRef = useRef<string | null>(null);
+  const preferredRunMissionIdRef = useRef<string | null>(null);
   const runRef = useRef<RunSnapshot | null>(null);
+  const pendingRunIdRef = useRef<string | null>(null);
+  const runEventStateRef = useRef<RunEventState>(createRunEventState());
   const [loadedWorkspaceId, setLoadedWorkspaceId] = useState<string | null>(workspaceId);
   const [sourceState, setSourceState] = useState<CollectionState<SourceRevision>>(emptyCollection);
   const [sourceArtifacts, setSourceArtifacts] = useState<Record<string, SourceArtifactState>>({});
@@ -596,62 +975,424 @@ export function usePath2Workbench(
   const [runEventIssue, setRunEventIssue] = useState<string | null>(null);
   const [runEventState, setRunEventState] = useState<RunEventState>(createRunEventState);
 
-  useEffect(() => {
-    runRef.current = runSnapshot;
-  }, [runSnapshot]);
+  const uploadStateRef = useRef(uploadState);
+  const attemptActionRef = useRef(attemptAction);
+  const confirmActionRef = useRef(confirmAction);
+  const runActionRef = useRef(runAction);
+  const cancelActionRef = useRef(cancelAction);
+  const setUploadStateNow = useCallback((next: typeof uploadState): void => {
+    uploadStateRef.current = next;
+    setUploadState(next);
+  }, []);
+  const setAttemptActionNow = useCallback((next: ActionState): void => {
+    attemptActionRef.current = next;
+    setAttemptAction(next);
+  }, []);
+  const setConfirmActionNow = useCallback((next: ActionState): void => {
+    confirmActionRef.current = next;
+    setConfirmAction(next);
+  }, []);
+  const setRunActionNow = useCallback((next: ActionState): void => {
+    runActionRef.current = next;
+    setRunAction(next);
+  }, []);
+  const setCancelActionNow = useCallback((next: ActionState): void => {
+    cancelActionRef.current = next;
+    setCancelAction(next);
+  }, []);
+  workspaceIdRef.current = workspaceId;
+  selectedMissionIdRef.current = selectedMissionId;
+  uploadStateRef.current = uploadState;
+  attemptActionRef.current = attemptAction;
+  confirmActionRef.current = confirmAction;
+  runActionRef.current = runAction;
+  cancelActionRef.current = cancelAction;
+
+  const beginOperation = useCallback((kind: OperationKind, scope: OperationScope): OperationToken => {
+    const generation = (operationGenerationsRef.current[kind] ?? 0) + 1;
+    operationGenerationsRef.current[kind] = generation;
+    return { ...scope, kind, generation, epoch: epochRef.current };
+  }, []);
+
+  const invalidateOperation = useCallback((kind: OperationKind): void => {
+    operationGenerationsRef.current[kind] = (operationGenerationsRef.current[kind] ?? 0) + 1;
+  }, []);
+
+  const isOperationCurrent = useCallback((token: OperationToken): boolean => {
+    return isCurrentOperation(
+      token,
+      epochRef.current,
+      operationGenerationsRef.current,
+      {
+        workspaceId: workspaceIdRef.current ?? "",
+        missionId: selectedMissionIdRef.current,
+        attemptId: attemptRef.current?.attempt_id ?? pendingAttemptIdRef.current,
+        runId: runRef.current?.run_id ?? pendingRunIdRef.current,
+      },
+    );
+  }, []);
+
+  const replaceRunEventState = useCallback((next: RunEventState): void => {
+    runEventStateRef.current = next;
+    setRunEventState(next);
+  }, []);
+
+  const updateRunEventState = useCallback((updater: (current: RunEventState) => RunEventState): RunEventState => {
+    const next = updater(runEventStateRef.current);
+    runEventStateRef.current = next;
+    setRunEventState(next);
+    return next;
+  }, []);
+
+  const storeAttempt = useCallback((next: MissionDraftAttempt | null): void => {
+    attemptRef.current = next;
+    setAttempt(next);
+  }, []);
+
+  const storeMissionSnapshot = useCallback((next: MissionSnapshot | null): void => {
+    missionSnapshotRef.current = next;
+    setMissionSnapshot(next);
+  }, []);
+
+  const storeRunSnapshot = useCallback((next: RunSnapshot | null): void => {
+    runRef.current = next;
+    setRunSnapshot(next);
+  }, []);
+
+  const applyRunSnapshot = useCallback((next: RunSnapshot, identity: RunIdentity): boolean => {
+    if (!runSnapshotMatchesIdentity(next, identity)) {
+      setRunReadbackIssue(scopeIssue());
+      return false;
+    }
+    const current = runRef.current;
+    if (current && current.run_id !== identity.runId) {
+      return false;
+    }
+    if (current && !runSnapshotIsMonotonic(current, next)) {
+      setRunReadbackIssue(staleRunSnapshotIssue());
+      return false;
+    }
+    pendingRunIdRef.current = null;
+    storeRunSnapshot(next);
+    updateRunEventState((currentState) => mergeRunSnapshot(currentState, next));
+    setRunReadbackIssue(null);
+    return true;
+  }, [storeRunSnapshot, updateRunEventState]);
 
   const loadMissionSnapshot = useCallback(
-    async (currentWorkspaceId: string, missionId: string, epoch: number): Promise<void> => {
+    async (currentWorkspaceId: string, missionId: string): Promise<MissionSnapshot | null> => {
+      const token = beginOperation("mission_snapshot", {
+        workspaceId: currentWorkspaceId,
+        missionId,
+      });
       try {
-        const next = await api.fetchMissionSnapshot(currentWorkspaceId, missionId);
-        if (epoch !== epochRef.current) {
-          return;
+        const next = await executeExplicitRequest(() => api.fetchMissionSnapshot(currentWorkspaceId, missionId));
+        if (!isOperationCurrent(token)) {
+          return null;
         }
         if (!missionSnapshotMatchesIdentity(next, currentWorkspaceId, missionId)) {
           setMissionSnapshotState({ status: "failed", items: [], issue: scopeIssue() });
-          return;
+          return null;
         }
-        setMissionSnapshot(next);
-        setMissionSnapshotState({
-          status: "ready",
-          items: [next.mission],
-          issue: null,
-        });
-        if (next.latest_run) {
-          runRef.current = next.latest_run;
-          setRunSnapshot(next.latest_run);
-          setRunEventState(createRunEventState(next.latest_run.last_sequence));
+        const current = missionSnapshotRef.current;
+        if (
+          current &&
+          current.mission.mission_id === missionId &&
+          !missionSnapshotIsMonotonic(current, next)
+        ) {
+          setMissionSnapshotState({ status: "ready", items: [current.mission], issue: null });
+          return current;
         }
+        storeMissionSnapshot(next);
+        setMissionSnapshotState({ status: "ready", items: [next.mission], issue: null });
+        const preferredRunId =
+          preferredRunMissionIdRef.current === missionId ? preferredRunIdRef.current : null;
+        if (next.latest_run && (!preferredRunId || next.latest_run.run_id === preferredRunId)) {
+          const applied = applyRunSnapshot(next.latest_run, {
+            workspaceId: currentWorkspaceId,
+            missionId,
+            runId: next.latest_run.run_id,
+          });
+          if (applied) {
+            writePath2ObjectPointers(currentWorkspaceId, {
+              missionId,
+              runId: next.latest_run.run_id,
+              runMissionId: missionId,
+            });
+            preferredRunIdRef.current = next.latest_run.run_id;
+            preferredRunMissionIdRef.current = missionId;
+          }
+        }
+        return next;
       } catch (error: unknown) {
-        if (epoch === epochRef.current) {
+        if (isOperationCurrent(token)) {
           setMissionSnapshotState(collectionForError(error));
         }
+        return null;
       }
-    },
-    [api],
-  );
+    }, [api, applyRunSnapshot, beginOperation, isOperationCurrent, storeMissionSnapshot]);
+
+  const refreshSources = useCallback(async (): Promise<void> => {
+    if (!workspaceId) {
+      return;
+    }
+    const currentWorkspaceId = workspaceId;
+    const token = beginOperation("sources", { workspaceId: currentWorkspaceId });
+    invalidateOperation("artifact");
+    invalidateOperation("excerpt");
+    setSourceState(loadingCollection());
+    setSourceArtifacts({});
+    try {
+      const items = await executeExplicitRequest(() => api.fetchSources(currentWorkspaceId));
+      if (!isOperationCurrent(token)) {
+        return;
+      }
+      if (!items.every((item) => sourceRevisionMatchesWorkspace(item, currentWorkspaceId))) {
+        setSourceState({ status: "failed", items: [], issue: scopeIssue() });
+        return;
+      }
+      setSourceState({ status: items.length > 0 ? "ready" : "empty", items, issue: null });
+      if (uploadStateRef.current.status === "unknown") {
+        setUploadStateNow({ ...emptyAction(), result: null });
+      }
+    } catch (error: unknown) {
+      if (isOperationCurrent(token)) {
+        setSourceState(collectionForError(error));
+      }
+    }
+  }, [api, beginOperation, invalidateOperation, isOperationCurrent, workspaceId]);
+
+  const readRunSnapshot = useCallback(async (identity: RunIdentity): Promise<RunSnapshot | null> => {
+    pendingRunIdRef.current = identity.runId;
+    const token = beginOperation("run_snapshot", identity);
+    try {
+      const next = await executeExplicitRequest(() =>
+        api.fetchRunSnapshot(identity.workspaceId, identity.missionId, identity.runId),
+      );
+      if (!isOperationCurrent(token)) {
+        return null;
+      }
+      if (runRef.current && runRef.current.run_id !== identity.runId) {
+        return null;
+      }
+      if (!applyRunSnapshot(next, identity)) {
+        return null;
+      }
+      return next;
+    } catch (error: unknown) {
+      if (isOperationCurrent(token)) {
+        setRunReadbackIssue(issueFromError(error));
+      }
+      return null;
+    }
+  }, [api, applyRunSnapshot, beginOperation, isOperationCurrent]);
+
+  const readAttempt = useCallback(
+    async (
+      currentWorkspaceId: string,
+      attemptId: string,
+      expectedOriginalInput: string | undefined,
+      token: OperationToken,
+    ): Promise<MissionDraftAttempt | null> => {
+      let latest: MissionDraftAttempt | null = null;
+      for (let poll = 0; poll < ATTEMPT_POLL_LIMIT; poll += 1) {
+        if (!isOperationCurrent(token)) {
+          return null;
+        }
+        try {
+          latest = await executeExplicitRequest(() =>
+            api.fetchMissionDraftAttempt(currentWorkspaceId, attemptId),
+          );
+        } catch (error: unknown) {
+          if (isOperationCurrent(token)) {
+            setAttemptActionNow(actionForIssue(issueFromError(error)));
+          }
+          return null;
+        }
+        if (!isOperationCurrent(token)) {
+          return null;
+        }
+        if (!missionDraftAttemptMatchesIdentity(latest, currentWorkspaceId, attemptId, expectedOriginalInput)) {
+          setAttemptActionNow(actionForIssue(scopeIssue()));
+          return null;
+        }
+        if (
+          attemptRef.current &&
+          attemptRef.current.attempt_id === attemptId &&
+          !missionDraftAttemptIsMonotonic(attemptRef.current, latest)
+        ) {
+          setAttemptActionNow(actionForIssue(staleAttemptIssue()));
+          return attemptRef.current;
+        }
+        storeAttempt(latest);
+        pendingAttemptIdRef.current = null;
+        writePath2ObjectPointers(currentWorkspaceId, { attemptId });
+        setAttemptActionNow(attemptActionForResult(latest));
+        if (latest.status !== "queued" && latest.status !== "running") {
+          return latest;
+        }
+        if (poll + 1 < ATTEMPT_POLL_LIMIT) {
+          await new Promise<void>((resolve) => setTimeout(resolve, ATTEMPT_POLL_DELAY_MS));
+        }
+      }
+      return latest;
+    }, [api, isOperationCurrent, storeAttempt]);
+
+  const refreshMissions = useCallback(async (): Promise<void> => {
+    if (!workspaceId) {
+      return;
+    }
+    const currentWorkspaceId = workspaceId;
+    const token = beginOperation("missions", { workspaceId: currentWorkspaceId });
+    setMissionState(loadingCollection());
+    try {
+      const items = await executeExplicitRequest(() => api.fetchMissions(currentWorkspaceId));
+      if (!isOperationCurrent(token)) {
+        return;
+      }
+      if (!items.every((item) => missionMatchesWorkspace(item, currentWorkspaceId))) {
+        const failed = { status: "failed" as const, items: [], issue: scopeIssue() };
+        setMissionState(failed);
+        setMissionSnapshotState(failed);
+        return;
+      }
+      setMissionState({ status: items.length > 0 ? "ready" : "empty", items, issue: null });
+      if (items.length === 0) {
+        selectedMissionIdRef.current = null;
+        setSelectedMissionId(null);
+        storeMissionSnapshot(null);
+        setMissionSnapshotState({ status: "empty", items: [], issue: null });
+        return;
+      }
+
+      const pointers = readPath2ObjectPointers(currentWorkspaceId);
+      const currentAttemptId = attemptRef.current?.attempt_id ?? pointers.attemptId;
+      const confirmedMission = currentAttemptId
+        ? items.find((item) => item.original_attempt_id === currentAttemptId) ?? null
+        : null;
+      const pointerMission = pointers.missionId
+        ? items.find((item) => item.mission_id === pointers.missionId) ?? null
+        : null;
+      if (pointers.missionId && !pointerMission && !confirmedMission) {
+        setSelectedMissionId(null);
+        selectedMissionIdRef.current = null;
+        storeMissionSnapshot(null);
+        setMissionSnapshotState({
+          status: "failed",
+          items: [],
+          issue: {
+            kind: "failed",
+            code: "persisted_mission_not_found",
+            message: "当前 tab 保存的 Mission ID 不在该 Workspace 的回读列表中，未静默切换到其它 Mission。",
+          },
+        });
+        return;
+      }
+      const selected = confirmedMission ?? pointerMission ?? items[0];
+      const previousMissionId = selectedMissionIdRef.current;
+      selectedMissionIdRef.current = selected.mission_id;
+      setSelectedMissionId(selected.mission_id);
+      setMissionSnapshotState({ status: "loading", items: [selected], issue: null });
+      const missionChanged = previousMissionId !== null && previousMissionId !== selected.mission_id;
+      if (missionChanged) {
+        storeMissionSnapshot(null);
+        storeRunSnapshot(null);
+        replaceRunEventState(createRunEventState());
+        setRunReadbackIssue(null);
+      }
+      const persistedRunIsForMission =
+        pointers.runId && pointers.runMissionId === selected.mission_id;
+      preferredRunIdRef.current = persistedRunIsForMission ? pointers.runId : null;
+      preferredRunMissionIdRef.current = persistedRunIsForMission ? selected.mission_id : null;
+      if (pointers.runId && !pointers.runMissionId) {
+        setRunReadbackIssue({
+          kind: "failed",
+          code: "persisted_run_scope_missing",
+          message: "当前 tab 保存的 Run ID 缺少 Mission 绑定，未读取该 ID。",
+        });
+      } else if (pointers.runId && !persistedRunIsForMission) {
+        setRunReadbackIssue({
+          kind: "failed",
+          code: "persisted_run_scope_mismatch",
+          message: "当前 tab 保存的 Run 不属于选中的 Mission，未显示该 Run。",
+        });
+      }
+      await loadMissionSnapshot(currentWorkspaceId, selected.mission_id);
+      if (!isOperationCurrent(token)) {
+        return;
+      }
+      if (persistedRunIsForMission) {
+        await readRunSnapshot({
+          workspaceId: currentWorkspaceId,
+          missionId: selected.mission_id,
+          runId: pointers.runId as string,
+        });
+        if (!isOperationCurrent(token)) {
+          return;
+        }
+      }
+      if (
+        confirmedMission &&
+        currentAttemptId &&
+        attemptRef.current?.attempt_id === currentAttemptId &&
+        confirmActionRef.current.status === "unknown"
+      ) {
+        const nextAction: ActionState = { status: "success", issue: null };
+        confirmActionRef.current = nextAction;
+        setConfirmActionNow(nextAction);
+        storeAttempt({ ...attemptRef.current, status: "confirmed", mission_id: confirmedMission.mission_id });
+      }
+    } catch (error: unknown) {
+      if (isOperationCurrent(token)) {
+        const failed = collectionForError<Mission>(error);
+        setMissionState(failed);
+        setMissionSnapshotState(failed);
+      }
+    }
+  }, [
+    api,
+    beginOperation,
+    isOperationCurrent,
+    loadMissionSnapshot,
+    readRunSnapshot,
+    replaceRunEventState,
+    storeMissionSnapshot,
+    storeRunSnapshot,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     const epoch = epochRef.current + 1;
     epochRef.current = epoch;
-    let cancelled = false;
+    operationGenerationsRef.current = {};
+    const pointers = workspaceId ? readPath2ObjectPointers(workspaceId) : emptyPath2ObjectPointers();
+    preferredRunIdRef.current = pointers.runId;
+    preferredRunMissionIdRef.current = pointers.runMissionId;
     setLoadedWorkspaceId(workspaceId);
     clientRequestIdRef.current = null;
+    startRequestKeyRef.current = null;
+    attemptRef.current = null;
+    missionSnapshotRef.current = null;
     runRef.current = null;
+    pendingRunIdRef.current = null;
+    pendingAttemptIdRef.current = null;
+    selectedMissionIdRef.current = null;
+    selectedSourceRefsRef.current = [];
+    runEventStateRef.current = createRunEventState();
     setSourceState(workspaceId ? loadingCollection() : emptyCollection());
     setSourceArtifacts({});
     setSelectedSourceIds([]);
-    setUploadState({ ...emptyAction(), result: null });
+    setUploadStateNow({ ...emptyAction(), result: null });
     setMissionState(workspaceId ? loadingCollection() : emptyCollection());
     setSelectedMissionId(null);
     setMissionSnapshot(null);
     setMissionSnapshotState(workspaceId ? loadingCollection() : emptyCollection());
     setAttempt(null);
-    setAttemptAction(emptyAction());
-    setConfirmAction(emptyAction());
+    setAttemptActionNow(emptyAction());
+    setConfirmActionNow(emptyAction());
     setRunSnapshot(null);
-    setRunAction(emptyAction());
-    setCancelAction(emptyAction());
+    setRunActionNow(emptyAction());
+    setCancelActionNow(emptyAction());
     setRunReadbackIssue(null);
     setRunEventIssue(null);
     setRunEventState(createRunEventState());
@@ -659,63 +1400,29 @@ export function usePath2Workbench(
 
     if (!workspaceId) {
       return () => {
-        cancelled = true;
+        epochRef.current += 1;
       };
     }
 
-    void api.fetchSources(workspaceId)
-      .then((items) => {
-        if (cancelled || epoch !== epochRef.current) {
-          return;
-        }
-        if (!items.every((item) => sourceRevisionMatchesWorkspace(item, workspaceId))) {
-          setSourceState({ status: "failed", items: [], issue: scopeIssue() });
-          return;
-        }
-        setSourceState({ status: items.length > 0 ? "ready" : "empty", items, issue: null });
-      })
-      .catch((error: unknown) => {
-        if (!cancelled && epoch === epochRef.current) {
-          setSourceState(collectionForError(error));
-        }
+    void refreshSources();
+    void refreshMissions();
+    if (pointers.attemptId) {
+      pendingAttemptIdRef.current = pointers.attemptId;
+      const token = beginOperation("attempt", {
+        workspaceId,
+        attemptId: pointers.attemptId,
       });
-
-    void api.fetchMissions(workspaceId)
-      .then((items) => {
-        if (cancelled || epoch !== epochRef.current) {
-          return;
-        }
-        if (!items.every((item) => missionMatchesWorkspace(item, workspaceId))) {
-          const failed = { status: "failed" as const, items: [], issue: scopeIssue() };
-          setMissionState(failed);
-          setMissionSnapshotState(failed);
-          return;
-        }
-        setMissionState({ status: items.length > 0 ? "ready" : "empty", items, issue: null });
-        if (items.length === 0) {
-          setMissionSnapshotState({ status: "empty", items: [], issue: null });
-          return;
-        }
-        const selected = items[0];
-        setSelectedMissionId(selected.mission_id);
-        setMissionSnapshotState({ status: "loading", items: [selected], issue: null });
-        void loadMissionSnapshot(workspaceId, selected.mission_id, epoch);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled && epoch === epochRef.current) {
-          const failed = collectionForError<Mission>(error);
-          setMissionState(failed);
-          setMissionSnapshotState(failed);
-        }
-      });
+      void readAttempt(workspaceId, pointers.attemptId, undefined, token);
+    }
 
     return () => {
-      cancelled = true;
+      epochRef.current += 1;
     };
-  }, [api, loadMissionSnapshot, workspaceId]);
+  }, [beginOperation, readAttempt, refreshMissions, refreshSources, workspaceId]);
 
   useEffect(() => {
     clientRequestIdRef.current = null;
+    startRequestKeyRef.current = null;
   }, [selectedMissionId, workspaceId]);
 
   const selectedMission = useMemo(
@@ -734,6 +1441,7 @@ export function usePath2Workbench(
         .map(sourceIdentityFromRevision),
     [selectedSourceIds, sourceState.items],
   );
+  selectedSourceRefsRef.current = selectedSourceRefs;
 
   const selectSource = useCallback((revisionId: string) => {
     setSelectedSourceIds((current) => (current.includes(revisionId) ? current : [...current, revisionId]));
@@ -752,24 +1460,28 @@ export function usePath2Workbench(
       if (!workspaceId) {
         return;
       }
-      const epoch = epochRef.current;
+      const currentWorkspaceId = workspaceId;
       const revision = sourceState.items.find((candidate) => candidate.revision_id === revisionId);
       if (!revision) {
         return;
       }
+      const token = beginOperation("artifact", { workspaceId: currentWorkspaceId });
       setSourceArtifacts((current) => ({
         ...current,
         [revisionId]: { status: "loading", artifact: null, excerpt: null, issue: null },
       }));
       try {
-        const artifact = await executeExplicitRequest(() => api.fetchSourceArtifact(workspaceId, revisionId));
-        if (epoch !== epochRef.current) {
+        const artifact = await executeExplicitRequest(() =>
+          api.fetchSourceArtifact(currentWorkspaceId, revisionId),
+        );
+        if (!isOperationCurrent(token)) {
           return;
         }
         if (
-          artifact.source_ref.workspace_id !== workspaceId ||
+          artifact.source_ref.workspace_id !== currentWorkspaceId ||
           artifact.source_ref.revision_id !== revisionId ||
-          artifact.source_ref.source_id !== revision.source_id
+          artifact.source_ref.source_id !== revision.source_id ||
+          artifact.source_ref.sha256 !== revision.sha256
         ) {
           setSourceArtifacts((current) => ({
             ...current,
@@ -782,7 +1494,7 @@ export function usePath2Workbench(
           [revisionId]: { status: "ready", artifact, excerpt: null, issue: null },
         }));
       } catch (error: unknown) {
-        if (epoch === epochRef.current) {
+        if (isOperationCurrent(token)) {
           const issue = issueFromError(error);
           setSourceArtifacts((current) => ({
             ...current,
@@ -790,8 +1502,7 @@ export function usePath2Workbench(
           }));
         }
       }
-    },
-    [api, sourceState.items, workspaceId],
+    }, [api, beginOperation, isOperationCurrent, sourceState.items, workspaceId],
   );
 
   const readExcerpt = useCallback(
@@ -799,7 +1510,7 @@ export function usePath2Workbench(
       if (!workspaceId) {
         return;
       }
-      const epoch = epochRef.current;
+      const currentWorkspaceId = workspaceId;
       const revision = sourceState.items.find((candidate) => candidate.revision_id === revisionId);
       if (!revision) {
         return;
@@ -808,17 +1519,19 @@ export function usePath2Workbench(
       if (!currentArtifact?.artifact) {
         return;
       }
+      const token = beginOperation("excerpt", { workspaceId: currentWorkspaceId });
       try {
         const excerpt = await executeExplicitRequest(() =>
-          api.readSourceExcerpt(workspaceId, revisionId, defaultExcerptRequest(revision)),
+          api.readSourceExcerpt(currentWorkspaceId, revisionId, defaultExcerptRequest(revision)),
         );
-        if (epoch !== epochRef.current) {
+        if (!isOperationCurrent(token)) {
           return;
         }
         if (
-          excerpt.source_ref.workspace_id !== workspaceId ||
+          excerpt.source_ref.workspace_id !== currentWorkspaceId ||
           excerpt.source_ref.revision_id !== revisionId ||
-          excerpt.source_ref.source_id !== revision.source_id
+          excerpt.source_ref.source_id !== revision.source_id ||
+          excerpt.source_ref.sha256 !== revision.sha256
         ) {
           setSourceArtifacts((current) => ({
             ...current,
@@ -831,7 +1544,7 @@ export function usePath2Workbench(
           [revisionId]: { ...current[revisionId], excerpt },
         }));
       } catch (error: unknown) {
-        if (epoch === epochRef.current) {
+        if (isOperationCurrent(token)) {
           const issue = issueFromError(error);
           setSourceArtifacts((current) => ({
             ...current,
@@ -839,13 +1552,16 @@ export function usePath2Workbench(
           }));
         }
       }
-    },
-    [api, sourceArtifacts, sourceState.items, workspaceId],
+    }, [api, beginOperation, isOperationCurrent, sourceArtifacts, sourceState.items, workspaceId],
   );
 
   const uploadSourceBatch = useCallback(
     async (request: SourceUploadRequest): Promise<SourceBatchResult | null> => {
-      if (!workspaceId || uploadState.status === "submitting") {
+      if (
+        !workspaceId ||
+        uploadStateRef.current.status === "submitting" ||
+        uploadStateRef.current.status === "unknown"
+      ) {
         return null;
       }
       if (!request.local_read_confirmed) {
@@ -854,23 +1570,24 @@ export function usePath2Workbench(
           code: "local_read_confirmation_required",
           message: "必须先明确确认只读取选定的本地文件；该确认不等于允许 Provider 外发。",
         };
-        setUploadState({ ...actionForIssue(issue), result: null });
+        setUploadStateNow({ ...actionForIssue(issue), result: null });
         return null;
       }
-      const epoch = epochRef.current;
-      setUploadState({ status: "submitting", issue: null, result: null });
+      const currentWorkspaceId = workspaceId;
+      const token = beginOperation("upload", { workspaceId: currentWorkspaceId });
+      setUploadStateNow({ status: "submitting", issue: null, result: null });
       try {
-        const result = await executeExplicitRequest(() => api.uploadSources(workspaceId, request));
-        if (epoch !== epochRef.current) {
+        const result = await executeExplicitRequest(() => api.uploadSources(currentWorkspaceId, request));
+        if (!isOperationCurrent(token)) {
           return null;
         }
-        setUploadState({ status: "success", issue: null, result });
         const accepted = result.items.flatMap((item) => (item.revision ? [item.revision] : []));
-        if (!accepted.every((item) => sourceRevisionMatchesWorkspace(item, workspaceId))) {
+        if (!accepted.every((item) => sourceRevisionMatchesWorkspace(item, currentWorkspaceId))) {
           const issue = scopeIssue();
-          setUploadState({ status: issue.kind, issue, result: null });
+          setUploadStateNow({ status: issue.kind, issue, result: null });
           return null;
         }
+        setUploadStateNow({ status: "success", issue: null, result });
         if (accepted.length > 0) {
           setSourceState((current) => {
             const revisions = new Map(current.items.map((item) => [item.revision_id, item]));
@@ -881,18 +1598,27 @@ export function usePath2Workbench(
         }
         return result;
       } catch (error: unknown) {
-        if (epoch === epochRef.current) {
-          setUploadState({ ...actionForIssue(issueFromError(error)), result: null });
+        if (isOperationCurrent(token)) {
+          setUploadStateNow({ ...actionForIssue(issueFromError(error)), result: null });
         }
         return null;
       }
-    },
-    [api, uploadState.status, workspaceId],
+    }, [api, beginOperation, isOperationCurrent, workspaceId],
   );
+
+  const acknowledgeUploadUnknown = useCallback(() => {
+    if (uploadStateRef.current.status === "unknown") {
+      setUploadStateNow({ ...emptyAction(), result: null });
+    }
+  }, []);
 
   const submitAttempt = useCallback(
     async (request: MissionDraftAttemptCreateRequest): Promise<MissionDraftAttempt | null> => {
-      if (!workspaceId || attemptAction.status === "submitting") {
+      if (
+        !workspaceId ||
+        attemptActionRef.current.status === "submitting" ||
+        attemptActionRef.current.status === "unknown"
+      ) {
         return null;
       }
       if (!request.provider_send_confirmed) {
@@ -901,208 +1627,384 @@ export function usePath2Workbench(
           code: "provider_confirmation_required",
           message: "必须明确确认只发送原始任务输入；不会自动附带来源文件。",
         };
-        setAttemptAction(actionForIssue(issue));
+        setAttemptActionNow(actionForIssue(issue));
         return null;
       }
-      const epoch = epochRef.current;
-      setAttemptAction({ status: "submitting", issue: null });
+      const currentWorkspaceId = workspaceId;
+      const token = beginOperation("attempt", { workspaceId: currentWorkspaceId });
+      invalidateOperation("confirm");
+      invalidateOperation("run_start");
+      setAttemptActionNow({ status: "submitting", issue: null });
       try {
         const result = await executeExplicitRequest(() =>
-          api.createMissionDraftAttempt(workspaceId, request),
+          api.createMissionDraftAttempt(currentWorkspaceId, request),
         );
-        if (epoch !== epochRef.current) {
+        if (!isOperationCurrent(token)) {
           return null;
         }
-        setAttempt(result);
-        setAttemptAction({
-          status: result.status === "ready" ? "success" : result.status === "blocked" ? "blocked" : "failed",
-          issue: result.error_code
-            ? { kind: result.status === "blocked" ? "blocked" : "failed", code: result.error_code, message: result.error_code }
-            : null,
-        });
+        if (
+          !missionDraftAttemptMatchesIdentity(
+            result,
+            currentWorkspaceId,
+            result.attempt_id,
+            request.original_input,
+          )
+        ) {
+          setAttemptActionNow(actionForIssue(scopeIssue()));
+          return null;
+        }
+        storeAttempt(result);
+        writePath2ObjectPointers(currentWorkspaceId, { attemptId: result.attempt_id });
+        setAttemptActionNow(attemptActionForResult(result));
+        if (result.status === "queued" || result.status === "running") {
+          const finalResult = await readAttempt(
+            currentWorkspaceId,
+            result.attempt_id,
+            request.original_input,
+            token,
+          );
+          return finalResult ?? result;
+        }
         return result;
       } catch (error: unknown) {
-        if (epoch === epochRef.current) {
-          setAttemptAction(actionForIssue(issueFromError(error)));
+        if (isOperationCurrent(token)) {
+          setAttemptActionNow(actionForIssue(issueFromError(error)));
         }
         return null;
       }
-    },
-    [api, attemptAction.status, workspaceId],
+    }, [
+      api,
+      beginOperation,
+      invalidateOperation,
+      isOperationCurrent,
+      readAttempt,
+      storeAttempt,
+      workspaceId,
+    ],
   );
 
+  const reconcileAttempt = useCallback(async (): Promise<void> => {
+    if (!workspaceId || !attemptRef.current || attemptActionRef.current.status === "submitting") {
+      return;
+    }
+    const currentWorkspaceId = workspaceId;
+    const attemptId = attemptRef.current.attempt_id;
+    const token = beginOperation("attempt", { workspaceId: currentWorkspaceId, attemptId });
+    setAttemptActionNow({ status: "submitting", issue: null });
+    await readAttempt(currentWorkspaceId, attemptId, undefined, token);
+  }, [beginOperation, readAttempt, workspaceId]);
+
+  const acknowledgeAttemptUnknown = useCallback(() => {
+    if (attemptActionRef.current.status === "unknown") {
+      setAttemptActionNow(emptyAction());
+    }
+  }, []);
+
   const confirmAttempt = useCallback(async (): Promise<Mission | null> => {
-    if (!workspaceId || !attempt || !selectedSourceRefs.length || confirmAction.status === "submitting") {
+    const currentAttempt = attemptRef.current;
+    const currentSourceRefs = [...selectedSourceRefsRef.current];
+    if (
+      !workspaceId ||
+      !currentAttempt ||
+      !currentSourceRefs.length ||
+      confirmActionRef.current.status === "submitting" ||
+      confirmActionRef.current.status === "unknown"
+    ) {
       return null;
     }
-    const request = buildConfirmRequest(attempt, selectedSourceRefs);
+    const request = buildConfirmRequest(currentAttempt, currentSourceRefs);
     if (!request) {
-      setConfirmAction({
+      setConfirmActionNow({
         status: "failed",
         issue: { kind: "failed", code: "draft_not_ready", message: "当前草案没有可确认的 version/hash。" },
       });
       return null;
     }
-    const epoch = epochRef.current;
-    setConfirmAction({ status: "submitting", issue: null });
+    const currentWorkspaceId = workspaceId;
+    const attemptId = currentAttempt.attempt_id;
+    const token = beginOperation("confirm", {
+      workspaceId: currentWorkspaceId,
+      attemptId,
+    });
+    setConfirmActionNow({ status: "submitting", issue: null });
     try {
       const result = await executeExplicitRequest(() =>
-        api.confirmMissionDraftAttempt(workspaceId, attempt.attempt_id, request),
+        api.confirmMissionDraftAttempt(currentWorkspaceId, attemptId, request),
       );
-      if (epoch !== epochRef.current) {
+      if (!isOperationCurrent(token)) {
         return null;
       }
-      if (!missionMatchesWorkspace(result, workspaceId)) {
-        const issue = scopeIssue();
-        setConfirmAction(actionForIssue(issue));
+      if (
+        attemptRef.current?.attempt_id !== attemptId ||
+        !sourceIdentityListEquals(selectedSourceRefsRef.current, currentSourceRefs)
+      ) {
+        setConfirmActionNow(actionForIssue(selectionChangedIssue("Attempt")));
         return null;
       }
-      setAttempt((current) =>
-        current
-          ? { ...current, status: "confirmed", mission_id: result.mission_id }
-          : current,
-      );
-      setConfirmAction({ status: "success", issue: null });
+      if (
+        !missionMatchesWorkspace(result, currentWorkspaceId) ||
+        result.original_attempt_id !== attemptId ||
+        !sourceIdentityListEquals(result.source_refs, currentSourceRefs)
+      ) {
+        setConfirmActionNow(actionForIssue(scopeIssue()));
+        return null;
+      }
+      storeAttempt({ ...currentAttempt, status: "confirmed", mission_id: result.mission_id });
+      setMissionState((current) => ({
+        status: "ready",
+        items: [
+          ...current.items.filter((item) => item.mission_id !== result.mission_id),
+          result,
+        ],
+        issue: null,
+      }));
+      setConfirmActionNow({ status: "success", issue: null });
+      writePath2ObjectPointers(currentWorkspaceId, {
+        missionId: result.mission_id,
+        runId: null,
+        runMissionId: null,
+      });
+      preferredRunIdRef.current = null;
+      preferredRunMissionIdRef.current = null;
+      selectedMissionIdRef.current = result.mission_id;
       setSelectedMissionId(result.mission_id);
-      setMissionSnapshot(null);
+      storeRunSnapshot(null);
+      replaceRunEventState(createRunEventState());
+      setRunReadbackIssue(null);
+      storeMissionSnapshot(null);
       setMissionSnapshotState({ status: "loading", items: [result], issue: null });
-      void loadMissionSnapshot(workspaceId, result.mission_id, epoch);
+      await loadMissionSnapshot(currentWorkspaceId, result.mission_id);
       return result;
     } catch (error: unknown) {
-      if (epoch === epochRef.current) {
-        setConfirmAction(actionForIssue(issueFromError(error)));
+      if (isOperationCurrent(token)) {
+        setConfirmActionNow(actionForIssue(issueFromError(error)));
       }
       return null;
     }
-  }, [api, attempt, confirmAction.status, loadMissionSnapshot, selectedSourceRefs, workspaceId]);
+  }, [
+    api,
+    beginOperation,
+    isOperationCurrent,
+    loadMissionSnapshot,
+    replaceRunEventState,
+    storeAttempt,
+    storeMissionSnapshot,
+    storeRunSnapshot,
+    workspaceId,
+  ]);
 
-  const refreshRunSnapshot = useCallback(
-    async (identity: RunIdentity): Promise<void> => {
-      const epoch = epochRef.current;
-      try {
-        const next = await executeExplicitRequest(() =>
-          api.fetchRunSnapshot(identity.workspaceId, identity.missionId, identity.runId),
-        );
-        if (epoch !== epochRef.current || runRef.current?.run_id !== identity.runId) {
-          return;
-        }
-        if (!runSnapshotMatchesIdentity(next, identity)) {
-          setRunReadbackIssue(scopeIssue());
-          return;
-        }
-        runRef.current = next;
-        setRunSnapshot(next);
-        setRunEventState((current) => mergeRunSnapshot(current, next));
-        setRunReadbackIssue(null);
-      } catch (error: unknown) {
-        if (epoch === epochRef.current && runRef.current?.run_id === identity.runId) {
-          setRunReadbackIssue(issueFromError(error));
-        }
-      }
-    },
-    [api],
-  );
+  const acknowledgeConfirmUnknown = useCallback(() => {
+    if (confirmActionRef.current.status === "unknown") {
+      setConfirmActionNow(emptyAction());
+    }
+  }, []);
 
   const startRunAction = useCallback(
     async (providerSendConfirmed: boolean): Promise<RunSnapshot | null> => {
+      const currentMission = selectedMission;
+      const currentSourceRefs = [...selectedSourceRefsRef.current];
       if (
         !workspaceId ||
-        !selectedMission ||
+        !currentMission ||
         missionSnapshotState.status !== "ready" ||
-        !selectedSourceRefs.length ||
-        runAction.status === "submitting"
+        !currentSourceRefs.length ||
+        runActionRef.current.status === "submitting" ||
+        runActionRef.current.status === "unknown"
       ) {
         return null;
       }
       if (!providerSendConfirmed) {
-        setRunAction({
+        setRunActionNow({
           status: "failed",
           issue: { kind: "failed", code: "provider_confirmation_required", message: "必须明确确认本次 Run 的 Provider 外发范围。" },
         });
         return null;
       }
-      const clientRequestId = clientRequestIdRef.current ?? createClientRequestId();
+      const requestKey = JSON.stringify({
+        workspaceId,
+        missionId: currentMission.mission_id,
+        stateVersion: currentMission.state_version,
+        sourceRefs: currentSourceRefs,
+      });
+      const clientRequestId =
+        startRequestKeyRef.current === requestKey && clientRequestIdRef.current
+          ? clientRequestIdRef.current
+          : createClientRequestId();
       clientRequestIdRef.current = clientRequestId;
+      startRequestKeyRef.current = requestKey;
       const request = buildRunStartRequest(
-        selectedMission,
-        selectedSourceRefs,
+        currentMission,
+        currentSourceRefs,
         providerSendConfirmed,
         clientRequestId,
       );
-      const epoch = epochRef.current;
-      setRunAction({ status: "submitting", issue: null });
+      const currentWorkspaceId = workspaceId;
+      const missionId = currentMission.mission_id;
+      invalidateOperation("run_snapshot");
+      const token = beginOperation("run_start", {
+        workspaceId: currentWorkspaceId,
+        missionId,
+      });
+      storeMissionSnapshot(null);
+      storeRunSnapshot(null);
+      replaceRunEventState(createRunEventState());
+      setMissionSnapshotState({ status: "loading", items: [currentMission], issue: null });
+      setRunReadbackIssue(null);
+      preferredRunIdRef.current = null;
+      preferredRunMissionIdRef.current = null;
+      pendingRunIdRef.current = null;
+      writePath2ObjectPointers(currentWorkspaceId, { runId: null, runMissionId: null });
+      setRunActionNow({ status: "submitting", issue: null });
+      setCancelActionNow(emptyAction());
       try {
         const result = await executeExplicitRequest(() =>
-          api.startRun(workspaceId, selectedMission.mission_id, request),
+          api.startRun(currentWorkspaceId, missionId, request),
         );
-        if (epoch !== epochRef.current) {
+        if (!isOperationCurrent(token)) {
           return null;
         }
-        if (!runSnapshotMatchesIdentity(result, {
-          workspaceId,
-          missionId: selectedMission.mission_id,
-          runId: result.run_id,
-        })) {
+        if (
+          selectedMissionIdRef.current !== missionId ||
+          !sourceIdentityListEquals(selectedSourceRefsRef.current, currentSourceRefs)
+        ) {
+          setRunActionNow(actionForIssue(selectionChangedIssue("Mission")));
+          return null;
+        }
+        if (
+          !runSnapshotMatchesIdentity(result, {
+            workspaceId: currentWorkspaceId,
+            missionId,
+            runId: result.run_id,
+          }) ||
+          !sourceIdentityListEquals(result.source_refs, currentSourceRefs)
+        ) {
           const issue = scopeIssue();
-          setRunAction(actionForIssue(issue));
+          setRunActionNow(actionForIssue(issue));
           return null;
         }
-        runRef.current = result;
-        setRunSnapshot(result);
-        setRunEventState(createRunEventState(result.last_sequence));
+        storeRunSnapshot(result);
+        replaceRunEventState(createRunEventState(result.last_sequence));
         setRunReadbackIssue(null);
         setRunEventIssue(null);
-        setRunAction({ status: "success", issue: null });
-        setCancelAction(emptyAction());
+        setRunActionNow({ status: "success", issue: null });
+        setCancelActionNow(emptyAction());
+        writePath2ObjectPointers(currentWorkspaceId, {
+          missionId,
+          runId: result.run_id,
+          runMissionId: missionId,
+        });
+        preferredRunIdRef.current = result.run_id;
+        preferredRunMissionIdRef.current = missionId;
+        clientRequestIdRef.current = null;
+        startRequestKeyRef.current = null;
         return result;
       } catch (error: unknown) {
-        if (epoch === epochRef.current) {
-          setRunAction(actionForIssue(issueFromError(error)));
+        if (isOperationCurrent(token)) {
+          const issue = issueFromError(error);
+          setRunActionNow(actionForIssue(issue));
+          if (issue.kind !== "unknown") {
+            clientRequestIdRef.current = null;
+            startRequestKeyRef.current = null;
+          }
         }
         return null;
       }
-    },
-    [api, missionSnapshotState.status, runAction.status, selectedMission, selectedSourceRefs, workspaceId],
+    }, [
+      api,
+      beginOperation,
+      invalidateOperation,
+      isOperationCurrent,
+      missionSnapshotState.status,
+      replaceRunEventState,
+      selectedMission,
+      storeMissionSnapshot,
+      storeRunSnapshot,
+      workspaceId,
+    ],
   );
 
+  const acknowledgeRunUnknown = useCallback(() => {
+    if (runActionRef.current.status === "unknown") {
+      setRunActionNow(emptyAction());
+      clientRequestIdRef.current = null;
+      startRequestKeyRef.current = null;
+    }
+  }, []);
+
   const cancelActiveRun = useCallback(async (): Promise<RunSnapshot | null> => {
-    if (!workspaceId || !runSnapshot || cancelAction.status === "submitting") {
+    const currentRun = runRef.current;
+    if (
+      !workspaceId ||
+      !currentRun ||
+      cancelActionRef.current.status === "submitting" ||
+      cancelActionRef.current.status === "unknown"
+    ) {
       return null;
     }
-    if (runSnapshot.status !== "queued" && runSnapshot.status !== "running") {
+    if (currentRun.status !== "queued" && currentRun.status !== "running") {
       return null;
     }
     const identity: RunIdentity = {
       workspaceId,
-      missionId: runSnapshot.mission_id,
-      runId: runSnapshot.run_id,
+      missionId: currentRun.mission_id,
+      runId: currentRun.run_id,
     };
-    const epoch = epochRef.current;
-    setCancelAction({ status: "submitting", issue: null });
+    invalidateOperation("run_snapshot");
+    invalidateOperation("mission_snapshot");
+    const token = beginOperation("cancel", identity);
+    setCancelActionNow({ status: "submitting", issue: null });
     try {
       const result = await executeExplicitRequest(() =>
         api.cancelRun(identity.workspaceId, identity.missionId, identity.runId),
       );
-      if (epoch !== epochRef.current || runRef.current?.run_id !== identity.runId) {
+      if (!isOperationCurrent(token) || runRef.current?.run_id !== identity.runId) {
         return null;
       }
       if (!runSnapshotMatchesIdentity(result, identity)) {
         const issue = scopeIssue();
-        setCancelAction(actionForIssue(issue));
+        setCancelActionNow(actionForIssue(issue));
         return null;
       }
-      runRef.current = result;
-      setRunSnapshot(result);
-      setRunEventState((current) => mergeRunSnapshot(current, result));
-      setCancelAction({ status: "success", issue: null });
+      if (!applyRunSnapshot(result, identity)) {
+        return null;
+      }
+      setCancelActionNow({ status: "success", issue: null });
       return result;
     } catch (error: unknown) {
-      if (epoch === epochRef.current) {
-        setCancelAction(actionForIssue(issueFromError(error)));
+      if (isOperationCurrent(token)) {
+        setCancelActionNow(actionForIssue(issueFromError(error)));
       }
       return null;
     }
-  }, [api, cancelAction.status, runSnapshot, workspaceId]);
+  }, [api, applyRunSnapshot, beginOperation, invalidateOperation, isOperationCurrent, workspaceId]);
+
+  const reconcileRun = useCallback(async (): Promise<void> => {
+    const currentRun = runRef.current;
+    if (!currentRun || !workspaceId || cancelActionRef.current.status === "submitting") {
+      return;
+    }
+    const next = await readRunSnapshot({
+      workspaceId,
+      missionId: currentRun.mission_id,
+      runId: currentRun.run_id,
+    });
+    if (next?.status === "cancelled" && cancelActionRef.current.status === "unknown") {
+      setCancelActionNow({ status: "success", issue: null });
+    }
+  }, [readRunSnapshot, workspaceId]);
+
+  const acknowledgeCancelUnknown = useCallback(() => {
+    if (cancelActionRef.current.status === "unknown") {
+      setCancelActionNow(emptyAction());
+    }
+  }, []);
+
+  const refreshRunSnapshot = useCallback(
+    async (identity: RunIdentity): Promise<void> => {
+      await readRunSnapshot(identity);
+    },
+    [readRunSnapshot],
+  );
 
   useEffect(() => {
     if (!workspaceId || !runSnapshot) {
@@ -1141,16 +2043,33 @@ export function usePath2Workbench(
       ) {
         return;
       }
-      setRunEventState((current) => acceptRunEvent(current, parsed, identity));
-      if (parsed.event_type in TERMINAL_EVENT_STATUS) {
-        void refreshRunSnapshot(identity);
-        source.close();
+      const current = runEventStateRef.current;
+      const next = acceptRunEvent(current, parsed, identity);
+      if (next === current) {
+        return;
+      }
+      updateRunEventState(() => next);
+      const requiresReadback =
+        parsed.event_type === "draft_updated" ||
+        parsed.event_type === "clarification_requested" ||
+        parsed.event_type in TERMINAL_EVENT_STATUS ||
+        (!current.hasSequenceGap && next.hasSequenceGap);
+      if (requiresReadback) {
+        const readback = refreshRunSnapshot(identity);
+        if (parsed.event_type in TERMINAL_EVENT_STATUS) {
+          void readback.finally(() => {
+            if (!cancelled) {
+              source.close();
+            }
+          });
+        }
       }
     };
     const handleOpen = () => {
       if (!cancelled) {
         opened = true;
         setRunConnectionState("connected");
+        void refreshRunSnapshot(identity);
       }
     };
     const handleError = () => {
@@ -1159,9 +2078,6 @@ export function usePath2Workbench(
       }
       setRunConnectionState(opened ? "reconnecting" : "blocked");
       void refreshRunSnapshot(identity);
-      if (!opened) {
-        source.close();
-      }
     };
     source.onopen = handleOpen;
     source.onerror = handleError;
@@ -1178,7 +2094,15 @@ export function usePath2Workbench(
       handlers.forEach((handler, eventType) => source.removeEventListener(eventType, handler));
       source.close();
     };
-  }, [eventSourceFactory, refreshRunSnapshot, runSnapshot, workspaceId]);
+  }, [
+    eventSourceFactory,
+    refreshRunSnapshot,
+    runSnapshot?.mission_id,
+    runSnapshot?.run_id,
+    runSnapshot?.status,
+    updateRunEventState,
+    workspaceId,
+  ]);
 
   const dataBelongsToWorkspace = loadedWorkspaceId === workspaceId;
   const visibleSourceState = dataBelongsToWorkspace
@@ -1231,22 +2155,31 @@ export function usePath2Workbench(
     toggleSource,
     loadSourceArtifact,
     readSourceExcerpt: readExcerpt,
+    refreshSources,
     uploadState: visibleUploadState,
     uploadSourceBatch,
+    acknowledgeUploadUnknown,
     missionState: visibleMissionState,
     selectedMission: visibleSelectedMission,
     missionSnapshot: visibleMissionSnapshot,
     missionSnapshotState: visibleMissionSnapshotState,
+    refreshMission: refreshMissions,
     attempt: visibleAttempt,
     attemptAction: visibleAttemptAction,
     submitAttempt,
+    reconcileAttempt,
+    acknowledgeAttemptUnknown,
     confirmAction: visibleConfirmAction,
     confirmAttempt,
+    acknowledgeConfirmUnknown,
     runSnapshot: visibleRunSnapshot,
     runAction: visibleRunAction,
     startRun: startRunAction,
+    acknowledgeRunUnknown,
     cancelAction: visibleCancelAction,
     cancelActiveRun,
+    reconcileRun,
+    acknowledgeCancelUnknown,
     runConnectionState: visibleRunConnectionState,
     runReadbackIssue: visibleRunReadbackIssue,
     runEventIssue: visibleRunEventIssue,
@@ -1311,6 +2244,7 @@ function WorkspaceRequired({ copy }: { copy: string }) {
 }
 
 function WorkspaceContext({ state }: { state: Path2WorkbenchState }) {
+  const summary = workbenchSurfaceSummary(state);
   return (
     <div className="path2-context-strip">
       <div>
@@ -1318,9 +2252,7 @@ function WorkspaceContext({ state }: { state: Path2WorkbenchState }) {
         <strong>{state.workspaceId ? "当前 Workspace 工作区" : "等待 Workspace"}</strong>
       </div>
       <div className="path2-context-meta">
-        <StatusPill status={state.workspaceId ? "blocked" : "empty"}>
-          {state.workspaceId ? "W0.2 接缝不可用" : "未选择"}
-        </StatusPill>
+        <StatusPill status={summary.status}>{summary.label}</StatusPill>
         {state.workspaceId ? <code title={state.workspaceId}>{state.workspaceId}</code> : null}
       </div>
     </div>
@@ -1415,8 +2347,22 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
   const [candidates, setCandidates] = useState<UploadCandidate[]>([]);
   const [localReadConfirmed, setLocalReadConfirmed] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isReading, setIsReading] = useState(false);
+  const uploadOperationRef = useRef(0);
+  const currentWorkspaceIdRef = useRef(state.workspaceId);
+  currentWorkspaceIdRef.current = state.workspaceId;
+
+  useEffect(() => {
+    uploadOperationRef.current += 1;
+    setIsReading(false);
+    return () => {
+      uploadOperationRef.current += 1;
+    };
+  }, [state.workspaceId]);
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    uploadOperationRef.current += 1;
+    setIsReading(false);
     const files = Array.from(event.currentTarget.files ?? []);
     const next = files.map((file, index) => {
       const mediaType = mediaTypeForFile(file);
@@ -1460,34 +2406,59 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
       setLocalError("请明确确认只读取这些本地文件；该确认不等于允许 Provider 外发。");
       return;
     }
+    if (state.uploadState.status === "unknown") {
+      setLocalError("上一次导入结果未知；请先回读来源列表或明确人工核对，未发送新请求。");
+      return;
+    }
+    const operation = ++uploadOperationRef.current;
+    const capturedWorkspaceId = state.workspaceId;
+    setIsReading(true);
     const encoded: SourceUploadFile[] = [];
-    for (const candidate of candidates) {
-      if (!candidate.mediaType) {
-        setLocalError("至少一个文件没有受支持的媒体类型；未提交本批请求。");
+    try {
+      for (const candidate of candidates) {
+        if (operation !== uploadOperationRef.current || currentWorkspaceIdRef.current !== capturedWorkspaceId) {
+          return;
+        }
+        if (!candidate.mediaType) {
+          setLocalError("至少一个文件没有受支持的媒体类型；未提交本批请求。");
+          return;
+        }
+        setCandidates((current) =>
+          current.map((item) => item.id === candidate.id ? { ...item, status: "reading", message: null } : item),
+        );
+        try {
+          const contentBase64 = await encodeFile(candidate.file);
+          if (operation !== uploadOperationRef.current || currentWorkspaceIdRef.current !== capturedWorkspaceId) {
+            return;
+          }
+          encoded.push({
+            original_name: candidate.file.name,
+            media_type: candidate.mediaType,
+            content_base64: contentBase64,
+          });
+          setCandidates((current) =>
+            current.map((item) => item.id === candidate.id ? { ...item, status: "ready" } : item),
+          );
+        } catch {
+          if (operation !== uploadOperationRef.current || currentWorkspaceIdRef.current !== capturedWorkspaceId) {
+            return;
+          }
+          setCandidates((current) =>
+            current.map((item) => item.id === candidate.id ? { ...item, status: "failed", message: "本地文件读取失败。" } : item),
+          );
+          setLocalError("至少一个文件读取失败；未提交本批请求。");
+          return;
+        }
+      }
+      if (operation !== uploadOperationRef.current || currentWorkspaceIdRef.current !== capturedWorkspaceId) {
         return;
       }
-      setCandidates((current) =>
-        current.map((item) => item.id === candidate.id ? { ...item, status: "reading", message: null } : item),
-      );
-      try {
-        const contentBase64 = await encodeFile(candidate.file);
-        encoded.push({
-          original_name: candidate.file.name,
-          media_type: candidate.mediaType,
-          content_base64: contentBase64,
-        });
-        setCandidates((current) =>
-          current.map((item) => item.id === candidate.id ? { ...item, status: "ready" } : item),
-        );
-      } catch {
-        setCandidates((current) =>
-          current.map((item) => item.id === candidate.id ? { ...item, status: "failed", message: "本地文件读取失败。" } : item),
-        );
-        setLocalError("至少一个文件读取失败；未提交本批请求。");
-        return;
+      await state.uploadSourceBatch(buildSourceUploadRequest(encoded, localReadConfirmed));
+    } finally {
+      if (operation === uploadOperationRef.current && currentWorkspaceIdRef.current === capturedWorkspaceId) {
+        setIsReading(false);
       }
     }
-    await state.uploadSourceBatch(buildSourceUploadRequest(encoded, localReadConfirmed));
   };
 
   return (
@@ -1508,7 +2479,7 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
           </div>
           <label className="path2-file-picker">
             <span>选择文件</span>
-            <input type="file" multiple accept=".csv,.json,.md,.markdown,.txt" onChange={handleFileChange} />
+            <input type="file" multiple accept=".csv,.json,.md,.markdown,.txt" onChange={handleFileChange} disabled={isReading} />
           </label>
         </div>
         {candidates.length > 0 ? (
@@ -1534,6 +2505,12 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
         </label>
         {localError ? <p className="path2-form-error" role="alert">{localError}</p> : null}
         {state.uploadState.issue ? <IssueCallout issue={state.uploadState.issue} /> : null}
+        {state.uploadState.status === "unknown" ? (
+          <div className="path2-reconcile-actions">
+            <button type="button" className="path2-secondary-button" onClick={() => void state.refreshSources()}>重新读取来源列表</button>
+            <button type="button" className="path2-secondary-button" onClick={state.acknowledgeUploadUnknown}>我已人工核对，解除阻塞</button>
+          </div>
+        ) : null}
         {state.uploadState.result ? (
           <div className="path2-result-list" role="status">
             <strong>本批服务器结果</strong>
@@ -1550,14 +2527,16 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
           type="submit"
           className="path2-primary-button"
           disabled={
+            isReading ||
             state.uploadState.status === "submitting" ||
+            state.uploadState.status === "unknown" ||
             !state.workspaceId ||
             candidates.length === 0 ||
             !localReadConfirmed ||
             candidates.some((candidate) => candidate.status === "blocked")
           }
         >
-          {state.uploadState.status === "submitting" ? "读取中…" : "导入本地资料"}
+          {isReading || state.uploadState.status === "submitting" ? "读取中…" : "导入本地资料"}
         </button>
       </form>
       <div className="path2-card">
@@ -1652,7 +2631,18 @@ function DraftCandidate({ candidate }: { candidate: MissionDraftPayload }) {
 function RunStatusCard({ state }: { state: Path2WorkbenchState }) {
   const run = state.runSnapshot;
   if (!run) {
-    return <div className="path2-inline-empty">尚未创建 Run。确认 Mission 后，仍需单独点击“明确开始 Run”。</div>;
+    return (
+      <div className="path2-run-card">
+        {state.runReadbackIssue ? <IssueCallout issue={state.runReadbackIssue} title="Run 指针回读未完成" /> : null}
+        {state.runAction.status === "unknown" ? (
+          <div className="path2-reconcile-actions">
+            <button type="button" className="path2-secondary-button" onClick={() => void state.refreshMission()}>重新读取 Mission</button>
+            <button type="button" className="path2-secondary-button" onClick={state.acknowledgeRunUnknown}>我已人工核对，解除阻塞</button>
+          </div>
+        ) : null}
+        <div className="path2-inline-empty">尚未创建 Run。确认 Mission 后，仍需单独点击“明确开始 Run”。</div>
+      </div>
+    );
   }
   const isLive = run.status === "queued" || run.status === "running";
   return (
@@ -1683,9 +2673,22 @@ function RunStatusCard({ state }: { state: Path2WorkbenchState }) {
         <div className="path2-inline-status">结构化结果已回读，但持久化公开摘要为空；不伪造完整文字。</div>
       ) : null}
       {isLive ? (
-        <button type="button" className="path2-danger-button" onClick={() => void state.cancelActiveRun()} disabled={state.cancelAction.status === "submitting"}>
-          {state.cancelAction.status === "submitting" ? "取消中…" : "取消 Run"}
-        </button>
+        <>
+          {state.cancelAction.status === "unknown" ? (
+            <div className="path2-reconcile-actions">
+              <button type="button" className="path2-secondary-button" onClick={() => void state.reconcileRun()}>重新读取 Run 快照</button>
+              <button type="button" className="path2-secondary-button" onClick={state.acknowledgeCancelUnknown}>我已人工核对，解除阻塞</button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="path2-danger-button"
+            onClick={() => void state.cancelActiveRun()}
+            disabled={state.cancelAction.status === "submitting" || state.cancelAction.status === "unknown"}
+          >
+            {state.cancelAction.status === "submitting" ? "取消中…" : "取消 Run"}
+          </button>
+        </>
       ) : null}
     </div>
   );
@@ -1773,7 +2776,13 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
           <span>我明确确认将这段原始输入发送给已配置的 Provider；不包含来源文件。</span>
         </label>
         {state.attemptAction.issue ? <IssueCallout issue={state.attemptAction.issue} /> : null}
-        <button type="submit" className="path2-primary-button" disabled={!originalInput.trim() || !attemptSendConfirmed || state.attemptAction.status === "submitting"}>
+        {state.attemptAction.status === "unknown" ? (
+          <div className="path2-reconcile-actions">
+            {attempt ? <button type="button" className="path2-secondary-button" onClick={() => void state.reconcileAttempt()}>重新读取 Attempt</button> : null}
+            <button type="button" className="path2-secondary-button" onClick={state.acknowledgeAttemptUnknown}>我已人工核对，解除阻塞</button>
+          </div>
+        ) : null}
+        <button type="submit" className="path2-primary-button" disabled={!originalInput.trim() || !attemptSendConfirmed || state.attemptAction.status === "submitting" || state.attemptAction.status === "unknown"}>
           {state.attemptAction.status === "submitting" ? "生成中…" : "生成任务草案"}
         </button>
       </form>
@@ -1792,6 +2801,12 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
             {attempt.candidate_sha256 ? <span>sha256 <code title={attempt.candidate_sha256}>{attempt.candidate_sha256.slice(0, 14)}…</code></span> : null}
           </div>
           {candidate ? <DraftCandidate candidate={candidate} /> : null}
+          {attempt.status === "queued" || attempt.status === "running" ? (
+            <div className="path2-reconcile-actions">
+              <span className="path2-inline-status">Attempt 尚未产生候选内容；页面只按服务端状态等待，不会重复创建。</span>
+              <button type="button" className="path2-secondary-button" onClick={() => void state.reconcileAttempt()}>重新读取 Attempt</button>
+            </div>
+          ) : null}
           {candidate ? (
             <>
               <SourceSelection state={state} idPrefix="confirm-source" title="确认时绑定来源" description="请逐项选择本次确认使用的 SourceRevision；这一步不会启动 Run。" />
@@ -1800,7 +2815,13 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
                 <span>我已核对上面的候选内容、version 和 sha256，并确认这些来源身份。</span>
               </label>
               {state.confirmAction.issue ? <IssueCallout issue={state.confirmAction.issue} title="草案确认未完成" /> : null}
-              <button type="button" className="path2-primary-button" disabled={!canConfirm || state.confirmAction.status === "submitting"} onClick={() => void state.confirmAttempt()}>
+              {state.confirmAction.status === "unknown" ? (
+                <div className="path2-reconcile-actions">
+                  <button type="button" className="path2-secondary-button" onClick={() => void state.refreshMission()}>重新读取 Mission</button>
+                  <button type="button" className="path2-secondary-button" onClick={state.acknowledgeConfirmUnknown}>我已人工核对，解除阻塞</button>
+                </div>
+              ) : null}
+              <button type="button" className="path2-primary-button" disabled={!canConfirm || state.confirmAction.status === "submitting" || state.confirmAction.status === "unknown"} onClick={() => void state.confirmAttempt()}>
                 {state.confirmAction.status === "submitting" ? "确认中…" : "确认任务草案"}
               </button>
               <p className="path2-boundary-note">确认不会创建 Run；下一步必须单独明确 Start。</p>
@@ -1826,7 +2847,13 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
             <span>我明确确认本次 Run 可以向 Provider 发送所选来源及任务上下文。</span>
           </label>
           {state.runAction.issue ? <IssueCallout issue={state.runAction.issue} title="Run 未开始" /> : null}
-          <button type="button" className="path2-primary-button" disabled={!canStart || state.runAction.status === "submitting"} onClick={() => void state.startRun(runSendConfirmed)}>
+          {state.runAction.status === "unknown" ? (
+            <div className="path2-reconcile-actions">
+              <button type="button" className="path2-secondary-button" onClick={() => void state.refreshMission()}>重新读取 Mission/Run</button>
+              <button type="button" className="path2-secondary-button" onClick={state.acknowledgeRunUnknown}>我已人工核对，解除阻塞</button>
+            </div>
+          ) : null}
+          <button type="button" className="path2-primary-button" disabled={!canStart || state.runAction.status === "submitting" || state.runAction.status === "unknown"} onClick={() => void state.startRun(runSendConfirmed)}>
             {state.runAction.status === "submitting" ? "Start 中…" : "明确开始 Run"}
           </button>
           <p className="path2-boundary-note">Start 是独立领域动作；未知结果不会自动重发。Agent 自然停止也不表示 Mission completed。</p>
@@ -1841,21 +2868,113 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
   );
 }
 
+function evidenceLocatorLabel(locator: EvidenceLocator): string {
+  switch (locator.kind) {
+    case "csv_rows":
+      return `CSV 行 ${locator.row_start}-${locator.row_end}${locator.column ? ` · 列 ${locator.column}` : ""}`;
+    case "json_pointer":
+      return `JSON Pointer ${locator.pointer || "/"}`;
+    case "text_lines":
+      return `文本行 ${locator.line_start}-${locator.line_end}`;
+  }
+}
+
+function EvidenceRefs({ refs, label = "证据引用" }: { refs: EvidenceRef[]; label?: string }) {
+  if (refs.length === 0) {
+    return <small className="path2-detail-muted">{label}：暂无；证据身份未提供。</small>;
+  }
+  return (
+    <details className="path2-evidence-details">
+      <summary>{label} {refs.length} 条</summary>
+      <ul className="path2-plain-list path2-evidence-list">
+        {refs.map((reference, index) => (
+          <li key={`${reference.revision_id}-${reference.sha256}-${index}`}>
+            <code title={`${reference.workspace_id}:${reference.source_id}:${reference.revision_id}:${reference.sha256}`}>
+              {reference.source_id.slice(0, 8)}… / {reference.revision_id.slice(0, 8)}… / {reference.sha256.slice(0, 12)}…
+            </code>
+            <span>{evidenceLocatorLabel(reference.locator)}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function UnknownItems({ items }: { items: components["schemas"]["UnknownItem"][] }) {
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <div className="path2-detail-block">
+      <strong>未知项</strong>
+      <ul className="path2-plain-list">
+        {items.map((item, index) => <li key={`${item.property_path}-${index}`}><code>{item.property_path}</code>：{item.reason}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function StringList({ label, items }: { label: string; items: string[] }) {
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <div className="path2-detail-block">
+      <strong>{label}</strong>
+      <ul className="path2-plain-list">
+        {items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
+      </ul>
+    </div>
+  );
+}
+
 function DefinitionPanel({ state, mode }: { state: Path2WorkbenchState; mode: "clarifications" | "contract" }) {
   const draft = state.latestDraft;
+  const snapshotIssue = state.missionSnapshotState.issue;
   if (!state.workspaceId) {
     return <WorkspaceRequired copy="定义草案和待确认问题只从当前 Workspace 的真实 Mission/Run 快照读取。" />;
   }
   if (mode === "clarifications") {
     return (
       <div className="path2-panel-stack">
-        <div className="path2-panel-intro"><div><span className="path2-eyebrow">HUMAN INPUT</span><h2>待澄清问题</h2><p>这里只查看 Agent 提出的公开问题；本卡不实现回答、审批或正式契约发布。</p></div><span className="path2-count">{state.clarifications.length}</span></div>
-        {state.missionSnapshotState.issue ? <IssueCallout issue={state.missionSnapshotState.issue} /> : null}
-        {state.clarifications.length === 0 ? <div className="path2-inline-empty">当前快照没有待确认问题。</div> : null}
+        <div className="path2-panel-intro">
+          <div>
+            <span className="path2-eyebrow">HUMAN INPUT</span>
+            <h2>待澄清问题</h2>
+            <p>这里只查看 Agent 提出的公开问题；本卡不实现回答、审批或正式契约发布。</p>
+          </div>
+          <span className="path2-count">{state.clarifications.length}</span>
+        </div>
+        {snapshotIssue ? <IssueCallout issue={snapshotIssue} title="澄清快照不可用" /> : null}
+        {!snapshotIssue && state.missionSnapshotState.status === "loading" ? (
+          <div className="path2-inline-status">正在回读澄清请求…</div>
+        ) : null}
+        {!snapshotIssue && state.missionSnapshotState.status !== "loading" && state.clarifications.length === 0 ? (
+          <div className="path2-inline-empty">当前快照没有待确认问题。</div>
+        ) : null}
         {state.clarifications.map((request) => (
           <article className="path2-card path2-clarification-card" key={request.clarification_id}>
-            <div className="path2-card-heading"><div><h3>澄清请求</h3><p>draft version {request.draft_version} · <code>{request.draft_sha256.slice(0, 14)}…</code></p></div><StatusPill status={request.status}>等待回答</StatusPill></div>
-            {request.questions.map((question, index) => <div className="path2-question" key={`${request.clarification_id}-${index}`}><strong>{index + 1}. {question.question}</strong><p>{question.why_needed}</p><small>{question.blocking_impact === "blocking" ? "阻塞性问题" : "非阻塞问题"} · {question.expected_answer_type}</small></div>)}
+            <div className="path2-card-heading">
+              <div>
+                <h3>澄清请求</h3>
+                <p>draft version {request.draft_version} · <code>{request.draft_sha256.slice(0, 14)}…</code></p>
+              </div>
+              <StatusPill status={request.status}>等待回答</StatusPill>
+            </div>
+            {request.questions.map((question, index) => (
+              <div className="path2-question" key={`${request.clarification_id}-${index}`}>
+                <strong>{index + 1}. {question.question}</strong>
+                <p>{question.why_needed}</p>
+                <small>{question.blocking_impact === "blocking" ? "阻塞性问题" : "非阻塞问题"} · {question.expected_answer_type}</small>
+                <dl className="path2-detail-grid">
+                  {question.suggested_owner_role ? <div><dt>建议负责人</dt><dd>{question.suggested_owner_role}</dd></div> : null}
+                  {question.related_definition_paths.length > 0 ? <div><dt>关联定义路径</dt><dd><ul className="path2-plain-list">{question.related_definition_paths.map((item, itemIndex) => <li key={`${itemIndex}-${item}`}><code>{item}</code></li>)}</ul></dd></div> : null}
+                </dl>
+                <StringList label="需要的证据" items={question.evidence_requested} />
+                <StringList label="示例或选项" items={question.examples_or_options} />
+                <EvidenceRefs refs={question.source_refs} />
+              </div>
+            ))}
           </article>
         ))}
       </div>
@@ -1863,17 +2982,103 @@ function DefinitionPanel({ state, mode }: { state: Path2WorkbenchState; mode: "c
   }
   return (
     <div className="path2-panel-stack">
-      <div className="path2-panel-intro"><div><span className="path2-eyebrow">DEFINITION DRAFT</span><h2>业务契约草案</h2><p>展示带来源的字段与关系候选；语义批准保持 pending，当前不提供发布动作。</p></div>{draft ? <StatusPill status={draft.status}>{statusLabel(draft.status)}</StatusPill> : null}</div>
-      {!draft ? <div className="path2-inline-empty">当前快照没有 DefinitionDraft。Run 结束前不显示预置业务定义。</div> : <>
-        <div className="path2-card path2-draft-identity"><div><span>draft</span><code>{draft.draft_id}</code></div><div><span>version</span><code>{draft.version}</code></div><div><span>sha256</span><code title={draft.sha256}>{draft.sha256}</code></div><StatusPill status="pending">语义批准待处理</StatusPill></div>
-        {draft.unresolved_items.length > 0 ? <div className="path2-card"><h3>未决项</h3><ul className="path2-plain-list">{draft.unresolved_items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul></div> : null}
-        <div className="path2-card"><h3>字段候选 <span className="path2-count">{draft.fields.length}</span></h3>{draft.fields.length === 0 ? <div className="path2-inline-empty">暂无字段候选。</div> : <div className="path2-definition-list">{draft.fields.map((field) => <article key={field.field_key}><div className="path2-definition-heading"><strong>{field.name}</strong><StatusPill status={field.evidence_status}>{statusLabel(field.evidence_status)}</StatusPill></div><p>{field.meaning ?? "含义未知"}</p><small>{field.value_type ?? "类型未知"} · {field.grain ?? "粒度未知"} · 来源 {field.source_refs.length} 条</small></article>)}</div>}</div>
-        <div className="path2-card"><h3>关系候选 <span className="path2-count">{draft.relationships.length}</span></h3>{draft.relationships.length === 0 ? <div className="path2-inline-empty">暂无关系候选。</div> : <div className="path2-definition-list">{draft.relationships.map((relationship) => <article key={relationship.relationship_key}><div className="path2-definition-heading"><strong>{relationship.relationship_key}</strong><StatusPill status={relationship.evidence_status}>{statusLabel(relationship.evidence_status)}</StatusPill></div><p>{relationship.left.table_id} ↔ {relationship.right.table_id} · {relationship.observed_cardinality}</p><small>{relationship.join_rule ?? "连接规则未知"} · 来源 {relationship.source_refs.length} 条</small></article>)}</div>}</div>
-      </>}
+      <div className="path2-panel-intro">
+        <div>
+          <span className="path2-eyebrow">DEFINITION DRAFT</span>
+          <h2>业务契约草案</h2>
+          <p>展示带来源的字段与关系候选；语义批准保持 pending，当前不提供发布动作。</p>
+        </div>
+        {draft ? <StatusPill status={draft.status}>{statusLabel(draft.status)}</StatusPill> : null}
+      </div>
+      {!draft ? (
+        snapshotIssue ? <IssueCallout issue={snapshotIssue} title="定义草案快照不可用" /> :
+        state.missionSnapshotState.status === "loading" ? <div className="path2-inline-status">正在回读 DefinitionDraft…</div> :
+        <div className="path2-inline-empty">当前快照没有 DefinitionDraft。Run 结束前不显示预置业务定义。</div>
+      ) : (
+        <>
+          <div className="path2-card path2-draft-identity">
+            <div><span>draft</span><code>{draft.draft_id}</code></div>
+            <div><span>version</span><code>{draft.version}</code></div>
+            <div><span>sha256</span><code title={draft.sha256}>{draft.sha256}</code></div>
+            <StatusPill status="pending">语义批准待处理</StatusPill>
+          </div>
+          {draft.unresolved_items.length > 0 ? (
+            <div className="path2-card">
+              <h3>未决项</h3>
+              <ul className="path2-plain-list">{draft.unresolved_items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>
+            </div>
+          ) : null}
+          <div className="path2-card">
+            <h3>字段候选 <span className="path2-count">{draft.fields.length}</span></h3>
+            {draft.fields.length === 0 ? <div className="path2-inline-empty">暂无字段候选。</div> : (
+              <div className="path2-definition-list">
+                {draft.fields.map((field) => (
+                  <article key={field.field_key}>
+                    <div className="path2-definition-heading">
+                      <strong>{field.name}</strong>
+                      <StatusPill status={field.evidence_status}>{statusLabel(field.evidence_status)}</StatusPill>
+                    </div>
+                    <p>{field.meaning ?? "含义未知"}</p>
+                    <dl className="path2-detail-grid">
+                      <div><dt>值类型</dt><dd>{field.value_type ?? "未知"}</dd></div>
+                      <div><dt>粒度</dt><dd>{field.grain ?? "未知"}</dd></div>
+                      <div><dt>规则</dt><dd>{field.rule ?? "未知"}</dd></div>
+                      <div><dt>时间基准</dt><dd>{field.time_basis ?? "未知"}</dd></div>
+                      <div><dt>空值处理</dt><dd>{field.null_handling ?? "未知"}</dd></div>
+                      <div>
+                        <dt>来源列</dt>
+                        <dd>
+                          {field.source_columns.length > 0 ? (
+                            <ul className="path2-plain-list">
+                              {field.source_columns.map((column, index) => (
+                                <li key={`${column.table_id}-${column.column}-${index}`}>
+                                  <code title={`${column.source_ref.workspace_id}:${column.source_ref.source_id}:${column.source_ref.revision_id}:${column.source_ref.sha256}`}>
+                                    {column.table_id || "根表"}.{column.column}
+                                  </code>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : "未提供"}
+                        </dd>
+                      </div>
+                    </dl>
+                    <UnknownItems items={field.unknowns} />
+                    <EvidenceRefs refs={field.source_refs} />
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="path2-card">
+            <h3>关系候选 <span className="path2-count">{draft.relationships.length}</span></h3>
+            {draft.relationships.length === 0 ? <div className="path2-inline-empty">暂无关系候选。</div> : (
+              <div className="path2-definition-list">
+                {draft.relationships.map((relationship) => (
+                  <article key={relationship.relationship_key}>
+                    <div className="path2-definition-heading">
+                      <strong>{relationship.relationship_key}</strong>
+                      <StatusPill status={relationship.evidence_status}>{statusLabel(relationship.evidence_status)}</StatusPill>
+                    </div>
+                    <dl className="path2-detail-grid">
+                      <div><dt>左表</dt><dd><code>{relationship.left.table_id || "根表"}</code> · {relationship.left.columns.join(", ") || "列未知"}</dd></div>
+                      <div><dt>右表</dt><dd><code>{relationship.right.table_id || "根表"}</code> · {relationship.right.columns.join(", ") || "列未知"}</dd></div>
+                      <div><dt>基数</dt><dd>{relationship.observed_cardinality}</dd></div>
+                      <div><dt>连接规则</dt><dd>{relationship.join_rule ?? "未知"}</dd></div>
+                      <div><dt>粒度说明</dt><dd>{relationship.grain_notes ?? "未知"}</dd></div>
+                    </dl>
+                    <StringList label="风险" items={relationship.risks} />
+                    <UnknownItems items={relationship.unknowns} />
+                    <EvidenceRefs refs={relationship.source_refs} />
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
-
 export function Path2Workbench({ state, activeArea }: { state: Path2WorkbenchState; activeArea: Path2AreaId }) {
   return (
     <section className="path2-surface" aria-label="Path 2 Workbench">
@@ -1914,6 +3119,7 @@ export function Path2AgentContent({ state }: { state: Path2WorkbenchState }) {
   return (
     <div className="path2-agent-state">
       {!state.workspaceId ? <WorkspaceRequired copy="Agent 面板只显示当前 Workspace 的公开状态，不保留跨 Workspace 内容。" /> : null}
+      {state.workspaceId && !run && state.runReadbackIssue ? <IssueCallout issue={state.runReadbackIssue} title="Run 指针回读未完成" /> : null}
       {state.workspaceId && !run ? <div className="path2-agent-empty"><strong>尚未开始 Run</strong><p>生成并确认 Mission 后，使用中心区域的“明确开始 Run”。</p></div> : null}
       {run ? (
         <>

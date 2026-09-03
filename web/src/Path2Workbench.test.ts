@@ -12,12 +12,21 @@ import {
   buildSourceUploadRequest,
   createRunEventState,
   executeExplicitRequest,
+  isCurrentOperation,
   isCurrentWorkspaceResponse,
   issueFromError,
+  missionDraftAttemptMatchesIdentity,
+  missionDraftAttemptIsMonotonic,
+  missionSnapshotIsMonotonic,
   mergeRunSnapshot,
   parseRunEvent,
+  runSnapshotIsMonotonic,
   runSnapshotMatchesIdentity,
   sourceIdentityFromRevision,
+  workbenchSurfaceSummary,
+  type ClarificationRequest,
+  type DefinitionDraft,
+  type EvidenceRef,
   type Mission,
   type MissionDraftAttempt,
   type Path2WorkbenchState,
@@ -111,6 +120,72 @@ const run: RunSnapshot = {
   error_code: null,
 };
 
+const evidence: EvidenceRef = {
+  workspace_id: workspaceId,
+  source_id: sourceId,
+  revision_id: revisionId,
+  sha256: source.sha256,
+  locator: { kind: "csv_rows", row_start: 2, row_end: 12, column: "customer_id" },
+};
+
+const draft: DefinitionDraft = {
+  workspace_id: workspaceId,
+  mission_id: missionId,
+  draft_id: "99999999-9999-4999-8999-999999999999",
+  version: 8,
+  sha256: "c".repeat(64),
+  status: "in_review",
+  semantic_approval: "pending",
+  fields: [{
+    field_key: "customer_id",
+    name: "客户 ID",
+    meaning: "客户的稳定标识。",
+    value_type: "string",
+    grain: "客户",
+    source_columns: [{ source_ref: sourceIdentityFromRevision(source), table_id: "customers", column: "customer_id" }],
+    rule: "去除空白后保持原值",
+    time_basis: "as_of_date",
+    null_handling: "未知值保留为 null",
+    evidence_status: "candidate",
+    source_refs: [evidence],
+    unknowns: [{ property_path: "fields.customer_id.rule", reason: "尚未确认历史修订规则。" }],
+  }],
+  relationships: [{
+    relationship_key: "customers_to_orders",
+    left: { source_ref: sourceIdentityFromRevision(source), table_id: "customers", columns: ["customer_id"] },
+    right: { source_ref: sourceIdentityFromRevision(source), table_id: "orders", columns: ["customer_id"] },
+    observed_cardinality: "one_to_many",
+    join_rule: "customers.customer_id = orders.customer_id",
+    grain_notes: "左侧一行代表一个客户。",
+    evidence_status: "candidate",
+    source_refs: [evidence],
+    risks: ["同一客户可能存在合并记录。"],
+    unknowns: [],
+  }],
+  unresolved_items: ["确认历史客户合并规则。"],
+};
+
+const clarification: ClarificationRequest = {
+  workspace_id: workspaceId,
+  mission_id: missionId,
+  run_id: runId,
+  clarification_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  draft_version: draft.version,
+  draft_sha256: draft.sha256,
+  status: "awaiting_answer",
+  questions: [{
+    question: "客户合并后的 ID 如何保留？",
+    why_needed: "否则历史粒度无法稳定对齐。",
+    expected_answer_type: "text",
+    suggested_owner_role: "客户数据负责人",
+    related_definition_paths: ["fields.customer_id.rule"],
+    evidence_requested: ["客户合并规则文档"],
+    examples_or_options: ["保留旧 ID", "映射到新 ID"],
+    blocking_impact: "blocking",
+    source_refs: [evidence],
+  }],
+};
+
 const emptyState: Path2WorkbenchState = {
   workspaceId: null,
   sourceState: { status: "idle", items: [], issue: null },
@@ -121,22 +196,31 @@ const emptyState: Path2WorkbenchState = {
   toggleSource: () => undefined,
   loadSourceArtifact: async () => undefined,
   readSourceExcerpt: async () => undefined,
+  refreshSources: async () => undefined,
   uploadState: { status: "idle", issue: null, result: null },
   uploadSourceBatch: async () => null,
+  acknowledgeUploadUnknown: () => undefined,
   missionState: { status: "empty", items: [], issue: null },
   selectedMission: null,
   missionSnapshot: null,
   missionSnapshotState: { status: "empty", items: [], issue: null },
+  refreshMission: async () => undefined,
   attempt: null,
   attemptAction: { status: "idle", issue: null },
   submitAttempt: async () => null,
+  reconcileAttempt: async () => undefined,
+  acknowledgeAttemptUnknown: () => undefined,
   confirmAction: { status: "idle", issue: null },
   confirmAttempt: async () => null,
+  acknowledgeConfirmUnknown: () => undefined,
   runSnapshot: null,
   runAction: { status: "idle", issue: null },
   startRun: async () => null,
+  acknowledgeRunUnknown: () => undefined,
   cancelAction: { status: "idle", issue: null },
   cancelActiveRun: async () => null,
+  reconcileRun: async () => undefined,
+  acknowledgeCancelUnknown: () => undefined,
   runConnectionState: "idle",
   runReadbackIssue: null,
   runEventIssue: null,
@@ -188,6 +272,50 @@ describe("Path 2 Workbench state boundaries", () => {
         { workspaceId, missionId, runId },
       ),
     ).toBe(false);
+  });
+
+  it("rejects a delayed continuation when its operation generation or object identity is stale", () => {
+    const token = {
+      kind: "run_snapshot" as const,
+      generation: 2,
+      epoch: 7,
+      workspaceId,
+      missionId,
+      runId,
+    };
+    const currentScope = { workspaceId, missionId, attemptId: null, runId };
+    expect(isCurrentOperation(token, 7, { run_snapshot: 2 }, currentScope)).toBe(true);
+    expect(isCurrentOperation(token, 7, { run_snapshot: 1 }, currentScope)).toBe(false);
+    expect(isCurrentOperation(token, 7, { run_snapshot: 2 }, { ...currentScope, runId: "stale-run" })).toBe(false);
+    expect(isCurrentOperation(token, 8, { run_snapshot: 2 }, currentScope)).toBe(false);
+  });
+
+  it("keeps Attempt polling states and validates the original input binding", () => {
+    expect(missionDraftAttemptMatchesIdentity(attempt, workspaceId, attempt.attempt_id, attempt.original_input)).toBe(true);
+    expect(missionDraftAttemptMatchesIdentity(attempt, workspaceId, attempt.attempt_id, "different input")).toBe(false);
+    expect(missionDraftAttemptMatchesIdentity({ ...attempt, workspace_id: "99999999-9999-4999-8999-999999999999" }, workspaceId, attempt.attempt_id)).toBe(false);
+    expect(missionDraftAttemptIsMonotonic({ ...attempt, status: "running", candidate: null, candidate_version: null, candidate_sha256: null }, attempt)).toBe(true);
+    expect(missionDraftAttemptIsMonotonic(attempt, { ...attempt, status: "running", candidate: null, candidate_version: null, candidate_sha256: null })).toBe(false);
+    expect(missionDraftAttemptIsMonotonic({ ...attempt, status: "confirmed", mission_id: missionId }, attempt)).toBe(false);
+  });
+
+  it("never lets a Run readback regress sequence, draft, output, or terminal state", () => {
+    expect(runSnapshotIsMonotonic(run, { ...run, last_sequence: 1 })).toBe(false);
+    expect(runSnapshotIsMonotonic({ ...run, status: "completed", finished_at: "2026-09-03T10:00:03Z" }, run)).toBe(false);
+    expect(runSnapshotIsMonotonic(run, { ...run, status: "completed", finished_at: "2026-09-03T10:00:03Z", last_sequence: 3 })).toBe(true);
+    expect(runSnapshotIsMonotonic({ ...run, draft }, { ...run, last_sequence: 3, draft: null })).toBe(false);
+  });
+
+  it("keeps Mission snapshots monotonic when their Run or draft disappears", () => {
+    const current = {
+      mission,
+      draft,
+      clarifications: [clarification],
+      latest_run: run,
+    };
+    expect(missionSnapshotIsMonotonic(current, { ...current, latest_run: null })).toBe(false);
+    expect(missionSnapshotIsMonotonic(current, { ...current, draft: null })).toBe(false);
+    expect(missionSnapshotIsMonotonic(current, { ...current, mission: { ...mission, state_version: 3 } })).toBe(false);
   });
 
   it("keeps local-read consent separate from the generated upload contract", () => {
@@ -293,7 +421,7 @@ describe("Path 2 Workbench state boundaries", () => {
     const blockedMarkup = renderToStaticMarkup(
       createElement(Path2Workbench, { state: blockedState, activeArea: "sources" }),
     );
-    expect(blockedMarkup).toContain("W0.2 接缝不可用");
+    expect(blockedMarkup).toContain("当前能力已阻塞");
     expect(blockedMarkup).toContain("path2_not_implemented");
   });
 
@@ -317,6 +445,43 @@ describe("Path 2 Workbench state boundaries", () => {
     expect(markup).toContain("确认不会创建 Run");
     expect(markup).toContain("明确开始 Run");
     expect(markup).not.toContain("持久化公开摘要");
+  });
+
+  it("renders the contract fields, evidence locators, and clarification responsibility details", () => {
+    const richState: Path2WorkbenchState = {
+      ...emptyState,
+      workspaceId,
+      sourceState: { status: "ready", items: [source], issue: null },
+      missionState: { status: "ready", items: [mission], issue: null },
+      selectedMission: mission,
+      missionSnapshotState: { status: "ready", items: [mission], issue: null },
+      runSnapshot: { ...run, status: "waiting_for_human", finished_at: "2026-09-03T10:00:03Z", draft, clarifications: [clarification] },
+      latestDraft: draft,
+      clarifications: [clarification],
+    };
+    const contractMarkup = renderToStaticMarkup(createElement(Path2Workbench, { state: richState, activeArea: "contract" }));
+    expect(contractMarkup).toContain("时间基准");
+    expect(contractMarkup).toContain("去除空白后保持原值");
+    expect(contractMarkup).toContain("as_of_date");
+    expect(contractMarkup).toContain("CSV 行 2-12");
+    expect(contractMarkup).toContain("历史客户合并规则");
+
+    const clarificationMarkup = renderToStaticMarkup(createElement(Path2Workbench, { state: richState, activeArea: "clarifications" }));
+    expect(clarificationMarkup).toContain("客户数据负责人");
+    expect(clarificationMarkup).toContain("fields.customer_id.rule");
+    expect(clarificationMarkup).toContain("保留旧 ID");
+    expect(clarificationMarkup).toContain("CSV 行 2-12");
+  });
+
+  it("derives the Workbench context status from actual collection state", () => {
+    expect(workbenchSurfaceSummary(emptyState)).toEqual({ status: "empty", label: "未选择 Workspace" });
+    expect(workbenchSurfaceSummary({
+      ...emptyState,
+      workspaceId,
+      sourceState: { status: "ready", items: [source], issue: null },
+      missionState: { status: "ready", items: [mission], issue: null },
+      missionSnapshotState: { status: "ready", items: [mission], issue: null },
+    })).toEqual({ status: "ready", label: "来源与 Mission 已回读" });
   });
 
   it("keeps a cancelled Run visible as cancelled in the Agent panel", () => {
