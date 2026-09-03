@@ -914,7 +914,7 @@ a:focus-visible {
 
 .wire-source-branch {
   top: calc(7% + var(--node-radius));
-  bottom: calc(33% - var(--node-radius));
+  bottom: calc(63% - var(--node-radius));
   left: var(--source-branch-x);
   width: 1px;
 }
@@ -946,11 +946,26 @@ a:focus-visible {
   height: 1px;
 }
 
+.wire-source-direct-top,
+.wire-source-direct-bottom {
+  left: calc(var(--source-center-x) + var(--node-radius));
+  width: calc(var(--entity-center-x) - var(--source-center-x) - var(--node-radius) - var(--node-radius));
+  height: 1px;
+}
+
 .wire-source-to-entity-top {
   top: calc(20% + var(--node-radius));
 }
 
 .wire-source-to-entity-bottom {
+  top: calc(56% + var(--node-radius));
+}
+
+.wire-source-direct-top {
+  top: calc(20% + var(--node-radius));
+}
+
+.wire-source-direct-bottom {
   top: calc(56% + var(--node-radius));
 }
 
@@ -1002,6 +1017,8 @@ a:focus-visible {
 
 .wire-source-to-entity-top::after,
 .wire-source-to-entity-bottom::after,
+.wire-source-direct-top::after,
+.wire-source-direct-bottom::after,
 .wire-conflict::after,
 .wire-confirmation::after,
 .wire-contract::after {

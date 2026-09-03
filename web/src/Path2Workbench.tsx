@@ -285,12 +285,121 @@ export type Path2ObjectPointers = {
   missionId: string | null;
   runId: string | null;
   runMissionId: string | null;
+  pendingActions: Path2PendingActions;
 };
+
+export type PendingActionKind = "upload" | "attempt" | "confirm" | "run_start" | "cancel";
+
+export type Path2PendingAction = {
+  kind: PendingActionKind;
+  requestId: string;
+  workspaceId: string;
+  missionId: string | null;
+  attemptId: string | null;
+  runId: string | null;
+  clientRequestId: string | null;
+  intentKey: string | null;
+  stateVersion: number | null;
+  candidateVersion: number | null;
+  candidateSha256: string | null;
+  sourceRefs: SourceIdentity[];
+};
+
+export type Path2PendingActions = Partial<Record<PendingActionKind, Path2PendingAction>>;
 
 const PATH2_OBJECT_POINTERS_PREFIX = "contextox.path2.object-pointers.";
 
+const PENDING_ACTION_KINDS: PendingActionKind[] = ["upload", "attempt", "confirm", "run_start", "cancel"];
+
 function emptyPath2ObjectPointers(): Path2ObjectPointers {
-  return { attemptId: null, missionId: null, runId: null, runMissionId: null };
+  return {
+    attemptId: null,
+    missionId: null,
+    runId: null,
+    runMissionId: null,
+    pendingActions: {},
+  };
+}
+
+function storedString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function storedPositiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function storedNonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function isStoredSourceIdentity(value: unknown, workspaceId: string): value is SourceIdentity {
+  return (
+    isRecord(value) &&
+    value.workspace_id === workspaceId &&
+    storedString(value.source_id) !== null &&
+    storedString(value.revision_id) !== null &&
+    typeof value.sha256 === "string" &&
+    /^[a-f0-9]{64}$/.test(value.sha256)
+  );
+}
+
+function parsePendingAction(value: unknown, workspaceId: string): Path2PendingAction | null {
+  if (!isRecord(value) || value.workspaceId !== workspaceId || typeof value.kind !== "string" || !PENDING_ACTION_KINDS.includes(value.kind as PendingActionKind)) {
+    return null;
+  }
+  const requestId = storedString(value.requestId);
+  const sourceRefs = Array.isArray(value.sourceRefs) && value.sourceRefs.every((item) => isStoredSourceIdentity(item, workspaceId))
+    ? value.sourceRefs as SourceIdentity[]
+    : null;
+  const stateVersion = value.stateVersion === null ? null : storedNonNegativeInteger(value.stateVersion);
+  const candidateVersion = value.candidateVersion === null ? null : storedPositiveInteger(value.candidateVersion);
+  if (
+    !requestId ||
+    !sourceRefs ||
+    !Object.prototype.hasOwnProperty.call(value, "stateVersion") ||
+    !Object.prototype.hasOwnProperty.call(value, "candidateVersion") ||
+    (value.stateVersion !== null && stateVersion === null) ||
+    (value.candidateVersion !== null && candidateVersion === null) ||
+    !Object.prototype.hasOwnProperty.call(value, "missionId") ||
+    !Object.prototype.hasOwnProperty.call(value, "attemptId") ||
+    !Object.prototype.hasOwnProperty.call(value, "runId") ||
+    !Object.prototype.hasOwnProperty.call(value, "clientRequestId") ||
+    !Object.prototype.hasOwnProperty.call(value, "intentKey") ||
+    !Object.prototype.hasOwnProperty.call(value, "candidateSha256")
+  ) {
+    return null;
+  }
+  const missionId = value.missionId === null ? null : storedString(value.missionId);
+  const attemptId = value.attemptId === null ? null : storedString(value.attemptId);
+  const runId = value.runId === null ? null : storedString(value.runId);
+  const clientRequestId = value.clientRequestId === null ? null : storedString(value.clientRequestId);
+  const intentKey = value.intentKey === null ? null : storedString(value.intentKey);
+  const candidateSha256 = value.candidateSha256 === null ? null : storedString(value.candidateSha256);
+  if (
+    (value.missionId !== null && !missionId) ||
+    (value.attemptId !== null && !attemptId) ||
+    (value.runId !== null && !runId) ||
+    (value.clientRequestId !== null && !clientRequestId) ||
+    (value.intentKey !== null && !intentKey) ||
+    (value.candidateSha256 !== null && (!candidateSha256 || !/^[a-f0-9]{64}$/.test(candidateSha256)))
+  ) {
+    return null;
+  }
+  return {
+    kind: value.kind as PendingActionKind,
+    requestId,
+    workspaceId,
+    missionId,
+    attemptId,
+    runId,
+    clientRequestId,
+    intentKey,
+    stateVersion,
+    candidateVersion,
+    candidateSha256,
+    sourceRefs,
+  };
 }
 
 export function readPath2ObjectPointers(workspaceId: string): Path2ObjectPointers {
@@ -306,13 +415,22 @@ export function readPath2ObjectPointers(workspaceId: string): Path2ObjectPointer
     if (!isRecord(value)) {
       return emptyPath2ObjectPointers();
     }
-    const stringOrNull = (candidate: unknown): string | null =>
-      typeof candidate === "string" && candidate.length > 0 ? candidate : null;
+    const pendingActions: Path2PendingActions = {};
+    const storedPendingActions = value.pendingActions;
+    if (isRecord(storedPendingActions)) {
+      PENDING_ACTION_KINDS.forEach((kind) => {
+        const pending = parsePendingAction(storedPendingActions[kind], workspaceId);
+        if (pending?.kind === kind) {
+          pendingActions[kind] = pending;
+        }
+      });
+    }
     return {
-      attemptId: stringOrNull(value.attemptId),
-      missionId: stringOrNull(value.missionId),
-      runId: stringOrNull(value.runId),
-      runMissionId: stringOrNull(value.runMissionId),
+      attemptId: storedString(value.attemptId),
+      missionId: storedString(value.missionId),
+      runId: storedString(value.runId),
+      runMissionId: storedString(value.runMissionId),
+      pendingActions,
     };
   } catch {
     return emptyPath2ObjectPointers();
@@ -322,19 +440,83 @@ export function readPath2ObjectPointers(workspaceId: string): Path2ObjectPointer
 export function writePath2ObjectPointers(
   workspaceId: string,
   patch: Partial<Path2ObjectPointers>,
-): void {
+): boolean {
   if (typeof window === "undefined") {
-    return;
+    return false;
   }
   try {
     const next = { ...readPath2ObjectPointers(workspaceId), ...patch };
+    const serialized = JSON.stringify(next);
+    const storageKey = `${PATH2_OBJECT_POINTERS_PREFIX}${workspaceId}`;
     window.sessionStorage.setItem(
-      `${PATH2_OBJECT_POINTERS_PREFIX}${workspaceId}`,
-      JSON.stringify(next),
+      storageKey,
+      serialized,
     );
+    return window.sessionStorage.getItem(storageKey) === serialized;
   } catch {
-    // The in-memory state remains authoritative when sessionStorage is unavailable.
+    return false;
   }
+}
+
+function createPendingAction(
+  kind: PendingActionKind,
+  workspaceId: string,
+  patch: Partial<Omit<Path2PendingAction, "kind" | "requestId" | "workspaceId">> = {},
+): Path2PendingAction {
+  return {
+    kind,
+    requestId: createClientRequestId(),
+    workspaceId,
+    missionId: null,
+    attemptId: null,
+    runId: null,
+    clientRequestId: null,
+    intentKey: null,
+    stateVersion: null,
+    candidateVersion: null,
+    candidateSha256: null,
+    sourceRefs: [],
+    ...patch,
+  };
+}
+
+function writePendingAction(
+  workspaceId: string,
+  pending: Path2PendingAction,
+  pointerPatch: Partial<Path2ObjectPointers> = {},
+): boolean {
+  const pointers = readPath2ObjectPointers(workspaceId);
+  return writePath2ObjectPointers(workspaceId, {
+    pendingActions: { ...pointers.pendingActions, [pending.kind]: pending },
+    ...pointerPatch,
+  });
+}
+
+function clearPendingAction(workspaceId: string, kind: PendingActionKind): boolean {
+  const pointers = readPath2ObjectPointers(workspaceId);
+  const pendingActions = { ...pointers.pendingActions };
+  delete pendingActions[kind];
+  return writePath2ObjectPointers(workspaceId, { pendingActions });
+}
+
+export function pendingConfirmMatchesIdentity(
+  pending: Path2PendingAction | undefined,
+  attempt: MissionDraftAttempt | null,
+  mission: Mission | null,
+): boolean {
+  return Boolean(
+    pending &&
+    pending.kind === "confirm" &&
+    attempt &&
+    mission &&
+    pending.workspaceId === mission.workspace_id &&
+    pending.attemptId === attempt.attempt_id &&
+    attempt.status === "confirmed" &&
+    attempt.mission_id === mission.mission_id &&
+    pending.candidateVersion === attempt.candidate_version &&
+    pending.candidateSha256 === attempt.candidate_sha256 &&
+    sourceIdentityListEquals(pending.sourceRefs, mission.source_refs),
+  );
 }
 
 function scopeIssue(): ApiIssue {
@@ -613,6 +795,29 @@ export type ApiIssue = {
   code: string | null;
   message: string;
 };
+
+export function pendingActionIssue(kind: PendingActionKind): ApiIssue {
+  const labels: Record<PendingActionKind, string> = {
+    upload: "来源导入",
+    attempt: "Attempt 创建",
+    confirm: "草案确认",
+    run_start: "Run Start",
+    cancel: "Run 取消",
+  };
+  return {
+    kind: "unknown",
+    code: "pending_action_unknown",
+    message: `${labels[kind]} 上一次请求的结果未知；当前仅保留阻塞状态，必须用精确对象回读或人工核对，不能恢复确认或自动重试。`,
+  };
+}
+
+function pendingActionStorageIssue(): ApiIssue {
+  return {
+    kind: "blocked",
+    code: "pending_action_persistence_unavailable",
+    message: "无法在当前 tab 保存待处理动作标记，未发送请求；请恢复本地存储后再试。",
+  };
+}
 
 export function issueFromError(error: unknown): ApiIssue {
   if (error instanceof ApiRequestError) {
@@ -1094,20 +1299,29 @@ export function usePath2Workbench(
           setMissionSnapshotState({ status: "failed", items: [], issue: scopeIssue() });
           return null;
         }
+        const pendingRunStart = readPath2ObjectPointers(currentWorkspaceId).pendingActions.run_start;
+        const runStartOutcomeUnknown = pendingRunStart?.missionId === missionId;
+        const nextForDisplay = runStartOutcomeUnknown
+          ? { ...next, draft: null, clarifications: [], latest_run: null }
+          : next;
         const current = missionSnapshotRef.current;
         if (
           current &&
           current.mission.mission_id === missionId &&
-          !missionSnapshotIsMonotonic(current, next)
+          !missionSnapshotIsMonotonic(current, nextForDisplay)
         ) {
           setMissionSnapshotState({ status: "ready", items: [current.mission], issue: null });
           return current;
         }
-        storeMissionSnapshot(next);
-        setMissionSnapshotState({ status: "ready", items: [next.mission], issue: null });
+        storeMissionSnapshot(nextForDisplay);
+        setMissionSnapshotState({ status: "ready", items: [nextForDisplay.mission], issue: null });
         const preferredRunId =
           preferredRunMissionIdRef.current === missionId ? preferredRunIdRef.current : null;
-        if (next.latest_run && (!preferredRunId || next.latest_run.run_id === preferredRunId)) {
+        if (
+          next.latest_run &&
+          !runStartOutcomeUnknown &&
+          (!preferredRunId || next.latest_run.run_id === preferredRunId)
+        ) {
           const applied = applyRunSnapshot(next.latest_run, {
             workspaceId: currentWorkspaceId,
             missionId,
@@ -1123,7 +1337,7 @@ export function usePath2Workbench(
             preferredRunMissionIdRef.current = missionId;
           }
         }
-        return next;
+        return nextForDisplay;
       } catch (error: unknown) {
         if (isOperationCurrent(token)) {
           setMissionSnapshotState(collectionForError(error));
@@ -1152,9 +1366,6 @@ export function usePath2Workbench(
         return;
       }
       setSourceState({ status: items.length > 0 ? "ready" : "empty", items, issue: null });
-      if (uploadStateRef.current.status === "unknown") {
-        setUploadStateNow({ ...emptyAction(), result: null });
-      }
     } catch (error: unknown) {
       if (isOperationCurrent(token)) {
         setSourceState(collectionForError(error));
@@ -1331,16 +1542,32 @@ export function usePath2Workbench(
           return;
         }
       }
+      const pendingConfirm = pointers.pendingActions.confirm;
+      if (
+        pendingConfirm &&
+        currentAttemptId &&
+        attemptRef.current?.attempt_id !== currentAttemptId
+      ) {
+        pendingAttemptIdRef.current = currentAttemptId;
+        const attemptToken = beginOperation("attempt", {
+          workspaceId: currentWorkspaceId,
+          attemptId: currentAttemptId,
+        });
+        await readAttempt(currentWorkspaceId, currentAttemptId, undefined, attemptToken);
+        if (!isOperationCurrent(token)) {
+          return;
+        }
+      }
       if (
         confirmedMission &&
-        currentAttemptId &&
-        attemptRef.current?.attempt_id === currentAttemptId &&
+        pendingConfirmMatchesIdentity(pendingConfirm, attemptRef.current, confirmedMission) &&
         confirmActionRef.current.status === "unknown"
       ) {
+        clearPendingAction(currentWorkspaceId, "confirm");
         const nextAction: ActionState = { status: "success", issue: null };
         confirmActionRef.current = nextAction;
         setConfirmActionNow(nextAction);
-        storeAttempt({ ...attemptRef.current, status: "confirmed", mission_id: confirmedMission.mission_id });
+        storeAttempt({ ...attemptRef.current!, status: "confirmed", mission_id: confirmedMission.mission_id });
       }
     } catch (error: unknown) {
       if (isOperationCurrent(token)) {
@@ -1354,6 +1581,7 @@ export function usePath2Workbench(
     beginOperation,
     isOperationCurrent,
     loadMissionSnapshot,
+    readAttempt,
     readRunSnapshot,
     replaceRunEventState,
     storeMissionSnapshot,
@@ -1366,11 +1594,13 @@ export function usePath2Workbench(
     epochRef.current = epoch;
     operationGenerationsRef.current = {};
     const pointers = workspaceId ? readPath2ObjectPointers(workspaceId) : emptyPath2ObjectPointers();
+    const pendingActions = pointers.pendingActions;
+    const pendingRunStart = pendingActions.run_start;
     preferredRunIdRef.current = pointers.runId;
     preferredRunMissionIdRef.current = pointers.runMissionId;
     setLoadedWorkspaceId(workspaceId);
-    clientRequestIdRef.current = null;
-    startRequestKeyRef.current = null;
+    clientRequestIdRef.current = pendingRunStart?.clientRequestId ?? null;
+    startRequestKeyRef.current = pendingRunStart?.intentKey ?? null;
     attemptRef.current = null;
     missionSnapshotRef.current = null;
     runRef.current = null;
@@ -1382,17 +1612,21 @@ export function usePath2Workbench(
     setSourceState(workspaceId ? loadingCollection() : emptyCollection());
     setSourceArtifacts({});
     setSelectedSourceIds([]);
-    setUploadStateNow({ ...emptyAction(), result: null });
+    setUploadStateNow(
+      pendingActions.upload
+        ? { ...actionForIssue(pendingActionIssue("upload")), result: null }
+        : { ...emptyAction(), result: null },
+    );
     setMissionState(workspaceId ? loadingCollection() : emptyCollection());
     setSelectedMissionId(null);
     setMissionSnapshot(null);
     setMissionSnapshotState(workspaceId ? loadingCollection() : emptyCollection());
     setAttempt(null);
-    setAttemptActionNow(emptyAction());
-    setConfirmActionNow(emptyAction());
+    setAttemptActionNow(pendingActions.attempt ? actionForIssue(pendingActionIssue("attempt")) : emptyAction());
+    setConfirmActionNow(pendingActions.confirm ? actionForIssue(pendingActionIssue("confirm")) : emptyAction());
     setRunSnapshot(null);
-    setRunActionNow(emptyAction());
-    setCancelActionNow(emptyAction());
+    setRunActionNow(pendingRunStart ? actionForIssue(pendingActionIssue("run_start")) : emptyAction());
+    setCancelActionNow(pendingActions.cancel ? actionForIssue(pendingActionIssue("cancel")) : emptyAction());
     setRunReadbackIssue(null);
     setRunEventIssue(null);
     setRunEventState(createRunEventState());
@@ -1406,7 +1640,7 @@ export function usePath2Workbench(
 
     void refreshSources();
     void refreshMissions();
-    if (pointers.attemptId) {
+    if (pointers.attemptId && !pendingActions.attempt) {
       pendingAttemptIdRef.current = pointers.attemptId;
       const token = beginOperation("attempt", {
         workspaceId,
@@ -1421,6 +1655,14 @@ export function usePath2Workbench(
   }, [beginOperation, readAttempt, refreshMissions, refreshSources, workspaceId]);
 
   useEffect(() => {
+    const pendingRunStart = workspaceId
+      ? readPath2ObjectPointers(workspaceId).pendingActions.run_start
+      : null;
+    if (pendingRunStart && (!selectedMissionId || pendingRunStart.missionId === selectedMissionId)) {
+      clientRequestIdRef.current = pendingRunStart.clientRequestId;
+      startRequestKeyRef.current = pendingRunStart.intentKey;
+      return;
+    }
     clientRequestIdRef.current = null;
     startRequestKeyRef.current = null;
   }, [selectedMissionId, workspaceId]);
@@ -1574,6 +1816,11 @@ export function usePath2Workbench(
         return null;
       }
       const currentWorkspaceId = workspaceId;
+      const pending = createPendingAction("upload", currentWorkspaceId);
+      if (!writePendingAction(currentWorkspaceId, pending)) {
+        setUploadStateNow({ ...actionForIssue(pendingActionStorageIssue()), result: null });
+        return null;
+      }
       const token = beginOperation("upload", { workspaceId: currentWorkspaceId });
       setUploadStateNow({ status: "submitting", issue: null, result: null });
       try {
@@ -1587,6 +1834,7 @@ export function usePath2Workbench(
           setUploadStateNow({ status: issue.kind, issue, result: null });
           return null;
         }
+        clearPendingAction(currentWorkspaceId, "upload");
         setUploadStateNow({ status: "success", issue: null, result });
         if (accepted.length > 0) {
           setSourceState((current) => {
@@ -1599,7 +1847,11 @@ export function usePath2Workbench(
         return result;
       } catch (error: unknown) {
         if (isOperationCurrent(token)) {
-          setUploadStateNow({ ...actionForIssue(issueFromError(error)), result: null });
+          const issue = issueFromError(error);
+          if (issue.kind !== "unknown") {
+            clearPendingAction(currentWorkspaceId, "upload");
+          }
+          setUploadStateNow({ ...actionForIssue(issue), result: null });
         }
         return null;
       }
@@ -1608,9 +1860,13 @@ export function usePath2Workbench(
 
   const acknowledgeUploadUnknown = useCallback(() => {
     if (uploadStateRef.current.status === "unknown") {
+      if (workspaceId && !clearPendingAction(workspaceId, "upload")) {
+        setUploadStateNow({ ...actionForIssue(pendingActionStorageIssue()), result: null });
+        return;
+      }
       setUploadStateNow({ ...emptyAction(), result: null });
     }
-  }, []);
+  }, [workspaceId]);
 
   const submitAttempt = useCallback(
     async (request: MissionDraftAttemptCreateRequest): Promise<MissionDraftAttempt | null> => {
@@ -1631,9 +1887,19 @@ export function usePath2Workbench(
         return null;
       }
       const currentWorkspaceId = workspaceId;
+      const pending = createPendingAction("attempt", currentWorkspaceId, {
+        intentKey: "attempt-create",
+      });
+      if (!writePendingAction(currentWorkspaceId, pending, { attemptId: null })) {
+        setAttemptActionNow(actionForIssue(pendingActionStorageIssue()));
+        return null;
+      }
       const token = beginOperation("attempt", { workspaceId: currentWorkspaceId });
       invalidateOperation("confirm");
       invalidateOperation("run_start");
+      storeAttempt(null);
+      pendingAttemptIdRef.current = null;
+      setConfirmActionNow(emptyAction());
       setAttemptActionNow({ status: "submitting", issue: null });
       try {
         const result = await executeExplicitRequest(() =>
@@ -1653,7 +1919,9 @@ export function usePath2Workbench(
           setAttemptActionNow(actionForIssue(scopeIssue()));
           return null;
         }
+        clearPendingAction(currentWorkspaceId, "attempt");
         storeAttempt(result);
+        pendingAttemptIdRef.current = null;
         writePath2ObjectPointers(currentWorkspaceId, { attemptId: result.attempt_id });
         setAttemptActionNow(attemptActionForResult(result));
         if (result.status === "queued" || result.status === "running") {
@@ -1668,7 +1936,11 @@ export function usePath2Workbench(
         return result;
       } catch (error: unknown) {
         if (isOperationCurrent(token)) {
-          setAttemptActionNow(actionForIssue(issueFromError(error)));
+          const issue = issueFromError(error);
+          if (issue.kind !== "unknown") {
+            clearPendingAction(currentWorkspaceId, "attempt");
+          }
+          setAttemptActionNow(actionForIssue(issue));
         }
         return null;
       }
@@ -1696,9 +1968,13 @@ export function usePath2Workbench(
 
   const acknowledgeAttemptUnknown = useCallback(() => {
     if (attemptActionRef.current.status === "unknown") {
+      if (workspaceId && !clearPendingAction(workspaceId, "attempt")) {
+        setAttemptActionNow(actionForIssue(pendingActionStorageIssue()));
+        return;
+      }
       setAttemptActionNow(emptyAction());
     }
-  }, []);
+  }, [workspaceId]);
 
   const confirmAttempt = useCallback(async (): Promise<Mission | null> => {
     const currentAttempt = attemptRef.current;
@@ -1722,6 +1998,24 @@ export function usePath2Workbench(
     }
     const currentWorkspaceId = workspaceId;
     const attemptId = currentAttempt.attempt_id;
+    const pending = createPendingAction("confirm", currentWorkspaceId, {
+      attemptId,
+      candidateVersion: currentAttempt.candidate_version,
+      candidateSha256: currentAttempt.candidate_sha256,
+      sourceRefs: currentSourceRefs,
+      intentKey: JSON.stringify({
+        attemptId,
+        candidateVersion: currentAttempt.candidate_version,
+        candidateSha256: currentAttempt.candidate_sha256,
+        sourceRefs: currentSourceRefs,
+      }),
+    });
+    if (!writePendingAction(currentWorkspaceId, pending)) {
+      setConfirmActionNow(actionForIssue(pendingActionStorageIssue()));
+      return null;
+    }
+    invalidateOperation("missions");
+    invalidateOperation("mission_snapshot");
     const token = beginOperation("confirm", {
       workspaceId: currentWorkspaceId,
       attemptId,
@@ -1749,6 +2043,7 @@ export function usePath2Workbench(
         setConfirmActionNow(actionForIssue(scopeIssue()));
         return null;
       }
+      clearPendingAction(currentWorkspaceId, "confirm");
       storeAttempt({ ...currentAttempt, status: "confirmed", mission_id: result.mission_id });
       setMissionState((current) => ({
         status: "ready",
@@ -1777,13 +2072,18 @@ export function usePath2Workbench(
       return result;
     } catch (error: unknown) {
       if (isOperationCurrent(token)) {
-        setConfirmActionNow(actionForIssue(issueFromError(error)));
+        const issue = issueFromError(error);
+        if (issue.kind !== "unknown") {
+          clearPendingAction(currentWorkspaceId, "confirm");
+        }
+        setConfirmActionNow(actionForIssue(issue));
       }
       return null;
     }
   }, [
     api,
     beginOperation,
+    invalidateOperation,
     isOperationCurrent,
     loadMissionSnapshot,
     replaceRunEventState,
@@ -1795,9 +2095,13 @@ export function usePath2Workbench(
 
   const acknowledgeConfirmUnknown = useCallback(() => {
     if (confirmActionRef.current.status === "unknown") {
+      if (workspaceId && !clearPendingAction(workspaceId, "confirm")) {
+        setConfirmActionNow(actionForIssue(pendingActionStorageIssue()));
+        return;
+      }
       setConfirmActionNow(emptyAction());
     }
-  }, []);
+  }, [workspaceId]);
 
   const startRunAction = useCallback(
     async (providerSendConfirmed: boolean): Promise<RunSnapshot | null> => {
@@ -1841,6 +2145,21 @@ export function usePath2Workbench(
       const currentWorkspaceId = workspaceId;
       const missionId = currentMission.mission_id;
       invalidateOperation("run_snapshot");
+      invalidateOperation("missions");
+      invalidateOperation("mission_snapshot");
+      const pending = createPendingAction("run_start", currentWorkspaceId, {
+        missionId,
+        clientRequestId,
+        intentKey: requestKey,
+        stateVersion: currentMission.state_version,
+        sourceRefs: currentSourceRefs,
+      });
+      if (!writePendingAction(currentWorkspaceId, pending, { runId: null, runMissionId: null })) {
+        clientRequestIdRef.current = null;
+        startRequestKeyRef.current = null;
+        setRunActionNow(actionForIssue(pendingActionStorageIssue()));
+        return null;
+      }
       const token = beginOperation("run_start", {
         workspaceId: currentWorkspaceId,
         missionId,
@@ -1853,9 +2172,13 @@ export function usePath2Workbench(
       preferredRunIdRef.current = null;
       preferredRunMissionIdRef.current = null;
       pendingRunIdRef.current = null;
-      writePath2ObjectPointers(currentWorkspaceId, { runId: null, runMissionId: null });
       setRunActionNow({ status: "submitting", issue: null });
       setCancelActionNow(emptyAction());
+      const recoverMissionSnapshot = async (): Promise<void> => {
+        if (isOperationCurrent(token)) {
+          await loadMissionSnapshot(currentWorkspaceId, missionId);
+        }
+      };
       try {
         const result = await executeExplicitRequest(() =>
           api.startRun(currentWorkspaceId, missionId, request),
@@ -1868,6 +2191,7 @@ export function usePath2Workbench(
           !sourceIdentityListEquals(selectedSourceRefsRef.current, currentSourceRefs)
         ) {
           setRunActionNow(actionForIssue(selectionChangedIssue("Mission")));
+          await recoverMissionSnapshot();
           return null;
         }
         if (
@@ -1880,8 +2204,10 @@ export function usePath2Workbench(
         ) {
           const issue = scopeIssue();
           setRunActionNow(actionForIssue(issue));
+          await recoverMissionSnapshot();
           return null;
         }
+        clearPendingAction(currentWorkspaceId, "run_start");
         storeRunSnapshot(result);
         replaceRunEventState(createRunEventState(result.last_sequence));
         setRunReadbackIssue(null);
@@ -1897,15 +2223,18 @@ export function usePath2Workbench(
         preferredRunMissionIdRef.current = missionId;
         clientRequestIdRef.current = null;
         startRequestKeyRef.current = null;
+        await recoverMissionSnapshot();
         return result;
       } catch (error: unknown) {
         if (isOperationCurrent(token)) {
           const issue = issueFromError(error);
           setRunActionNow(actionForIssue(issue));
           if (issue.kind !== "unknown") {
+            clearPendingAction(currentWorkspaceId, "run_start");
             clientRequestIdRef.current = null;
             startRequestKeyRef.current = null;
           }
+          await recoverMissionSnapshot();
         }
         return null;
       }
@@ -1914,6 +2243,7 @@ export function usePath2Workbench(
       beginOperation,
       invalidateOperation,
       isOperationCurrent,
+      loadMissionSnapshot,
       missionSnapshotState.status,
       replaceRunEventState,
       selectedMission,
@@ -1925,11 +2255,15 @@ export function usePath2Workbench(
 
   const acknowledgeRunUnknown = useCallback(() => {
     if (runActionRef.current.status === "unknown") {
+      if (workspaceId && !clearPendingAction(workspaceId, "run_start")) {
+        setRunActionNow(actionForIssue(pendingActionStorageIssue()));
+        return;
+      }
       setRunActionNow(emptyAction());
       clientRequestIdRef.current = null;
       startRequestKeyRef.current = null;
     }
-  }, []);
+  }, [workspaceId]);
 
   const cancelActiveRun = useCallback(async (): Promise<RunSnapshot | null> => {
     const currentRun = runRef.current;
@@ -1951,6 +2285,14 @@ export function usePath2Workbench(
     };
     invalidateOperation("run_snapshot");
     invalidateOperation("mission_snapshot");
+    const pending = createPendingAction("cancel", identity.workspaceId, {
+      missionId: identity.missionId,
+      runId: identity.runId,
+    });
+    if (!writePendingAction(identity.workspaceId, pending)) {
+      setCancelActionNow(actionForIssue(pendingActionStorageIssue()));
+      return null;
+    }
     const token = beginOperation("cancel", identity);
     setCancelActionNow({ status: "submitting", issue: null });
     try {
@@ -1968,11 +2310,16 @@ export function usePath2Workbench(
       if (!applyRunSnapshot(result, identity)) {
         return null;
       }
+      clearPendingAction(identity.workspaceId, "cancel");
       setCancelActionNow({ status: "success", issue: null });
       return result;
     } catch (error: unknown) {
       if (isOperationCurrent(token)) {
-        setCancelActionNow(actionForIssue(issueFromError(error)));
+        const issue = issueFromError(error);
+        if (issue.kind !== "unknown") {
+          clearPendingAction(identity.workspaceId, "cancel");
+        }
+        setCancelActionNow(actionForIssue(issue));
       }
       return null;
     }
@@ -1989,15 +2336,20 @@ export function usePath2Workbench(
       runId: currentRun.run_id,
     });
     if (next?.status === "cancelled" && cancelActionRef.current.status === "unknown") {
+      clearPendingAction(workspaceId, "cancel");
       setCancelActionNow({ status: "success", issue: null });
     }
   }, [readRunSnapshot, workspaceId]);
 
   const acknowledgeCancelUnknown = useCallback(() => {
     if (cancelActionRef.current.status === "unknown") {
+      if (workspaceId && !clearPendingAction(workspaceId, "cancel")) {
+        setCancelActionNow(actionForIssue(pendingActionStorageIssue()));
+        return;
+      }
       setCancelActionNow(emptyAction());
     }
-  }, []);
+  }, [workspaceId]);
 
   const refreshRunSnapshot = useCallback(
     async (identity: RunIdentity): Promise<void> => {
@@ -2507,7 +2859,7 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
         {state.uploadState.issue ? <IssueCallout issue={state.uploadState.issue} /> : null}
         {state.uploadState.status === "unknown" ? (
           <div className="path2-reconcile-actions">
-            <button type="button" className="path2-secondary-button" onClick={() => void state.refreshSources()}>重新读取来源列表</button>
+            <button type="button" className="path2-secondary-button" onClick={() => void state.refreshSources()}>重新读取来源列表（仍需核对导入结果）</button>
             <button type="button" className="path2-secondary-button" onClick={state.acknowledgeUploadUnknown}>我已人工核对，解除阻塞</button>
           </div>
         ) : null}
@@ -2640,7 +2992,11 @@ function RunStatusCard({ state }: { state: Path2WorkbenchState }) {
             <button type="button" className="path2-secondary-button" onClick={state.acknowledgeRunUnknown}>我已人工核对，解除阻塞</button>
           </div>
         ) : null}
-        <div className="path2-inline-empty">尚未创建 Run。确认 Mission 后，仍需单独点击“明确开始 Run”。</div>
+        <div className="path2-inline-empty">
+          {state.runAction.status === "unknown"
+            ? "Start 结果未知；当前不能确认是否创建了本次 Run，Mission/Run 回读也不会替代原 Start 的成功收据。"
+            : "尚未创建 Run。确认 Mission 后，仍需单独点击“明确开始 Run”。"}
+        </div>
       </div>
     );
   }
@@ -2846,7 +3202,7 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
             <input type="checkbox" checked={runSendConfirmed} onChange={(event) => setRunSendConfirmed(event.target.checked)} />
             <span>我明确确认本次 Run 可以向 Provider 发送所选来源及任务上下文。</span>
           </label>
-          {state.runAction.issue ? <IssueCallout issue={state.runAction.issue} title="Run 未开始" /> : null}
+          {state.runAction.issue ? <IssueCallout issue={state.runAction.issue} title={state.runAction.status === "unknown" ? "Start 结果未知" : "Run 未开始"} /> : null}
           {state.runAction.status === "unknown" ? (
             <div className="path2-reconcile-actions">
               <button type="button" className="path2-secondary-button" onClick={() => void state.refreshMission()}>重新读取 Mission/Run</button>
@@ -3120,7 +3476,16 @@ export function Path2AgentContent({ state }: { state: Path2WorkbenchState }) {
     <div className="path2-agent-state">
       {!state.workspaceId ? <WorkspaceRequired copy="Agent 面板只显示当前 Workspace 的公开状态，不保留跨 Workspace 内容。" /> : null}
       {state.workspaceId && !run && state.runReadbackIssue ? <IssueCallout issue={state.runReadbackIssue} title="Run 指针回读未完成" /> : null}
-      {state.workspaceId && !run ? <div className="path2-agent-empty"><strong>尚未开始 Run</strong><p>生成并确认 Mission 后，使用中心区域的“明确开始 Run”。</p></div> : null}
+      {state.workspaceId && !run ? (
+        <div className="path2-agent-empty">
+          <strong>{state.runAction.status === "unknown" ? "Start 结果未知" : "尚未开始 Run"}</strong>
+          <p>
+            {state.runAction.status === "unknown"
+              ? "当前未能确认是否创建了本次 Run；请先精确回读或人工核对，页面不会自动重发。"
+              : "生成并确认 Mission 后，使用中心区域的“明确开始 Run”。"}
+          </p>
+        </div>
+      ) : null}
       {run ? (
         <>
           <div className="path2-agent-run-heading"><div><span className="path2-eyebrow">PUBLIC RUN STATE</span><strong>{run.run_id}</strong></div><StatusPill status={run.status}>{statusLabel(run.status)}</StatusPill></div>

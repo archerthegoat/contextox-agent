@@ -10,9 +10,52 @@ import {
   ICON_URLS,
   OBJECT_TABS,
   navigationForAreas,
+  relationshipGraphResolution,
 } from "./App";
 import App from "./App";
+import { sourceIdentityFromRevision, type DefinitionDraft, type SourceRevision } from "./Path2Workbench";
 import type { WorkbenchSnapshot } from "./api/client";
+
+const graphWorkspaceId = "11111111-1111-4111-8111-111111111111";
+const graphSource = (sourceId: string, revisionId: string, hash: string, name: string): SourceRevision => ({
+  workspace_id: graphWorkspaceId,
+  source_id: sourceId,
+  revision_id: revisionId,
+  original_name: name,
+  media_type: "text/csv",
+  byte_size: 10,
+  sha256: hash,
+  observed_at: "2026-09-03T10:00:00Z",
+  effective_time: null,
+  permission_status: "read_allowed",
+  parse_status: "ready",
+  parser_version: "csv-v1",
+});
+
+const graphLeft = graphSource(
+  "44444444-4444-4444-8444-444444444444",
+  "55555555-5555-4555-8555-555555555555",
+  "a".repeat(64),
+  "customers.csv",
+);
+const graphRight = graphSource(
+  "66666666-6666-4666-8666-666666666666",
+  "77777777-7777-4777-8777-777777777777",
+  "b".repeat(64),
+  "orders.csv",
+);
+const graphCandidate = (rightHash = graphRight.sha256): DefinitionDraft["relationships"][number] => ({
+  relationship_key: "customers_to_orders",
+  left: { source_ref: sourceIdentityFromRevision(graphLeft), table_id: "customers", columns: ["customer_id"] },
+  right: { source_ref: { ...sourceIdentityFromRevision(graphRight), sha256: rightHash }, table_id: "orders", columns: ["customer_id"] },
+  observed_cardinality: "one_to_many",
+  join_rule: "customers.customer_id = orders.customer_id",
+  grain_notes: "左侧一行代表一个客户。",
+  evidence_status: "candidate",
+  source_refs: [],
+  risks: [],
+  unknowns: [],
+});
 
 describe("ContextOx Workbench v3 content boundaries", () => {
   it("keeps the four primary modules in the approved rail order", () => {
@@ -80,13 +123,14 @@ describe("ContextOx Workbench v3 content boundaries", () => {
     const markup = renderToStaticMarkup(createElement(App));
 
     expect(markup.match(/primary-nav-icon/g)).toHaveLength(4);
-    expect(markup.match(/graph-node-icon/g)).toHaveLength(8);
+    expect(markup.match(/graph-node-icon/g)).toHaveLength(7);
     expect(markup).toContain("tabindex=\"0\"");
     expect(markup).toContain("aria-label=\"客户粒度关系图，可横向滚动查看\"");
     expect(markup).toContain("aria-expanded=\"true\"");
     expect(markup).toContain("aria-controls=\"agent-panel-content\"");
     expect(markup).toContain("data-path2-state=\"workbench\"");
     expect(markup).toContain("来源待导入");
+    expect(markup).not.toContain("尚无第三方关系来源");
     expect(markup).not.toContain("客户主数据.csv");
     expect(markup).not.toContain("演示模式");
     expect(markup).not.toContain("object-tab-close");
@@ -94,6 +138,32 @@ describe("ContextOx Workbench v3 content boundaries", () => {
     expect(markup).not.toContain("aria-label=\"打开对象\"");
     expect(markup).not.toContain(">关闭<");
     expect(markup).not.toContain(">打开<");
+  });
+
+  it("draws relationship edges only for candidate identities backed by current sources", () => {
+    const candidate = graphCandidate();
+    expect(relationshipGraphResolution([candidate, { ...candidate, relationship_key: "second_candidate" }], [graphRight, graphLeft])).toMatchObject({
+      candidateCount: 2,
+      leftSourceMatched: true,
+      rightSourceMatched: true,
+      completeRelationship: true,
+    });
+    expect(relationshipGraphResolution([candidate], [graphLeft])).toMatchObject({
+      candidateCount: 1,
+      leftSourceMatched: true,
+      rightSourceMatched: false,
+      completeRelationship: false,
+    });
+    expect(relationshipGraphResolution([graphCandidate("c".repeat(64))], [graphLeft, graphRight])).toMatchObject({
+      leftSourceMatched: true,
+      rightSourceMatched: false,
+      completeRelationship: false,
+    });
+    expect(relationshipGraphResolution([], [graphLeft, graphRight])).toMatchObject({
+      candidateCount: 0,
+      relationship: null,
+      completeRelationship: false,
+    });
   });
 
   it("labels the Agent panel as public Run state without a free composer", () => {

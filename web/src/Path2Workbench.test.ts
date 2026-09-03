@@ -20,6 +20,8 @@ import {
   missionSnapshotIsMonotonic,
   mergeRunSnapshot,
   parseRunEvent,
+  pendingActionIssue,
+  pendingConfirmMatchesIdentity,
   runSnapshotIsMonotonic,
   runSnapshotMatchesIdentity,
   sourceIdentityFromRevision,
@@ -30,6 +32,7 @@ import {
   type Mission,
   type MissionDraftAttempt,
   type Path2WorkbenchState,
+  type Path2PendingAction,
   type RunEventEnvelope,
   type RunSnapshot,
   type SourceRevision,
@@ -316,6 +319,37 @@ describe("Path 2 Workbench state boundaries", () => {
     expect(missionSnapshotIsMonotonic(current, { ...current, latest_run: null })).toBe(false);
     expect(missionSnapshotIsMonotonic(current, { ...current, draft: null })).toBe(false);
     expect(missionSnapshotIsMonotonic(current, { ...current, mission: { ...mission, state_version: 3 } })).toBe(false);
+  });
+
+  it("keeps pending action recovery scoped without persisting consent or raw input", () => {
+    const pendingConfirm: Path2PendingAction = {
+      kind: "confirm",
+      requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      workspaceId,
+      missionId: null,
+      attemptId: attempt.attempt_id,
+      runId: null,
+      clientRequestId: null,
+      intentKey: "confirm-intent",
+      stateVersion: null,
+      candidateVersion: attempt.candidate_version,
+      candidateSha256: attempt.candidate_sha256,
+      sourceRefs: [sourceIdentityFromRevision(source)],
+    };
+    expect(pendingActionIssue("run_start")).toMatchObject({
+      kind: "unknown",
+      code: "pending_action_unknown",
+    });
+    expect(pendingActionIssue("run_start").message).not.toContain("原始任务输入");
+    expect(pendingConfirmMatchesIdentity(pendingConfirm, { ...attempt, status: "confirmed", mission_id: missionId }, mission)).toBe(true);
+    expect(
+      pendingConfirmMatchesIdentity(
+        { ...pendingConfirm, candidateVersion: (attempt.candidate_version ?? 0) + 1 },
+        { ...attempt, status: "confirmed", mission_id: missionId },
+        mission,
+      ),
+    ).toBe(false);
+    expect(pendingConfirmMatchesIdentity(pendingConfirm, attempt, mission)).toBe(false);
   });
 
   it("keeps local-read consent separate from the generated upload contract", () => {

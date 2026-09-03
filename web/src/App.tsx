@@ -8,6 +8,7 @@ import {
   sourceIdentityEquals,
   sourceIdentityFromRevision,
   usePath2Workbench,
+  type DefinitionDraft,
   type Path2WorkbenchState,
   type SourceRevision,
 } from "./Path2Workbench";
@@ -342,7 +343,6 @@ function OpenObjectTabs({ activeTab, onTabChange }: { activeTab: ObjectTabId; on
 type GraphNodeId =
   | "customers-source"
   | "orders-source"
-  | "notes-source"
   | "customers-entity"
   | "orders-entity"
   | "conflict"
@@ -378,21 +378,71 @@ function GraphNode({ id, icon, kind, title, subtitle, className, selected, onSel
   );
 }
 
-function GraphWires() {
+type RelationshipCandidate = DefinitionDraft["relationships"][number];
+
+export type RelationshipGraphResolution = {
+  candidateCount: number;
+  relationship: RelationshipCandidate | null;
+  leftSourceMatched: boolean;
+  rightSourceMatched: boolean;
+  completeRelationship: boolean;
+};
+
+export function relationshipGraphResolution(
+  relationships: RelationshipCandidate[],
+  sources: SourceRevision[],
+): RelationshipGraphResolution {
+  const relationship = relationships[0] ?? null;
+  if (!relationship) {
+    return {
+      candidateCount: 0,
+      relationship: null,
+      leftSourceMatched: false,
+      rightSourceMatched: false,
+      completeRelationship: false,
+    };
+  }
+  const sourceMatches = (table: RelationshipCandidate["left"]): boolean =>
+    sources.some((source) => sourceIdentityEquals(table.source_ref, sourceIdentityFromRevision(source)));
+  const leftSourceMatched = sourceMatches(relationship.left);
+  const rightSourceMatched = sourceMatches(relationship.right);
+  return {
+    candidateCount: relationships.length,
+    relationship,
+    leftSourceMatched,
+    rightSourceMatched,
+    completeRelationship: leftSourceMatched && rightSourceMatched,
+  };
+}
+
+function GraphWires({
+  relationshipPresent,
+  leftSourceMatched,
+  rightSourceMatched,
+  completeRelationship,
+}: {
+  relationshipPresent: boolean;
+  leftSourceMatched: boolean;
+  rightSourceMatched: boolean;
+  completeRelationship: boolean;
+}) {
   return (
     <div className="graph-wires" aria-hidden="true">
-      <span className="wire wire-source-branch" />
-      <span className="wire wire-source-top" />
-      <span className="wire wire-source-middle" />
-      <span className="wire wire-source-bottom" />
-      <span className="wire wire-source-to-entity-top" />
-      <span className="wire wire-source-to-entity-bottom" />
-      <span className="wire wire-entity-join" />
-      <span className="wire wire-entity-top" />
-      <span className="wire wire-entity-bottom" />
-      <span className="wire wire-conflict" />
-      <span className="wire wire-confirmation" />
-      <span className="wire wire-contract" />
+      {relationshipPresent && leftSourceMatched && rightSourceMatched ? <span className="wire wire-source-branch" /> : null}
+      {relationshipPresent && leftSourceMatched && rightSourceMatched ? <span className="wire wire-source-top" /> : null}
+      {relationshipPresent && leftSourceMatched && rightSourceMatched ? <span className="wire wire-source-middle" /> : null}
+      {relationshipPresent && leftSourceMatched ? (
+        <span className={`wire ${rightSourceMatched ? "wire-source-to-entity-top" : "wire-source-direct-top"}`} />
+      ) : null}
+      {relationshipPresent && rightSourceMatched ? (
+        <span className={`wire ${leftSourceMatched ? "wire-source-to-entity-bottom" : "wire-source-direct-bottom"}`} />
+      ) : null}
+      {completeRelationship ? <span className="wire wire-entity-join" /> : null}
+      {completeRelationship ? <span className="wire wire-entity-top" /> : null}
+      {completeRelationship ? <span className="wire wire-entity-bottom" /> : null}
+      {completeRelationship ? <span className="wire wire-conflict" /> : null}
+      {completeRelationship ? <span className="wire wire-confirmation" /> : null}
+      {completeRelationship ? <span className="wire wire-contract" /> : null}
     </div>
   );
 }
@@ -407,11 +457,12 @@ function RelationshipGraph({
   path2: Path2WorkbenchState;
 }) {
   const relationshipCandidates = path2.latestDraft?.relationships ?? [];
-  const relationship = relationshipCandidates[0] ?? null;
   const sources = path2.sourceState.items;
   const hasWorkspace = Boolean(path2.workspaceId);
+  const graphResolution = relationshipGraphResolution(relationshipCandidates, sources);
+  const relationship = graphResolution.relationship;
 
-  const sourceForTable = (table: NonNullable<typeof relationship>["left"]) => {
+  const sourceForTable = (table: RelationshipCandidate["left"]) => {
     const match = sources.find((source) => sourceIdentityEquals(
       table.source_ref,
       sourceIdentityFromRevision(source),
@@ -430,19 +481,15 @@ function RelationshipGraph({
   const sourceTitles = [
     leftSource?.title ?? (hasWorkspace ? "尚无关系候选" : "来源待导入"),
     rightSource?.title ?? (hasWorkspace ? "尚无关系候选" : "来源待导入"),
-    relationship ? "尚无第三方关系来源" : (hasWorkspace ? "尚无关系候选" : "来源待导入"),
   ];
   const sourceSubtitles = [
     leftSource?.subtitle ?? (hasWorkspace ? "等待 DefinitionDraft" : "请选择 Workspace"),
     rightSource?.subtitle ?? (hasWorkspace ? "等待 DefinitionDraft" : "请选择 Workspace"),
-    relationship ? "不使用其它来源代替" : (hasWorkspace ? "等待 DefinitionDraft" : "请选择 Workspace"),
   ];
   const leftEntity = relationship?.left.table_id || (hasWorkspace ? "实体待识别" : "实体待加载");
   const rightEntity = relationship?.right.table_id || (hasWorkspace ? "实体待识别" : "实体待加载");
   const relationshipStatus = relationship ? statusLabel(relationship.evidence_status) : "尚无关系草案";
-  const hasSourceMismatch = Boolean(
-    relationship && (!leftSource || !rightSource),
-  );
+  const hasSourceMismatch = Boolean(relationship && !graphResolution.completeRelationship);
   const canvasNote = !hasWorkspace
     ? "请先选择 Workspace；下方仅保留关系区域的空状态框架。"
     : path2.missionSnapshotState.issue
@@ -456,7 +503,12 @@ function RelationshipGraph({
     <section className="relationship-canvas" aria-label="客户粒度关系图，可横向滚动查看" tabIndex={0}>
       <div className="relationship-canvas-inner">
         <div className="relationship-canvas-note" role="status">{canvasNote}</div>
-        <GraphWires />
+        <GraphWires
+          relationshipPresent={Boolean(relationship)}
+          leftSourceMatched={graphResolution.leftSourceMatched}
+          rightSourceMatched={graphResolution.rightSourceMatched}
+          completeRelationship={graphResolution.completeRelationship}
+        />
         <GraphNode
           id="customers-source"
           icon="file-text"
@@ -475,16 +527,6 @@ function RelationshipGraph({
           subtitle={sourceSubtitles[1]}
           className="graph-source graph-source-middle"
           selected={selectedNode === "orders-source"}
-          onSelect={onNodeSelect}
-        />
-        <GraphNode
-          id="notes-source"
-          icon="reader"
-          kind="来源"
-          title={sourceTitles[2]}
-          subtitle={sourceSubtitles[2]}
-          className="graph-source graph-source-bottom"
-          selected={selectedNode === "notes-source"}
           onSelect={onNodeSelect}
         />
         <GraphNode
