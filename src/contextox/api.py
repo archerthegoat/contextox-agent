@@ -1,10 +1,12 @@
 import asyncio
+import sqlite3
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import RFC_4122, UUID, uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -15,44 +17,87 @@ from contextox.models import (
     HealthCheck,
     HealthResponse,
     ReadinessResponse,
+    Workspace,
+    WorkspaceCreateRequest,
+    WorkspaceError,
     WorkbenchArea,
     WorkbenchSnapshot,
+)
+from contextox.store import (
+    InvalidWorkspaceNameError,
+    WorkspaceCreateOutcomeUnknownError,
+    WorkspaceSchemaUnsupportedError,
+    WorkspaceStore,
+    WorkspaceStoreBusyError,
+    WorkspaceStoreError,
+    WorkspaceStoreUnavailableError,
 )
 
 
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 
-def _readiness_checks() -> list[HealthCheck]:
+def _readiness_checks(app: FastAPI) -> list[HealthCheck]:
+    store_error = getattr(app.state, "workspace_store_error", None)
+    if getattr(app.state, "workspace_store", None) is not None:
+        workspace_store_check = HealthCheck(
+            key="workspace_store",
+            status="ready",
+            detail="SQLite Workspace persistence is available.",
+        )
+    elif isinstance(store_error, WorkspaceSchemaUnsupportedError):
+        workspace_store_check = HealthCheck(
+            key="workspace_store",
+            status="blocked",
+            detail="Workspace persistence is blocked by an unsupported schema.",
+        )
+    elif isinstance(store_error, WorkspaceStoreBusyError):
+        workspace_store_check = HealthCheck(
+            key="workspace_store",
+            status="blocked",
+            detail="Workspace persistence is temporarily busy.",
+        )
+    else:
+        workspace_store_check = HealthCheck(
+            key="workspace_store",
+            status="blocked" if store_error is not None else "not_run",
+            detail=(
+                "Workspace persistence is unavailable."
+                if store_error is not None
+                else "Workspace persistence is not configured for this app instance."
+            ),
+        )
     return [
         HealthCheck(
             key="api",
             status="ready",
             detail="FastAPI is serving the local contract.",
         ),
-        HealthCheck(
-            key="workspace_store",
-            status="not_implemented",
-            detail="Workspace persistence is reserved for the source-admission checkpoint.",
-        ),
+        workspace_store_check,
         HealthCheck(
             key="source_admission",
             status="not_implemented",
-            detail="No files are admitted or read by the N1 shell.",
+            detail="N2a does not admit or read files.",
         ),
         HealthCheck(
             key="provider",
             status="not_implemented",
-            detail="No model provider is configured or called in N1.",
+            detail="N2a does not configure or call a model provider.",
         ),
     ]
 
 
-def _readiness() -> ReadinessResponse:
+def _readiness(app: FastAPI) -> ReadinessResponse:
+    checks = _readiness_checks(app)
+    store_check = next(check for check in checks if check.key == "workspace_store")
     return ReadinessResponse(
-        status="partial",
-        label="N1 shell ready; product capabilities remain intentionally partial.",
-        checks=_readiness_checks(),
+        status="blocked" if store_check.status == "blocked" else "partial",
+        label=(
+            "N2a Workspace foundation ready; source, Mission, and Provider capabilities remain partial."
+            if store_check.status == "ready"
+            else "N2a Workspace foundation is unavailable; source, Mission, and Provider capabilities remain partial."
+        ),
+        checks=checks,
     )
 
 
@@ -67,6 +112,82 @@ def _event() -> EventEnvelope:
             "reconnect": "Read the current snapshot; deltas are not persisted in N1.",
         },
     )
+
+
+def _workspace_store(app: FastAPI) -> WorkspaceStore:
+    store = getattr(app.state, "workspace_store", None)
+    if store is not None:
+        return store
+    error = getattr(app.state, "workspace_store_error", None)
+    if isinstance(error, WorkspaceStoreError):
+        raise error
+    raise WorkspaceStoreUnavailableError()
+
+
+def _workspace_error(
+    request: Request,
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+) -> JSONResponse:
+    request_id = f"req_{uuid4().hex}"
+    envelope = WorkspaceError(code=code, message=message, request_id=request_id)
+    return JSONResponse(status_code=status_code, content=envelope.model_dump(mode="json"))
+
+
+def _workspace_store_error_response(
+    request: Request,
+    error: BaseException,
+) -> JSONResponse:
+    if isinstance(error, InvalidWorkspaceNameError):
+        return _workspace_error(
+            request,
+            status_code=422,
+            code="invalid_workspace_name",
+            message=(
+                "Workspace name must be 1–80 Unicode characters after trimming "
+                "and must not contain control characters."
+            ),
+        )
+    if isinstance(error, WorkspaceCreateOutcomeUnknownError):
+        return _workspace_error(
+            request,
+            status_code=503,
+            code="workspace_create_outcome_unknown",
+            message=(
+                "Workspace creation outcome is unknown; reconcile the workspace list "
+                "before retrying."
+            ),
+        )
+    if isinstance(error, WorkspaceStoreBusyError):
+        return _workspace_error(
+            request,
+            status_code=503,
+            code="workspace_store_busy",
+            message="Workspace store is busy; try again after the current local operation finishes.",
+        )
+    if isinstance(error, WorkspaceSchemaUnsupportedError):
+        return _workspace_error(
+            request,
+            status_code=503,
+            code="workspace_schema_unsupported",
+            message="Workspace store schema is unsupported.",
+        )
+    return _workspace_error(
+        request,
+        status_code=503,
+        code="workspace_store_unavailable",
+        message="Workspace store is unavailable.",
+    )
+
+
+def _is_canonical_uuid4(value: str) -> bool:
+    try:
+        parsed = UUID(value)
+    except (AttributeError, ValueError):
+        return False
+    return parsed.version == 4 and parsed.variant == RFC_4122 and str(parsed) == value
 
 
 def _format_sse(event: EventEnvelope) -> str:
@@ -168,12 +289,43 @@ def create_app(
         version=__version__,
         summary="Local-first business-definition Workbench shell",
         description=(
-            "N1 exposes only a local readiness shell. It does not ingest files, "
+            "N2a exposes a local Workspace foundation. It does not ingest files, "
             "call a model provider, or persist customer material."
         ),
     )
     app.state.static_dir = resolved_static_dir
     app.state.data_dir = data_dir.resolve() if data_dir else None
+    app.state.workspace_store = None
+    app.state.workspace_store_error = None
+    if app.state.data_dir is not None:
+        try:
+            app.state.workspace_store = WorkspaceStore.open(app.state.data_dir)
+        except WorkspaceStoreError as error:
+            app.state.workspace_store_error = error
+        except (OSError, sqlite3.Error) as error:
+            app.state.workspace_store_error = WorkspaceStoreUnavailableError()
+
+    @app.exception_handler(RequestValidationError)
+    async def workspace_request_validation(
+        request: Request,
+        _error: RequestValidationError,
+    ) -> JSONResponse:
+        if request.url.path == "/api/workspaces" and request.method == "POST":
+            return _workspace_error(
+                request,
+                status_code=422,
+                code="invalid_workspace_name",
+                message=(
+                    "Workspace name must be 1–80 Unicode characters after trimming "
+                    "and must not contain control characters."
+                ),
+            )
+        return _workspace_error(
+            request,
+            status_code=422,
+            code="invalid_workspace_name",
+            message="Invalid Workspace request.",
+        )
 
     @app.get("/api/health", response_model=HealthResponse, tags=["system"])
     def health() -> HealthResponse:
@@ -207,7 +359,7 @@ def create_app(
 
     @app.get("/api/readiness", response_model=ReadinessResponse, tags=["system"])
     def readiness() -> ReadinessResponse:
-        return _readiness()
+        return _readiness(app)
 
     @app.get(
         "/api/workbench",
@@ -220,13 +372,75 @@ def create_app(
             architecture="local-python-react",
             status="partial",
             notice=(
-                "N1 is a truthful local shell: no customer files, model provider, "
-                "arbitrary SQL/shell, or approval action is available yet."
+                "N2a is a truthful local Workspace foundation: no customer files, "
+                "model provider, arbitrary SQL/shell, or approval action is available."
             ),
-            readiness=_readiness(),
+            readiness=_readiness(app),
             areas=_areas(),
             evidence=_evidence(),
         )
+
+    @app.post(
+        "/api/workspaces",
+        response_model=Workspace,
+        status_code=201,
+        responses={422: {"model": WorkspaceError}, 503: {"model": WorkspaceError}},
+        tags=["workspaces"],
+    )
+    def create_workspace(
+        payload: WorkspaceCreateRequest,
+        request: Request,
+    ) -> Workspace | JSONResponse:
+        try:
+            return _workspace_store(app).create_workspace(payload.display_name)
+        except (WorkspaceStoreError, InvalidWorkspaceNameError) as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.get(
+        "/api/workspaces",
+        response_model=list[Workspace],
+        responses={503: {"model": WorkspaceError}},
+        tags=["workspaces"],
+    )
+    def list_workspaces(request: Request) -> list[Workspace] | JSONResponse:
+        try:
+            return _workspace_store(app).list_workspaces()
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.get(
+        "/api/workspaces/{workspace_id}",
+        response_model=Workspace,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["workspaces"],
+    )
+    def get_workspace(
+        workspace_id: str,
+        request: Request,
+    ) -> Workspace | JSONResponse:
+        if not _is_canonical_uuid4(workspace_id):
+            return _workspace_error(
+                request,
+                status_code=404,
+                code="workspace_not_found",
+                message="Workspace was not found.",
+            )
+        try:
+            workspace = _workspace_store(app).get_workspace(workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        if workspace is None:
+            return _workspace_error(
+                request,
+                status_code=404,
+                code="workspace_not_found",
+                message="Workspace was not found.",
+            )
+        return workspace
 
     @app.get(
         "/api/events",
