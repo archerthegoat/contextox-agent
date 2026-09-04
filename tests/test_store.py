@@ -1,4 +1,5 @@
 import concurrent.futures
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -8,9 +9,13 @@ from unittest.mock import patch
 from uuid import UUID
 
 import contextox.store as store_module
+from contextox.models import CsvRowsLocator, JsonPointerLocator, TextLinesLocator
+from contextox.sources import SourceInputError
 from contextox.store import (
     InvalidWorkspaceNameError,
     Path2NotImplementedError,
+    SourceImportOutcomeUnknownError,
+    SourceNotFoundError,
     WorkspaceSchemaUnsupportedError,
     WorkspaceStore,
     WorkspaceStoreBusyError,
@@ -186,6 +191,16 @@ def _insert_source_revision(
             "v1",
             "{}",
         ),
+    )
+
+
+def _raw_source_path(store: WorkspaceStore, revision) -> Path:
+    return (
+        store.data_dir
+        / "sources"
+        / revision.workspace_id
+        / revision.source_id
+        / f"{revision.revision_id}.bin"
     )
 
 
@@ -1409,6 +1424,218 @@ class StoreTests(unittest.TestCase):
             with closing(sqlite3.connect(initialized.db_path)) as connection, connection:
                 self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
                 self.assertTrue(store_module._schema_is_exact(connection))
+
+    def test_source_persistence_supports_four_media_types_restart_and_isolation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-store-sources-") as directory:
+            store = WorkspaceStore.open(directory)
+            first_workspace = store.create_workspace("Sources A").workspace_id
+            second_workspace = store.create_workspace("Sources B").workspace_id
+            fixtures = (
+                ("../../orders.csv", "text/csv", b"id,name\n1,Ada\n"),
+                ("orders.json", "application/json", b'{"orders":[{"id":1}]}'),
+                ("notes.md", "text/markdown", "# Title\n正文".encode()),
+                ("notes.txt", "text/plain", "alpha\nbeta".encode()),
+            )
+            imported = [
+                store.import_source_revision(first_workspace, name, media_type, content)
+                for name, media_type, content in fixtures
+            ]
+            for (revision, artifact), (_, _, content) in zip(imported, fixtures, strict=True):
+                self.assertEqual(artifact.parse_status, "ready")
+                self.assertEqual(revision.sha256, artifact.source_ref.sha256)
+                self.assertEqual(_raw_source_path(store, revision).read_bytes(), content)
+                self.assertNotIn(revision.original_name, str(_raw_source_path(store, revision)))
+
+            repeated, _ = store.import_source_revision(
+                first_workspace, "orders-again.csv", "text/csv", fixtures[0][2]
+            )
+            self.assertNotEqual(repeated.source_id, imported[0][0].source_id)
+            self.assertNotEqual(repeated.revision_id, imported[0][0].revision_id)
+            self.assertEqual(repeated.sha256, imported[0][0].sha256)
+
+            restarted = WorkspaceStore.open(directory)
+            listed = restarted.list_source_revisions(first_workspace)
+            self.assertEqual(
+                listed,
+                sorted(listed, key=lambda item: (item.observed_at, item.source_id, item.revision_id)),
+            )
+            self.assertEqual({item.revision_id for item in listed}, {
+                *(revision.revision_id for revision, _ in imported),
+                repeated.revision_id,
+            })
+            csv_revision = imported[0][0]
+            json_revision = imported[1][0]
+            text_revision = imported[3][0]
+            self.assertEqual(
+                restarted.read_source_excerpt(
+                    first_workspace,
+                    csv_revision.revision_id,
+                    CsvRowsLocator(kind="csv_rows", row_start=1, row_end=1, column=None),
+                ).text,
+                "1,Ada",
+            )
+            self.assertEqual(
+                restarted.read_source_excerpt(
+                    first_workspace,
+                    json_revision.revision_id,
+                    JsonPointerLocator(kind="json_pointer", pointer="/orders/0/id"),
+                ).text,
+                "1",
+            )
+            self.assertEqual(
+                restarted.read_source_excerpt(
+                    first_workspace,
+                    text_revision.revision_id,
+                    TextLinesLocator(kind="text_lines", line_start=2, line_end=2),
+                ).text,
+                "beta",
+            )
+            with self.assertRaises(SourceNotFoundError):
+                restarted.get_source_artifact(second_workspace, csv_revision.revision_id)
+            with self.assertRaises(SourceNotFoundError):
+                restarted.get_source_artifact(first_workspace, second_workspace)
+
+    def test_source_parser_statuses_and_invalid_metadata_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-store-source-status-") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Source status").workspace_id
+            cases = (
+                ("partial.csv", "text/csv", b"a,b\n1\n", "partial"),
+                (
+                    "blocked.csv",
+                    "text/csv",
+                    (",".join(f"c{index}" for index in range(101)) + "\n").encode(),
+                    "blocked",
+                ),
+                ("failed.txt", "text/plain", b"\xff", "failed"),
+            )
+            for name, media_type, content, expected in cases:
+                with self.subTest(expected=expected):
+                    revision, artifact = store.import_source_revision(
+                        workspace_id, name, media_type, content
+                    )
+                    self.assertEqual((revision.parse_status, artifact.parse_status), (expected, expected))
+                    self.assertTrue(artifact.issues)
+                    self.assertEqual(
+                        store.get_source_artifact(workspace_id, revision.revision_id), artifact
+                    )
+
+            before = len(store.list_source_revisions(workspace_id))
+            with self.assertRaises(SourceInputError):
+                store.import_source_revision(
+                    workspace_id, "unsupported.bin", "application/octet-stream", b"bytes"
+                )
+            with self.assertRaises(SourceInputError):
+                store.import_source_revision(
+                    workspace_id,
+                    "oversized.txt",
+                    "text/plain",
+                    b"x" * (2 * 1024 * 1024 + 1),
+                )
+            self.assertEqual(len(store.list_source_revisions(workspace_id)), before)
+
+    def test_source_reads_fail_closed_for_tampered_missing_and_unsafe_entries(self) -> None:
+        mutations = ("hash", "size", "missing", "directory", "symlink")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory(
+                prefix="contextox-store-source-entry-"
+            ) as directory:
+                store = WorkspaceStore.open(directory)
+                workspace_id = store.create_workspace("Source entry").workspace_id
+                revision, _ = store.import_source_revision(
+                    workspace_id, "source.txt", "text/plain", b"alpha\nbeta"
+                )
+                raw_path = _raw_source_path(store, revision)
+                if mutation == "hash":
+                    raw_path.write_bytes(b"alpha\nBETA")
+                elif mutation == "size":
+                    raw_path.write_bytes(b"short")
+                elif mutation == "missing":
+                    raw_path.unlink()
+                elif mutation == "directory":
+                    raw_path.unlink()
+                    raw_path.mkdir()
+                else:
+                    target = Path(directory) / "outside-source.bin"
+                    target.write_bytes(b"alpha\nbeta")
+                    raw_path.unlink()
+                    os.symlink(target, raw_path)
+                restarted = WorkspaceStore.open(directory)
+                with self.assertRaises(WorkspaceStoreUnavailableError):
+                    restarted.get_source_artifact(workspace_id, revision.revision_id)
+                with self.assertRaises(WorkspaceStoreUnavailableError):
+                    restarted.read_source_excerpt(
+                        workspace_id,
+                        revision.revision_id,
+                        TextLinesLocator(kind="text_lines", line_start=1, line_end=1),
+                    )
+
+    def test_source_import_failure_cleanup_and_commit_reconciliation(self) -> None:
+        definite_failures = (
+            ("write", "_write_temp_source_file", WorkspaceStoreUnavailableError()),
+            ("begin", "_begin_source_transaction", sqlite3.OperationalError("begin failed")),
+            ("insert", "_insert_source_revision_row", sqlite3.OperationalError("insert failed")),
+            ("commit", "_commit_source_transaction", sqlite3.OperationalError("commit failed")),
+        )
+        for label, target, error in definite_failures:
+            with self.subTest(label=label), tempfile.TemporaryDirectory(
+                prefix="contextox-store-source-failure-"
+            ) as directory:
+                store = WorkspaceStore.open(directory)
+                workspace_id = store.create_workspace("Failure").workspace_id
+                with patch.object(store_module, target, side_effect=error):
+                    with self.assertRaises(WorkspaceStoreError):
+                        store.import_source_revision(
+                            workspace_id, "source.txt", "text/plain", b"content"
+                        )
+                self.assertEqual(store.list_source_revisions(workspace_id), [])
+                self.assertEqual(list((Path(directory) / "sources").rglob("*.bin")), [])
+
+        with tempfile.TemporaryDirectory(prefix="contextox-store-source-replace-") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Replace failure").workspace_id
+            with patch.object(store_module.os, "replace", side_effect=OSError("replace failed")):
+                with self.assertRaises(WorkspaceStoreUnavailableError):
+                    store.import_source_revision(
+                        workspace_id, "source.txt", "text/plain", b"content"
+                    )
+            self.assertEqual(store.list_source_revisions(workspace_id), [])
+            self.assertEqual(list((Path(directory) / "sources").rglob("*.bin")), [])
+
+        with tempfile.TemporaryDirectory(prefix="contextox-store-source-reconcile-") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Reconcile success").workspace_id
+            real_commit = store_module._commit_source_transaction
+
+            def commit_then_raise(connection: sqlite3.Connection) -> None:
+                real_commit(connection)
+                raise sqlite3.OperationalError("commit acknowledgement lost")
+
+            with patch.object(
+                store_module, "_commit_source_transaction", side_effect=commit_then_raise
+            ):
+                revision, _ = store.import_source_revision(
+                    workspace_id, "source.txt", "text/plain", b"content"
+                )
+            self.assertEqual(
+                [item.revision_id for item in store.list_source_revisions(workspace_id)],
+                [revision.revision_id],
+            )
+
+        with tempfile.TemporaryDirectory(prefix="contextox-store-source-unknown-") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Reconcile unknown").workspace_id
+            with patch.object(
+                store_module,
+                "_commit_source_transaction",
+                side_effect=sqlite3.OperationalError("commit unknown"),
+            ), patch.object(store, "_reconcile_source_import", return_value="unknown"):
+                with self.assertRaises(SourceImportOutcomeUnknownError):
+                    store.import_source_revision(
+                        workspace_id, "source.txt", "text/plain", b"content"
+                    )
+            self.assertEqual(store.list_source_revisions(workspace_id), [])
+            self.assertEqual(len(list((Path(directory) / "sources").rglob("*.bin"))), 1)
 
     def test_path2_store_seams_check_workspace_before_not_implemented(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-path2-") as directory:

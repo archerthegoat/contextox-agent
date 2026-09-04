@@ -1,7 +1,11 @@
-"""Small, fail-closed SQLite store for the N2a Workspace foundation."""
+"""Small, fail-closed SQLite store for local Path 2 state."""
 
 from __future__ import annotations
 
+import errno
+import hashlib
+import json
+import os
 import sqlite3
 import stat
 import unicodedata
@@ -12,12 +16,15 @@ from pathlib import Path
 from typing import Iterator, Literal
 from uuid import RFC_4122, UUID, uuid4
 
+from pydantic import ValidationError
+
 from contextox.models import (
     ContextManifestInput,
     ContextPacketManifest,
     ContextSnapshot,
     DefinitionDraft,
     DomainToolCall,
+    EvidenceLocator,
     Mission,
     MissionDraftAttempt,
     MissionDraftPayload,
@@ -26,8 +33,18 @@ from contextox.models import (
     RunEventInput,
     RunSnapshot,
     RunToolResult,
+    SourceArtifact,
+    SourceExcerpt,
+    SourceRevision,
     TerminalReceipt,
     Workspace,
+)
+from contextox.sources import (
+    MAX_FILE_BYTES,
+    PARSER_VERSION,
+    SourceInputError,
+    parse_source,
+    read_source_fragment,
 )
 
 
@@ -79,11 +96,25 @@ class WorkspaceNotFoundError(WorkspaceStoreError):
         super().__init__("Workspace was not found.")
 
 
+class SourceNotFoundError(WorkspaceStoreError):
+    code = "source_not_found"
+
+    def __init__(self) -> None:
+        super().__init__("Source revision was not found.")
+
+
+class SourceImportOutcomeUnknownError(WorkspaceStoreError):
+    code = "source_import_outcome_unknown"
+
+    def __init__(self) -> None:
+        super().__init__("Source import outcome is unknown.")
+
+
 class Path2NotImplementedError(WorkspaceStoreError):
     code = "path2_not_implemented"
 
     def __init__(self) -> None:
-        super().__init__("This Path 2 capability is not implemented in W0.2.")
+        super().__init__("This Path 2 capability is not implemented.")
 
 
 class InvalidWorkspaceNameError(ValueError):
@@ -145,6 +176,198 @@ def canonical_data_dir(data_dir: Path | str) -> Path:
 
 def _database_path(data_dir: Path) -> Path:
     return data_dir / DB_FILENAME
+
+
+def _canonical_json(value: SourceArtifact) -> str:
+    return json.dumps(
+        value.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _require_directory(path: Path, *, create: bool) -> None:
+    try:
+        entry = path.lstat()
+    except FileNotFoundError:
+        if not create:
+            raise WorkspaceStoreUnavailableError("Source storage is unavailable.")
+        try:
+            path.mkdir(mode=0o700)
+            entry = path.lstat()
+        except (FileExistsError, OSError) as exc:
+            if isinstance(exc, FileExistsError):
+                try:
+                    entry = path.lstat()
+                except OSError as nested:
+                    raise WorkspaceStoreUnavailableError(
+                        "Source storage is unavailable."
+                    ) from nested
+            else:
+                raise WorkspaceStoreUnavailableError("Source storage is unavailable.") from exc
+    except OSError as exc:
+        raise WorkspaceStoreUnavailableError("Source storage is unavailable.") from exc
+    if stat.S_ISLNK(entry.st_mode) or not stat.S_ISDIR(entry.st_mode):
+        raise WorkspaceStoreUnavailableError("Source storage is unavailable.")
+
+
+def _source_directory(data_dir: Path, workspace_id: str, source_id: str) -> Path:
+    _require_directory(data_dir, create=False)
+    sources_dir = data_dir / "sources"
+    workspace_dir = sources_dir / workspace_id
+    source_dir = workspace_dir / source_id
+    for path in (sources_dir, workspace_dir, source_dir):
+        _require_directory(path, create=True)
+    return source_dir
+
+
+def _source_path(data_dir: Path, revision: SourceRevision) -> Path:
+    return (
+        data_dir
+        / "sources"
+        / revision.workspace_id
+        / revision.source_id
+        / f"{revision.revision_id}.bin"
+    )
+
+
+def _write_temp_source_file(directory: Path, revision_id: str, content: bytes) -> Path:
+    temporary = directory / f".{revision_id}.{uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(temporary, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        raise WorkspaceStoreUnavailableError("Source storage is unavailable.") from exc
+    return temporary
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags)
+        os.fsync(descriptor)
+    except OSError as exc:
+        if exc.errno not in {errno.EINVAL, errno.ENOTSUP}:
+            raise WorkspaceStoreUnavailableError("Source storage is unavailable.") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _read_validated_source_file(path: Path, revision: SourceRevision) -> bytes:
+    try:
+        entry = path.lstat()
+    except OSError as exc:
+        raise WorkspaceStoreUnavailableError("Source storage is unavailable.") from exc
+    if (
+        stat.S_ISLNK(entry.st_mode)
+        or not stat.S_ISREG(entry.st_mode)
+        or entry.st_size != revision.byte_size
+    ):
+        raise WorkspaceStoreUnavailableError("Source storage is unavailable.")
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != entry.st_dev
+            or opened.st_ino != entry.st_ino
+            or opened.st_size != revision.byte_size
+        ):
+            raise WorkspaceStoreUnavailableError("Source storage is unavailable.")
+        chunks: list[bytes] = []
+        remaining = revision.byte_size + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        content = b"".join(chunks)
+    except WorkspaceStoreError:
+        raise
+    except OSError as exc:
+        raise WorkspaceStoreUnavailableError("Source storage is unavailable.") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    if len(content) != revision.byte_size or hashlib.sha256(content).hexdigest() != revision.sha256:
+        raise WorkspaceStoreUnavailableError("Source storage is unavailable.")
+    return content
+
+
+def _remove_owned_source_file(path: Path, revision: SourceRevision) -> None:
+    try:
+        _read_validated_source_file(path, revision)
+        path.unlink()
+        _fsync_directory(path.parent)
+    except (WorkspaceStoreError, OSError):
+        pass
+
+
+def _begin_source_transaction(connection: sqlite3.Connection) -> None:
+    connection.execute("BEGIN IMMEDIATE")
+
+
+def _insert_source_revision_row(
+    connection: sqlite3.Connection,
+    revision: SourceRevision,
+    artifact_json: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO source_revisions
+            (workspace_id, source_id, revision_id, original_name, media_type,
+             byte_size, sha256, observed_at, effective_time, permission_status,
+             parse_status, parser_version, artifact_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            revision.workspace_id,
+            revision.source_id,
+            revision.revision_id,
+            revision.original_name,
+            revision.media_type,
+            revision.byte_size,
+            revision.sha256,
+            revision.observed_at.isoformat(),
+            revision.effective_time.isoformat() if revision.effective_time else None,
+            revision.permission_status,
+            revision.parse_status,
+            revision.parser_version,
+            artifact_json,
+        ),
+    )
+
+
+def _commit_source_transaction(connection: sqlite3.Connection) -> None:
+    connection.commit()
 
 
 def _connect_existing_database(
@@ -943,12 +1166,251 @@ class WorkspaceStore:
         return parsed.version == 4 and parsed.variant == RFC_4122 and str(parsed) == value
 
     def _require_path2_workspace(self, workspace_id: str) -> None:
-        """Validate the Workspace boundary before exposing a not-implemented seam."""
+        """Validate the Workspace boundary for a Path 2 operation."""
 
         if not self._is_canonical_workspace_id(workspace_id):
             raise WorkspaceNotFoundError()
         if self.get_workspace(workspace_id) is None:
             raise WorkspaceNotFoundError()
+
+    def import_source_revision(
+        self,
+        workspace_id: str,
+        original_name: str,
+        media_type: str,
+        content: bytes,
+    ) -> tuple[SourceRevision, SourceArtifact]:
+        """Persist one immutable, parser-backed Source revision."""
+
+        self._require_path2_workspace(workspace_id)
+        if not isinstance(content, bytes):
+            raise SourceInputError("source_content_type_invalid")
+        if len(content) > MAX_FILE_BYTES:
+            raise SourceInputError("source_file_too_large")
+
+        source_id = str(uuid4())
+        revision_id = str(uuid4())
+        observed_at = datetime.now(timezone.utc)
+        try:
+            pending = SourceRevision(
+                workspace_id=workspace_id,
+                source_id=source_id,
+                revision_id=revision_id,
+                original_name=original_name,
+                media_type=media_type,
+                byte_size=len(content),
+                sha256=hashlib.sha256(content).hexdigest(),
+                observed_at=observed_at,
+                effective_time=None,
+                permission_status="read_allowed",
+                parse_status="pending",
+                parser_version=PARSER_VERSION,
+            )
+        except ValidationError as exc:
+            raise SourceInputError("source_metadata_invalid") from exc
+        artifact = parse_source(pending, content)
+        revision = pending.model_copy(update={"parse_status": artifact.parse_status})
+        artifact_json = _canonical_json(artifact)
+
+        directory = _source_directory(self.data_dir, workspace_id, source_id)
+        final_path = directory / f"{revision_id}.bin"
+        try:
+            final_path.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise WorkspaceStoreUnavailableError("Source storage is unavailable.") from exc
+        else:
+            raise WorkspaceStoreUnavailableError("Source storage is unavailable.")
+
+        temporary = _write_temp_source_file(directory, revision_id, content)
+        try:
+            try:
+                os.replace(temporary, final_path)
+            except OSError as exc:
+                try:
+                    _read_validated_source_file(final_path, revision)
+                except WorkspaceStoreError:
+                    try:
+                        temporary.unlink()
+                    except OSError:
+                        pass
+                    _remove_owned_source_file(final_path, revision)
+                    raise WorkspaceStoreUnavailableError(
+                        "Source storage is unavailable."
+                    ) from exc
+                try:
+                    temporary.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as cleanup_error:
+                    raise WorkspaceStoreUnavailableError(
+                        "Source storage is unavailable."
+                    ) from cleanup_error
+            _fsync_directory(directory)
+            _read_validated_source_file(final_path, revision)
+        except WorkspaceStoreError:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            _remove_owned_source_file(final_path, revision)
+            raise
+
+        connection: sqlite3.Connection | None = None
+        transaction_started = False
+        commit_error: BaseException | None = None
+        try:
+            connection = self._open_connection()
+            _begin_source_transaction(connection)
+            transaction_started = True
+            workspace_exists = connection.execute(
+                "SELECT 1 FROM workspaces WHERE workspace_id = ?",
+                (workspace_id,),
+            ).fetchone()
+            if workspace_exists is None:
+                raise WorkspaceNotFoundError()
+            _insert_source_revision_row(connection, revision, artifact_json)
+            try:
+                _commit_source_transaction(connection)
+            except (sqlite3.DatabaseError, OSError) as exc:
+                commit_error = exc
+            else:
+                transaction_started = False
+        except WorkspaceStoreError:
+            if transaction_started and connection is not None:
+                try:
+                    connection.rollback()
+                except sqlite3.DatabaseError:
+                    pass
+            _remove_owned_source_file(final_path, revision)
+            raise
+        except (sqlite3.DatabaseError, OSError) as exc:
+            if transaction_started and connection is not None:
+                try:
+                    connection.rollback()
+                except sqlite3.DatabaseError:
+                    pass
+            _remove_owned_source_file(final_path, revision)
+            raise _store_error(exc) from exc
+        finally:
+            if connection is not None:
+                connection.close()
+
+        if commit_error is not None:
+            outcome = self._reconcile_source_import(revision, artifact_json, final_path)
+            if outcome == "committed":
+                return revision, artifact
+            if outcome == "absent":
+                _remove_owned_source_file(final_path, revision)
+                raise _store_error(commit_error) from commit_error
+            raise SourceImportOutcomeUnknownError() from commit_error
+
+        _read_validated_source_file(final_path, revision)
+        return revision, artifact
+
+    def _reconcile_source_import(
+        self,
+        revision: SourceRevision,
+        artifact_json: str,
+        final_path: Path,
+    ) -> Literal["committed", "absent", "unknown"]:
+        try:
+            with self._connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT workspace_id, source_id, revision_id, original_name,
+                           media_type, byte_size, sha256, observed_at,
+                           effective_time, permission_status, parse_status,
+                           parser_version, artifact_json
+                    FROM source_revisions
+                    WHERE workspace_id = ? AND revision_id = ?
+                    """,
+                    (revision.workspace_id, revision.revision_id),
+                ).fetchone()
+            if row is None:
+                return "absent"
+            stored_revision, stored_artifact, stored_json = _row_to_source(row)
+            if (
+                stored_revision != revision
+                or stored_artifact != SourceArtifact.model_validate_json(artifact_json)
+                or stored_json != artifact_json
+            ):
+                return "unknown"
+            _read_validated_source_file(final_path, revision)
+            return "committed"
+        except (WorkspaceStoreError, ValidationError, ValueError, TypeError):
+            return "unknown"
+
+    def list_source_revisions(self, workspace_id: str) -> list[SourceRevision]:
+        self._require_path2_workspace(workspace_id)
+        try:
+            with self._connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT workspace_id, source_id, revision_id, original_name,
+                           media_type, byte_size, sha256, observed_at,
+                           effective_time, permission_status, parse_status,
+                           parser_version, artifact_json
+                    FROM source_revisions
+                    WHERE workspace_id = ?
+                    ORDER BY observed_at ASC, source_id ASC, revision_id ASC
+                    """,
+                    (workspace_id,),
+                ).fetchall()
+            return [_row_to_source(row)[0] for row in rows]
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def _get_source(
+        self,
+        workspace_id: str,
+        revision_id: str,
+    ) -> tuple[SourceRevision, SourceArtifact, bytes]:
+        self._require_path2_workspace(workspace_id)
+        if not self._is_canonical_workspace_id(revision_id):
+            raise SourceNotFoundError()
+        try:
+            with self._connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT workspace_id, source_id, revision_id, original_name,
+                           media_type, byte_size, sha256, observed_at,
+                           effective_time, permission_status, parse_status,
+                           parser_version, artifact_json
+                    FROM source_revisions
+                    WHERE workspace_id = ? AND revision_id = ?
+                    """,
+                    (workspace_id, revision_id),
+                ).fetchone()
+            if row is None:
+                raise SourceNotFoundError()
+            revision, artifact, _ = _row_to_source(row)
+            content = _read_validated_source_file(_source_path(self.data_dir, revision), revision)
+            return revision, artifact, content
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def get_source_artifact(
+        self,
+        workspace_id: str,
+        revision_id: str,
+    ) -> SourceArtifact:
+        _, artifact, _ = self._get_source(workspace_id, revision_id)
+        return artifact
+
+    def read_source_excerpt(
+        self,
+        workspace_id: str,
+        revision_id: str,
+        locator: EvidenceLocator,
+    ) -> SourceExcerpt:
+        revision, _, content = self._get_source(workspace_id, revision_id)
+        return read_source_fragment(revision, content, locator)
 
     def get_run_snapshot(
         self,
@@ -1407,3 +1869,45 @@ def _row_to_workspace(row: tuple[object, object, object]) -> Workspace:
         display_name=row[1],
         created_at=_parse_created_at(row[2]),
     )
+
+
+def _row_to_source(
+    row: tuple[object, ...],
+) -> tuple[SourceRevision, SourceArtifact, str]:
+    if len(row) != 13 or not isinstance(row[12], str):
+        raise WorkspaceStoreUnavailableError()
+    revision = SourceRevision(
+        workspace_id=row[0],
+        source_id=row[1],
+        revision_id=row[2],
+        original_name=row[3],
+        media_type=row[4],
+        byte_size=row[5],
+        sha256=row[6],
+        observed_at=_parse_created_at(row[7]),
+        effective_time=_parse_created_at(row[8]) if row[8] is not None else None,
+        permission_status=row[9],
+        parse_status=row[10],
+        parser_version=row[11],
+    )
+    artifact = SourceArtifact.model_validate_json(row[12])
+    identity = (
+        revision.workspace_id,
+        revision.source_id,
+        revision.revision_id,
+        revision.sha256,
+    )
+    artifact_identity = (
+        artifact.source_ref.workspace_id,
+        artifact.source_ref.source_id,
+        artifact.source_ref.revision_id,
+        artifact.source_ref.sha256,
+    )
+    if (
+        identity != artifact_identity
+        or revision.parser_version != artifact.parser_version
+        or revision.parse_status != artifact.parse_status
+        or row[12] != _canonical_json(artifact)
+    ):
+        raise WorkspaceStoreUnavailableError()
+    return revision, artifact, row[12]

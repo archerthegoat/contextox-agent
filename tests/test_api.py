@@ -1,12 +1,15 @@
 import asyncio
+import base64
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic import TypeAdapter, ValidationError
 
 from contextox.api import create_app
+from contextox.store import WorkspaceStoreUnavailableError
 from contextox.models import (
     ClarificationRequest,
     ColumnProfile,
@@ -30,6 +33,10 @@ from contextox.models import (
     SampleCell,
     SampleRow,
     SourceIdentity,
+    SourceArtifact,
+    SourceBatchResult,
+    SourceExcerpt,
+    SourceRevision,
     TableKey,
     TableProfile,
     ToolReceipt,
@@ -150,6 +157,23 @@ def _evidence_ref(workspace_id: str, number: int = 1) -> dict:
         **_source_identity(workspace_id, number),
         "locator": {"kind": "text_lines", "line_start": 1, "line_end": 1},
     }
+
+
+def _source_upload(files: list[tuple[str, str, bytes]]) -> bytes:
+    return json.dumps(
+        {
+            "files": [
+                {
+                    "original_name": name,
+                    "media_type": media_type,
+                    "content_base64": base64.b64encode(content).decode("ascii"),
+                }
+                for name, media_type, content in files
+            ],
+            "local_read_confirmed": True,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
 
 
 def _empty_draft(workspace_id: str, mission_id: str, draft_id: str) -> DefinitionDraft:
@@ -776,7 +800,290 @@ class ApiTests(unittest.TestCase):
             self.assertNotIn("sqlite", error.message.lower())
             self.assertNotIn(str(directory), body.decode())
 
-    def test_path2_routes_are_not_implemented_only_for_known_workspace(self) -> None:
+    def test_source_routes_import_list_restart_artifact_excerpt_and_isolate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-api-sources-") as directory:
+            data_dir = Path(directory)
+            app = create_app(static_dir=data_dir, data_dir=data_dir)
+            create_status, create_body = asyncio.run(
+                _asgi_request(
+                    app,
+                    "POST",
+                    "/api/workspaces",
+                    json.dumps({"display_name": "Source API"}).encode(),
+                )
+            )
+            self.assertEqual(create_status, 201)
+            workspace_id = json.loads(create_body)["workspace_id"]
+            fixtures = [
+                ("orders.csv", "text/csv", b"id,name\n1,Ada\n"),
+                ("orders.json", "application/json", b'{"orders":[{"id":1}]}'),
+                ("notes.md", "text/markdown", "# Title\n正文".encode()),
+                ("notes.txt", "text/plain", "alpha\nbeta".encode()),
+            ]
+            status, body = asyncio.run(
+                _asgi_request(
+                    app,
+                    "POST",
+                    f"/api/workspaces/{workspace_id}/sources",
+                    _source_upload(fixtures),
+                )
+            )
+            self.assertEqual(status, 200)
+            batch = SourceBatchResult.model_validate_json(body)
+            self.assertEqual([item.original_name for item in batch.items], [item[0] for item in fixtures])
+            self.assertEqual([item.status for item in batch.items], ["accepted"] * 4)
+            revisions = [item.revision for item in batch.items]
+            self.assertTrue(all(revision is not None for revision in revisions))
+
+            repeated_status, repeated_body = asyncio.run(
+                _asgi_request(
+                    app,
+                    "POST",
+                    f"/api/workspaces/{workspace_id}/sources",
+                    _source_upload([("orders-copy.csv", "text/csv", fixtures[0][2])]),
+                )
+            )
+            self.assertEqual(repeated_status, 200)
+            repeated = SourceBatchResult.model_validate_json(repeated_body).items[0].revision
+            self.assertIsNotNone(repeated)
+            self.assertNotEqual(repeated.source_id, revisions[0].source_id)
+            self.assertNotEqual(repeated.revision_id, revisions[0].revision_id)
+            self.assertEqual(repeated.sha256, revisions[0].sha256)
+
+            restarted = create_app(static_dir=data_dir, data_dir=data_dir)
+            list_status, list_body = asyncio.run(
+                _asgi_request(restarted, "GET", f"/api/workspaces/{workspace_id}/sources")
+            )
+            self.assertEqual(list_status, 200)
+            listed = TypeAdapter(list[SourceRevision]).validate_json(list_body)
+            self.assertEqual(len(listed), 5)
+            self.assertEqual(
+                listed,
+                sorted(listed, key=lambda item: (item.observed_at, item.source_id, item.revision_id)),
+            )
+
+            csv_revision, json_revision, markdown_revision, text_revision = revisions
+            artifact_status, artifact_body = asyncio.run(
+                _asgi_request(
+                    restarted,
+                    "GET",
+                    f"/api/workspaces/{workspace_id}/sources/{csv_revision.revision_id}",
+                )
+            )
+            self.assertEqual(artifact_status, 200)
+            artifact = SourceArtifact.model_validate_json(artifact_body)
+            self.assertEqual(artifact.source_ref.sha256, csv_revision.sha256)
+            excerpt_cases = (
+                (
+                    csv_revision,
+                    {"kind": "csv_rows", "row_start": 1, "row_end": 1, "column": None},
+                    "1,Ada",
+                ),
+                (json_revision, {"kind": "json_pointer", "pointer": "/orders/0/id"}, "1"),
+                (markdown_revision, {"kind": "text_lines", "line_start": 2, "line_end": 2}, "正文"),
+                (text_revision, {"kind": "text_lines", "line_start": 2, "line_end": 2}, "beta"),
+            )
+            for revision, locator, expected_text in excerpt_cases:
+                with self.subTest(media_type=revision.media_type):
+                    excerpt_status, excerpt_body = asyncio.run(
+                        _asgi_request(
+                            restarted,
+                            "POST",
+                            f"/api/workspaces/{workspace_id}/sources/{revision.revision_id}/read",
+                            json.dumps({"locator": locator}).encode(),
+                        )
+                    )
+                    self.assertEqual(excerpt_status, 200)
+                    self.assertEqual(SourceExcerpt.model_validate_json(excerpt_body).text, expected_text)
+
+            other_status, other_body = asyncio.run(
+                _asgi_request(
+                    restarted,
+                    "POST",
+                    "/api/workspaces",
+                    json.dumps({"display_name": "Other"}).encode(),
+                )
+            )
+            self.assertEqual(other_status, 201)
+            other_workspace = json.loads(other_body)["workspace_id"]
+            cross_status, cross_body = asyncio.run(
+                _asgi_request(
+                    restarted,
+                    "GET",
+                    f"/api/workspaces/{other_workspace}/sources/{csv_revision.revision_id}",
+                )
+            )
+            cross_error = WorkspaceError.model_validate_json(cross_body)
+            self.assertEqual((cross_status, cross_error.code), (404, "source_not_found"))
+            self.assertNotIn(str(data_dir), cross_body.decode())
+            unknown_status, unknown_body = asyncio.run(
+                _asgi_request(restarted, "GET", "/api/workspaces/not-a-workspace/sources")
+            )
+            self.assertEqual(
+                (unknown_status, WorkspaceError.model_validate_json(unknown_body).code),
+                (404, "workspace_not_found"),
+            )
+
+    def test_source_batch_statuses_and_request_limits_are_bounded(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-api-source-limits-") as directory:
+            data_dir = Path(directory)
+            app = create_app(static_dir=data_dir, data_dir=data_dir)
+            create_status, create_body = asyncio.run(
+                _asgi_request(
+                    app,
+                    "POST",
+                    "/api/workspaces",
+                    json.dumps({"display_name": "Source limits"}).encode(),
+                )
+            )
+            self.assertEqual(create_status, 201)
+            workspace_id = json.loads(create_body)["workspace_id"]
+            status_files = [
+                ("ready.txt", "text/plain", b"ready"),
+                ("partial.csv", "text/csv", b"a,b\n1\n"),
+                (
+                    "blocked.csv",
+                    "text/csv",
+                    (",".join(f"c{index}" for index in range(101)) + "\n").encode(),
+                ),
+                ("failed.txt", "text/plain", b"\xff"),
+            ]
+            status, body = asyncio.run(
+                _asgi_request(
+                    app,
+                    "POST",
+                    f"/api/workspaces/{workspace_id}/sources",
+                    _source_upload(status_files),
+                )
+            )
+            self.assertEqual(status, 200)
+            batch = SourceBatchResult.model_validate_json(body)
+            self.assertEqual([item.file_index for item in batch.items], [0, 1, 2, 3])
+            self.assertEqual(
+                [item.status for item in batch.items],
+                ["accepted", "partial", "blocked", "failed"],
+            )
+            self.assertIsNone(batch.items[0].error)
+            self.assertTrue(all(item.revision is not None for item in batch.items))
+            self.assertTrue(all(item.error is not None for item in batch.items[1:]))
+
+            real_import = app.state.workspace_store.import_source_revision
+
+            def fail_one_item(
+                item_workspace_id: str,
+                original_name: str,
+                media_type: str,
+                content: bytes,
+            ):
+                if original_name == "store-fail.txt":
+                    raise WorkspaceStoreUnavailableError()
+                return real_import(item_workspace_id, original_name, media_type, content)
+
+            with patch.object(
+                app.state.workspace_store,
+                "import_source_revision",
+                side_effect=fail_one_item,
+            ):
+                partial_status, partial_body = asyncio.run(
+                    _asgi_request(
+                        app,
+                        "POST",
+                        f"/api/workspaces/{workspace_id}/sources",
+                        _source_upload(
+                            [
+                                ("before.txt", "text/plain", b"before"),
+                                ("store-fail.txt", "text/plain", b"failed"),
+                                ("after.txt", "text/plain", b"after"),
+                            ]
+                        ),
+                    )
+                )
+            self.assertEqual(partial_status, 200)
+            partial_batch = SourceBatchResult.model_validate_json(partial_body)
+            self.assertEqual(
+                [item.status for item in partial_batch.items],
+                ["accepted", "failed", "accepted"],
+            )
+            self.assertIsNone(partial_batch.items[1].revision)
+            self.assertEqual(partial_batch.items[1].error.code, "workspace_store_unavailable")
+
+            invalid_payloads = (
+                {
+                    "files": [
+                        {
+                            "original_name": "bad.bin",
+                            "media_type": "application/octet-stream",
+                            "content_base64": "",
+                        }
+                    ],
+                    "local_read_confirmed": True,
+                },
+                {
+                    "files": [
+                        {
+                            "original_name": "bad.txt",
+                            "media_type": "text/plain",
+                            "content_base64": "not base64!",
+                        }
+                    ],
+                    "local_read_confirmed": True,
+                },
+                {
+                    "files": [
+                        {
+                            "original_name": f"item-{index}.txt",
+                            "media_type": "text/plain",
+                            "content_base64": "",
+                        }
+                        for index in range(9)
+                    ],
+                    "local_read_confirmed": True,
+                },
+            )
+            for payload in invalid_payloads:
+                with self.subTest(kind=payload["files"][0]["original_name"]):
+                    invalid_status, invalid_body = asyncio.run(
+                        _asgi_request(
+                            app,
+                            "POST",
+                            f"/api/workspaces/{workspace_id}/sources",
+                            json.dumps(payload).encode(),
+                        )
+                    )
+                    invalid_error = WorkspaceError.model_validate_json(invalid_body)
+                    self.assertEqual((invalid_status, invalid_error.code), (422, "invalid_request"))
+
+            too_large_status, too_large_body = asyncio.run(
+                _asgi_request(
+                    app,
+                    "POST",
+                    f"/api/workspaces/{workspace_id}/sources",
+                    _source_upload([("large.txt", "text/plain", b"x" * (2 * 1024 * 1024 + 1))]),
+                )
+            )
+            self.assertEqual(
+                (too_large_status, WorkspaceError.model_validate_json(too_large_body).code),
+                (422, "invalid_request"),
+            )
+
+            batch_over_limit = [
+                (f"large-{index}.txt", "text/plain", b"x" * (2 * 1024 * 1024))
+                for index in range(4)
+            ] + [("one.txt", "text/plain", b"x")]
+            batch_status, batch_body = asyncio.run(
+                _asgi_request(
+                    app,
+                    "POST",
+                    f"/api/workspaces/{workspace_id}/sources",
+                    _source_upload(batch_over_limit),
+                )
+            )
+            self.assertEqual(
+                (batch_status, WorkspaceError.model_validate_json(batch_body).code),
+                (422, "invalid_request"),
+            )
+
+    def test_mission_and_run_routes_are_not_implemented_only_for_known_workspace(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-api-path2-") as directory:
             app = create_app(static_dir=Path(directory), data_dir=Path(directory))
             status, body = asyncio.run(
@@ -790,21 +1097,6 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(status, 201)
             workspace_id = json.loads(body)["workspace_id"]
             object_id = "00000000-0000-4000-8000-000000000010"
-            source_body = json.dumps(
-                {
-                    "files": [
-                        {
-                            "original_name": "empty.txt",
-                            "media_type": "text/plain",
-                            "content_base64": "",
-                        }
-                    ],
-                    "local_read_confirmed": True,
-                }
-            ).encode()
-            excerpt_body = json.dumps(
-                {"locator": {"kind": "text_lines", "line_start": 1, "line_end": 1}}
-            ).encode()
             draft_body = json.dumps(
                 {"original_input": "梳理数据关系", "provider_send_confirmed": True},
                 ensure_ascii=False,
@@ -821,10 +1113,6 @@ class ApiTests(unittest.TestCase):
                 }
             ).encode()
             requests = (
-                ("POST", f"/api/workspaces/{workspace_id}/sources", source_body),
-                ("GET", f"/api/workspaces/{workspace_id}/sources", b""),
-                ("GET", f"/api/workspaces/{workspace_id}/sources/{object_id}", b""),
-                ("POST", f"/api/workspaces/{workspace_id}/sources/{object_id}/read", excerpt_body),
                 ("POST", f"/api/workspaces/{workspace_id}/mission-draft-attempts", draft_body),
                 ("GET", f"/api/workspaces/{workspace_id}/mission-draft-attempts/{object_id}", b""),
                 ("POST", f"/api/workspaces/{workspace_id}/mission-draft-attempts/{object_id}/confirm", confirm_body),
@@ -841,21 +1129,15 @@ class ApiTests(unittest.TestCase):
                         _asgi_request(app, method, path, request_body)
                     )
                     error = WorkspaceError.model_validate_json(response_body)
-                    self.assertEqual(response_status, 503)
+                    self.assertEqual(response_status, 501)
                     self.assertEqual(error.code, "path2_not_implemented")
                     self.assertNotIn("梳理数据关系", response_body.decode())
 
-            for path in (
-                f"/api/workspaces/{workspace_id}/sources",
-                f"/api/workspaces/not-a-workspace/sources",
-            ):
-                response_status, response_body = asyncio.run(
-                    _asgi_request(app, "GET", path)
-                )
-                error = WorkspaceError.model_validate_json(response_body)
-                expected = "path2_not_implemented" if path.endswith(workspace_id + "/sources") else "workspace_not_found"
-                self.assertEqual(response_status, 503 if expected.startswith("path2") else 404)
-                self.assertEqual(error.code, expected)
+            response_status, response_body = asyncio.run(
+                _asgi_request(app, "GET", "/api/workspaces/not-a-workspace/missions")
+            )
+            error = WorkspaceError.model_validate_json(response_body)
+            self.assertEqual((response_status, error.code), (404, "workspace_not_found"))
 
     def test_path2_body_limit_is_enforced_at_real_asgi_boundary(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-api-body-limit-") as directory:

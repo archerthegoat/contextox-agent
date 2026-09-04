@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import sqlite3
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -104,6 +105,8 @@ from contextox.models import (
 from contextox.store import (
     InvalidWorkspaceNameError,
     Path2NotImplementedError,
+    SourceImportOutcomeUnknownError,
+    SourceNotFoundError,
     WorkspaceCreateOutcomeUnknownError,
     WorkspaceNotFoundError,
     WorkspaceSchemaUnsupportedError,
@@ -112,6 +115,7 @@ from contextox.store import (
     WorkspaceStoreError,
     WorkspaceStoreUnavailableError,
 )
+from contextox.sources import SourceInputError
 
 
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -259,8 +263,12 @@ def _readiness_checks(app: FastAPI) -> list[HealthCheck]:
         workspace_store_check,
         HealthCheck(
             key="source_admission",
-            status="not_implemented",
-            detail="N2a does not admit or read files.",
+            status="ready" if getattr(app.state, "workspace_store", None) is not None else "not_run",
+            detail=(
+                "Workspace-scoped local Source import and read APIs are available."
+                if getattr(app.state, "workspace_store", None) is not None
+                else "Source APIs require an available Workspace store."
+            ),
         ),
         HealthCheck(
             key="provider",
@@ -276,9 +284,9 @@ def _readiness(app: FastAPI) -> ReadinessResponse:
     return ReadinessResponse(
         status="blocked" if store_check.status == "blocked" else "partial",
         label=(
-            "N2a Workspace foundation ready; source, Mission, and Provider capabilities remain partial."
+            "Path 2 Workspace and Source persistence are ready; Mission and Provider remain partial."
             if store_check.status == "ready"
-            else "N2a Workspace foundation is unavailable; source, Mission, and Provider capabilities remain partial."
+            else "Path 2 Workspace persistence is unavailable; Source, Mission, and Provider remain partial."
         ),
         checks=checks,
     )
@@ -321,7 +329,7 @@ def _areas() -> list[WorkbenchArea]:
             id="sources",
             label="Sources",
             description="授权资料、结构与证据的入口。",
-            status="not_implemented",
+            status="ready",
         ),
         WorkbenchArea(
             id="mission",
@@ -419,12 +427,19 @@ def _workspace_store_error_response(
             code="workspace_not_found",
             message="Workspace was not found.",
         )
+    if isinstance(error, SourceNotFoundError):
+        return _workspace_error(
+            request,
+            status_code=404,
+            code="source_not_found",
+            message="Source revision was not found.",
+        )
     if isinstance(error, Path2NotImplementedError):
         return _workspace_error(
             request,
-            status_code=503,
+            status_code=501,
             code="path2_not_implemented",
-            message="This Path 2 capability is not implemented in W0.2.",
+            message="This Path 2 capability is not implemented.",
         )
     if isinstance(error, InvalidWorkspaceNameError):
         return _workspace_error(
@@ -444,6 +459,15 @@ def _workspace_store_error_response(
             message=(
                 "Workspace creation outcome is unknown; reconcile the workspace list "
                 "before retrying."
+            ),
+        )
+    if isinstance(error, SourceImportOutcomeUnknownError):
+        return _workspace_error(
+            request,
+            status_code=503,
+            code="source_import_outcome_unknown",
+            message=(
+                "Source import outcome is unknown; reconcile the Source list before retrying."
             ),
         )
     if isinstance(error, WorkspaceStoreBusyError):
@@ -502,6 +526,24 @@ def _raise_path2_after_workspace_check(store: WorkspaceStore, workspace_id: str)
     if store.get_workspace(workspace_id) is None:
         raise WorkspaceNotFoundError()
     raise Path2NotImplementedError()
+
+
+def _source_error(code: str, message: str) -> WorkspaceError:
+    return WorkspaceError(
+        code=code,
+        message=message,
+        request_id=f"req_{uuid4().hex}",
+    )
+
+
+def _source_input_error_response(request: Request, error: SourceInputError) -> JSONResponse:
+    del error
+    return _workspace_error(
+        request,
+        status_code=422,
+        code="invalid_request",
+        message="Invalid Source request.",
+    )
 
 
 _SHARED_OPENAPI_MODELS: tuple[type[BaseModel], ...] = (
@@ -634,8 +676,8 @@ def create_app(
         version=__version__,
         summary="Local-first business-definition Workbench shell",
         description=(
-            "N2a exposes a local Workspace foundation. It does not ingest files, "
-            "call a model provider, or persist customer material."
+            "Path 2 exposes local Workspace and authorized Source persistence. "
+            "It does not call a model provider or implement Mission/Run behavior."
         ),
     )
     app.add_middleware(_Path2BodyLimitMiddleware)
@@ -749,8 +791,8 @@ def create_app(
             architecture="local-python-react",
             status="partial",
             notice=(
-                "N2a is a truthful local Workspace foundation: no customer files, "
-                "model provider, arbitrary SQL/shell, or approval action is available."
+                "Path 2 admits explicitly authorized local Sources. Mission, model provider, "
+                "arbitrary SQL/shell, and approval actions remain unavailable."
             ),
             readiness=_readiness(app),
             areas=_areas(),
@@ -828,17 +870,74 @@ def create_app(
     )
     def upload_sources(
         workspace_id: str,
-        _payload: SourceUploadRequest,
+        payload: SourceUploadRequest,
         request: Request,
     ) -> SourceBatchResult | JSONResponse:
         invalid = _invalid_workspace_path(request, workspace_id)
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            store = _workspace_store(app)
+            if store.get_workspace(workspace_id) is None:
+                raise WorkspaceNotFoundError()
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
+
+        items: list[SourceImportItem] = []
+        for file_index, source_file in enumerate(payload.files):
+            try:
+                content = base64.b64decode(source_file.content_base64, validate=True)
+                revision, artifact = store.import_source_revision(
+                    workspace_id,
+                    source_file.original_name,
+                    source_file.media_type,
+                    content,
+                )
+            except SourceInputError:
+                items.append(
+                    SourceImportItem(
+                        file_index=file_index,
+                        original_name=source_file.original_name,
+                        status="failed",
+                        revision=None,
+                        error=_source_error("invalid_source", "Source input is invalid."),
+                    )
+                )
+                continue
+            except WorkspaceNotFoundError as error:
+                return _workspace_store_error_response(request, error)
+            except WorkspaceStoreError as error:
+                items.append(
+                    SourceImportItem(
+                        file_index=file_index,
+                        original_name=source_file.original_name,
+                        status="failed",
+                        revision=None,
+                        error=_source_error(error.code, error.detail),
+                    )
+                )
+                continue
+
+            if artifact.parse_status == "ready":
+                status = "accepted"
+                item_error = None
+            else:
+                status = artifact.parse_status
+                issue = artifact.issues[0] if artifact.issues else None
+                item_error = _source_error(
+                    issue.code if issue is not None else "source_parse_failed",
+                    issue.message if issue is not None else "Source parsing did not complete.",
+                )
+            items.append(
+                SourceImportItem(
+                    file_index=file_index,
+                    original_name=source_file.original_name,
+                    status=status,
+                    revision=revision,
+                    error=item_error,
+                )
+            )
+        return SourceBatchResult(items=items)
 
     @app.get(
         "/api/workspaces/{workspace_id}/sources",
@@ -857,10 +956,9 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _workspace_store(app).list_source_revisions(workspace_id)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.get(
         "/api/workspaces/{workspace_id}/sources/{revision_id}",
@@ -884,10 +982,9 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _workspace_store(app).get_source_artifact(workspace_id, revision_id)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.post(
         "/api/workspaces/{workspace_id}/sources/{revision_id}/read",
@@ -903,7 +1000,7 @@ def create_app(
     def read_source_excerpt(
         workspace_id: str,
         revision_id: str,
-        _payload: SourceExcerptRequest,
+        payload: SourceExcerptRequest,
         request: Request,
     ) -> SourceExcerpt | JSONResponse:
         invalid = _invalid_workspace_path(request, workspace_id)
@@ -913,10 +1010,15 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _workspace_store(app).read_source_excerpt(
+                workspace_id,
+                revision_id,
+                payload.locator,
+            )
+        except SourceInputError as error:
+            return _source_input_error_response(request, error)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.post(
         "/api/workspaces/{workspace_id}/mission-draft-attempts",
