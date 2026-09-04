@@ -106,3 +106,31 @@
 保守翻译版：只做本卡目标和 owned files 内的一个检查点，有证据地报告，不补不存在的业务事实。
 增强执行版：先核验授权与基线，再按 §5 顺序实现，用 §7 公共行为反例验证，并按 §8 交付；任何新范围先报告。
 可直接复制版本：请完整阅读本执行卡和 §3 权威材料，逐项核验正式派发消息的 card hash、共享契约批准、base/worktree 与权限。当前 PENDING 未解除就不要写产品代码；解除后只按 §4–7 做一个检查点，不改其他 worker 文件、不再委派，最后按 §8 回报并等待主协调者复核。
+
+## 11. 实施绑定记录（2026-09-03）
+
+本节只追加本次调度事实，解除的是本卡模块实现的开工等待，不改变前文目标、文件所有权、验证要求与停止条件。真实材料、真实模型、完整集成和人工验收门未解除。各代码 worktree 继续使用共同基线内的 v1.0 启动卡；下面的启动卡 hash 指该不可变版本，不包含本节新增记录。
+
+- 共享契约：path2-shared-contract-v0.1；SHA-256：883aa4d4e7752ae8445f65f6d592effa52524ce156957a14c5b8c79c24ef017b。人已在主协调会话确认，批准记录见本地提交 bfdb97fd0321455a1d12d6412cf7ad589046e212 的 commit body 与本次正式派发。
+- 共同代码基线：73ff723ca1859e569351fb7d1047ce706c560f99（codex/path2-shared-contract），已由主协调者复核。
+- 启动卡：PATH2-W2 v1.0；派发 hash：075ba283a57c7bef38e9465ab7a5d3f7e246ebc87c27807ee4f99744d29e3591。
+- 执行会话：路径二 W2 Agent与Provider；thread_id：01a066d9-0c36-7f60-b081-bfc6b219df9b；host：local。
+- 执行模型：gpt-5.6-luna；reasoning：max；唯一执行者，不再委派。
+- worktree：/Users/archer/.codex/worktrees/8975/contextox-agent。
+- 执行分支：codex/path2-w2-agent-provider；已读回 HEAD 从共同代码基线起步。
+- 本次派发状态：RUNNING，任务已接单并完成基线核对，不是仅创建文档。模块交付与其最终检查结果仍待该任务提交后复核；本节不自动更新后续进度。
+- Git 权限：仅本地限定文件与小步 commit；不 push、不 merge main、不发布/部署、不删除分支或 worktree。
+- 真实案例：NOT RUN；真实模型：NOT RUN；人工验收：PENDING。共享基线检查通过不替代本模块或端到端验证。
+
+## 12. W2.1 Provider 网络生命周期修正（待人批准）
+
+- 目标：使 DNS、TCP、TLS、请求发送和响应读取都受主进程可执行的 deadline、取消和关闭约束。
+- 实现范围：`src/contextox/provider.py`、`tests/test_provider.py`；如现有文件无法保持职责清晰，新增单一私有 `src/contextox/provider_process.py` 前必须由主协调者复核，不扩大公共 API。
+- 生产默认路径：每次 Provider 请求使用一个 `spawn` 子进程；注入 fake transport 的单元测试路径可以保持进程内执行。
+- 子进程禁止接收 Store、SQLite、领域工具、任意路径和业务状态；禁止写文件、日志或持久状态。
+- IPC 使用每次调用独占的有界单向通道；禁止共享 Queue、可复用 Pipe、共享锁和后台常驻 worker。
+- V0 全局并发 Provider 子进程上限为 1；等待可取消并计入 Run budget。
+- 请求发送后发生取消、超时或异常时，结果保持 unknown；不得自动重试。
+- 必测反例：DNS 阻塞、TCP connect 阻塞、TLS handshake 阻塞、request send 阻塞、first/idle/total timeout、各阶段取消、服务关闭、子进程 crash、非法/越序/超限 IPC、并发槽位、无晚到回调、无残留子进程。
+- 回归：既有 Provider、Agent 和全量标准库测试；真实 DeepSeek 调用仍需单独授权。
+- Git：只允许本地小步提交；经协调复核后按本次确认的集成生命周期推送、合并和读回。
