@@ -90,6 +90,211 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch Sources */
+        get: operations["fetch_sources_api_workspaces__workspace_id__sources_get"];
+        put?: never;
+        /** Upload Sources */
+        post: operations["upload_sources_api_workspaces__workspace_id__sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/sources/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch Source Artifact */
+        get: operations["fetch_source_artifact_api_workspaces__workspace_id__sources__revision_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/sources/{revision_id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Source Excerpt */
+        post: operations["read_source_excerpt_api_workspaces__workspace_id__sources__revision_id__read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/mission-draft-attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Mission Draft Attempt */
+        post: operations["create_mission_draft_attempt_api_workspaces__workspace_id__mission_draft_attempts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch Mission Draft Attempt */
+        get: operations["fetch_mission_draft_attempt_api_workspaces__workspace_id__mission_draft_attempts__attempt_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Mission Draft Attempt */
+        post: operations["confirm_mission_draft_attempt_api_workspaces__workspace_id__mission_draft_attempts__attempt_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch Missions */
+        get: operations["fetch_missions_api_workspaces__workspace_id__missions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch Mission Snapshot */
+        get: operations["fetch_mission_snapshot_api_workspaces__workspace_id__missions__mission_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Run */
+        post: operations["start_run_api_workspaces__workspace_id__missions__mission_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch Run Snapshot */
+        get: operations["fetch_run_snapshot_api_workspaces__workspace_id__missions__mission_id__runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Run */
+        post: operations["cancel_run_api_workspaces__workspace_id__missions__mission_id__runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run Events */
+        get: operations["run_events_api_workspaces__workspace_id__missions__mission_id__runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -111,6 +316,221 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CancelRunRequest */
+        CancelRunRequest: Record<string, never>;
+        /** ClarificationQuestion */
+        ClarificationQuestion: {
+            /** Question */
+            question: string;
+            /** Why Needed */
+            why_needed: string;
+            /**
+             * Expected Answer Type
+             * @enum {string}
+             */
+            expected_answer_type: "text" | "number" | "boolean" | "date" | "enum" | "range" | "field_selection";
+            /** Suggested Owner Role */
+            suggested_owner_role: string | null;
+            /** Related Definition Paths */
+            related_definition_paths: string[];
+            /** Evidence Requested */
+            evidence_requested: string[];
+            /** Examples Or Options */
+            examples_or_options: string[];
+            /**
+             * Blocking Impact
+             * @enum {string}
+             */
+            blocking_impact: "blocking" | "non_blocking";
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+        };
+        /** ClarificationRequest */
+        ClarificationRequest: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            /** Draft Version */
+            draft_version: number;
+            /** Draft Sha256 */
+            draft_sha256: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "awaiting_answer";
+            /** Questions */
+            questions: components["schemas"]["ClarificationQuestion"][];
+        };
+        /** ClarificationRequestedEventEnvelope */
+        ClarificationRequestedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "clarification_requested";
+            public_payload: components["schemas"]["ClarificationRequestedPayload"];
+        };
+        /** ClarificationRequestedPayload */
+        ClarificationRequestedPayload: {
+            /** Clarification Id */
+            clarification_id: string;
+            /** Draft Version */
+            draft_version: number;
+            /** Draft Sha256 */
+            draft_sha256: string;
+        };
+        /** ColumnProfile */
+        ColumnProfile: {
+            /** Name */
+            name: string;
+            /** Observed Types */
+            observed_types: string[];
+            /** Missing Count */
+            missing_count: number;
+            /** Null Count */
+            null_count: number;
+            /** Distinct Count */
+            distinct_count: number;
+            /** Numeric Min */
+            numeric_min: string | null;
+            /** Numeric Max */
+            numeric_max: string | null;
+        };
+        /** ColumnRef */
+        ColumnRef: {
+            source_ref: components["schemas"]["SourceIdentity"];
+            /** Table Id */
+            table_id: string;
+            /** Column */
+            column: string;
+        };
+        /** CsvRowsLocator */
+        CsvRowsLocator: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "csv_rows";
+            /** Row Start */
+            row_start: number;
+            /** Row End */
+            row_end: number;
+            /** Column */
+            column: string | null;
+        };
+        /** DefinitionDraft */
+        DefinitionDraft: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Draft Id */
+            draft_id: string;
+            /** Version */
+            version: number;
+            /** Sha256 */
+            sha256: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "in_review";
+            /**
+             * Semantic Approval
+             * @constant
+             */
+            semantic_approval: "pending";
+            /** Fields */
+            fields: components["schemas"]["DefinitionField"][];
+            /** Relationships */
+            relationships: components["schemas"]["RelationshipCandidate"][];
+            /** Unresolved Items */
+            unresolved_items: string[];
+        };
+        /** DefinitionField */
+        DefinitionField: {
+            /** Field Key */
+            field_key: string;
+            /** Name */
+            name: string;
+            /** Meaning */
+            meaning: string | null;
+            /** Value Type */
+            value_type: string | null;
+            /** Grain */
+            grain: string | null;
+            /** Source Columns */
+            source_columns: components["schemas"]["ColumnRef"][];
+            /** Rule */
+            rule: string | null;
+            /** Time Basis */
+            time_basis: string | null;
+            /** Null Handling */
+            null_handling: string | null;
+            /**
+             * Evidence Status
+             * @enum {string}
+             */
+            evidence_status: "observed" | "candidate" | "conflict" | "unknown";
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+            /** Unknowns */
+            unknowns: components["schemas"]["UnknownItem"][];
+        };
+        /** DraftUpdatedEventEnvelope */
+        DraftUpdatedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "draft_updated";
+            public_payload: components["schemas"]["DraftUpdatedPayload"];
+        };
+        /** DraftUpdatedPayload */
+        DraftUpdatedPayload: {
+            /** Draft Id */
+            draft_id: string;
+            /** Version */
+            version: number;
+            /** Sha256 */
+            sha256: string;
+        };
         /** EventEnvelope */
         EventEnvelope: {
             /** Event Id */
@@ -155,6 +575,24 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** EvidenceRef */
+        EvidenceRef: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Source Id */
+            source_id: string;
+            /** Revision Id */
+            revision_id: string;
+            /** Sha256 */
+            sha256: string;
+            /** Locator */
+            locator: components["schemas"]["CsvRowsLocator"] | components["schemas"]["JsonPointerLocator"] | components["schemas"]["TextLinesLocator"];
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /** HealthCheck */
         HealthCheck: {
             /** Key */
@@ -194,6 +632,237 @@ export interface components {
             /** Checks */
             checks: components["schemas"]["HealthCheck"][];
         };
+        /** JsonPointerLocator */
+        JsonPointerLocator: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "json_pointer";
+            /** Pointer */
+            pointer: string;
+        };
+        /** MessageCreatedEventEnvelope */
+        MessageCreatedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "message_created";
+            public_payload: components["schemas"]["MessageCreatedPayload"];
+        };
+        /** MessageCreatedPayload */
+        MessageCreatedPayload: {
+            /** Message Id */
+            message_id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+        };
+        /** Mission */
+        Mission: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** State Version */
+            state_version: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "waiting_for_human" | "blocked" | "completed" | "cancelled";
+            /** Title */
+            title: string;
+            /** Goal */
+            goal: string;
+            /** Completion Criteria */
+            completion_criteria: string[];
+            /** Scope Notes */
+            scope_notes: string[];
+            /** Original Attempt Id */
+            original_attempt_id: string;
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+        };
+        /** MissionDraftAttempt */
+        MissionDraftAttempt: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Attempt Id */
+            attempt_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Original Input */
+            original_input: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "ready" | "confirmed" | "blocked" | "failed" | "cancelled";
+            candidate: components["schemas"]["MissionDraftPayload"] | null;
+            /** Candidate Version */
+            candidate_version: number | null;
+            /** Candidate Sha256 */
+            candidate_sha256: string | null;
+            /** Provider Receipt Id */
+            provider_receipt_id: string | null;
+            /** Mission Id */
+            mission_id: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** MissionDraftAttemptCreateRequest */
+        MissionDraftAttemptCreateRequest: {
+            /** Original Input */
+            original_input: string;
+            /** Provider Send Confirmed */
+            provider_send_confirmed: boolean;
+        };
+        /** MissionDraftConfirmRequest */
+        MissionDraftConfirmRequest: {
+            /** Candidate Version */
+            candidate_version: number;
+            /** Candidate Sha256 */
+            candidate_sha256: string;
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+        };
+        /** MissionDraftPayload */
+        MissionDraftPayload: {
+            /** Title */
+            title: string;
+            /** Goal */
+            goal: string;
+            /** Completion Criteria */
+            completion_criteria: string[];
+            /** Scope Notes */
+            scope_notes: string[];
+        };
+        /** MissionSnapshot */
+        MissionSnapshot: {
+            mission: components["schemas"]["Mission"];
+            draft: components["schemas"]["DefinitionDraft"] | null;
+            /** Clarifications */
+            clarifications: components["schemas"]["ClarificationRequest"][];
+            latest_run: components["schemas"]["RunSnapshot"] | null;
+        };
+        /** ModelCompletedEventEnvelope */
+        ModelCompletedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "model_completed";
+            public_payload: components["schemas"]["ModelCompletedPayload"];
+        };
+        /** ModelCompletedPayload */
+        ModelCompletedPayload: {
+            /** Turn Index */
+            turn_index: number;
+            /** Provider Receipt Id */
+            provider_receipt_id: string;
+        };
+        /** ModelDeltaEventEnvelope */
+        ModelDeltaEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "model_delta";
+            public_payload: components["schemas"]["ModelDeltaPayload"];
+        };
+        /** ModelDeltaPayload */
+        ModelDeltaPayload: {
+            /** Turn Index */
+            turn_index: number;
+            /** Content */
+            content: string;
+        };
+        /** ModelStartedEventEnvelope */
+        ModelStartedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "model_started";
+            public_payload: components["schemas"]["ModelStartedPayload"];
+        };
+        /** ModelStartedPayload */
+        ModelStartedPayload: {
+            /** Turn Index */
+            turn_index: number;
+        };
         /** ReadinessResponse */
         ReadinessResponse: {
             /**
@@ -205,6 +874,729 @@ export interface components {
             label: string;
             /** Checks */
             checks: components["schemas"]["HealthCheck"][];
+        };
+        /** RelationshipCandidate */
+        RelationshipCandidate: {
+            /** Relationship Key */
+            relationship_key: string;
+            left: components["schemas"]["TableKey"];
+            right: components["schemas"]["TableKey"];
+            /**
+             * Observed Cardinality
+             * @enum {string}
+             */
+            observed_cardinality: "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many" | "unknown";
+            /** Join Rule */
+            join_rule: string | null;
+            /** Grain Notes */
+            grain_notes: string | null;
+            /**
+             * Evidence Status
+             * @enum {string}
+             */
+            evidence_status: "observed" | "candidate" | "conflict" | "unknown";
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+            /** Risks */
+            risks: string[];
+            /** Unknowns */
+            unknowns: components["schemas"]["UnknownItem"][];
+        };
+        /** RunBlockedEventEnvelope */
+        RunBlockedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_blocked";
+            public_payload: components["schemas"]["RunBlockedPayload"];
+        };
+        /** RunBlockedPayload */
+        RunBlockedPayload: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "blocked";
+            /** Terminal Receipt Id */
+            terminal_receipt_id: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** RunBudget */
+        RunBudget: {
+            /**
+             * Max Model Turns
+             * @default 8
+             * @constant
+             */
+            max_model_turns: 8;
+            /**
+             * Max Tool Calls
+             * @default 24
+             * @constant
+             */
+            max_tool_calls: 24;
+            /**
+             * Max Elapsed Ms
+             * @default 300000
+             * @constant
+             */
+            max_elapsed_ms: 300000;
+            /**
+             * Max Output Tokens
+             * @default 4096
+             * @constant
+             */
+            max_output_tokens: 4096;
+            /**
+             * Max Retries
+             * @default 0
+             * @constant
+             */
+            max_retries: 0;
+            /**
+             * Connect Timeout Ms
+             * @default 10000
+             * @constant
+             */
+            connect_timeout_ms: 10000;
+            /**
+             * First Event Timeout Ms
+             * @default 60000
+             * @constant
+             */
+            first_event_timeout_ms: 60000;
+            /**
+             * Idle Timeout Ms
+             * @default 30000
+             * @constant
+             */
+            idle_timeout_ms: 30000;
+            /**
+             * Total Timeout Ms
+             * @default 120000
+             * @constant
+             */
+            total_timeout_ms: 120000;
+            /**
+             * Max Context Bytes
+             * @default 262144
+             * @constant
+             */
+            max_context_bytes: 262144;
+        };
+        /** RunCancelledEventEnvelope */
+        RunCancelledEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_cancelled";
+            public_payload: components["schemas"]["RunCancelledPayload"];
+        };
+        /** RunCancelledPayload */
+        RunCancelledPayload: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "cancelled";
+            /** Terminal Receipt Id */
+            terminal_receipt_id: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** RunCompletedEventEnvelope */
+        RunCompletedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_completed";
+            public_payload: components["schemas"]["RunCompletedPayload"];
+        };
+        /** RunCompletedPayload */
+        RunCompletedPayload: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "completed";
+            /** Terminal Receipt Id */
+            terminal_receipt_id: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** RunEventEnvelope */
+        RunEventEnvelope: components["schemas"]["RunStartedEventEnvelope"] | components["schemas"]["MessageCreatedEventEnvelope"] | components["schemas"]["ModelStartedEventEnvelope"] | components["schemas"]["ModelDeltaEventEnvelope"] | components["schemas"]["ModelCompletedEventEnvelope"] | components["schemas"]["ToolRequestedEventEnvelope"] | components["schemas"]["ToolStartedEventEnvelope"] | components["schemas"]["ToolCompletedEventEnvelope"] | components["schemas"]["ToolFailedEventEnvelope"] | components["schemas"]["DraftUpdatedEventEnvelope"] | components["schemas"]["ClarificationRequestedEventEnvelope"] | components["schemas"]["RunCompletedEventEnvelope"] | components["schemas"]["RunPartialEventEnvelope"] | components["schemas"]["RunBlockedEventEnvelope"] | components["schemas"]["RunFailedEventEnvelope"] | components["schemas"]["RunCancelledEventEnvelope"];
+        /** RunFailedEventEnvelope */
+        RunFailedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_failed";
+            public_payload: components["schemas"]["RunFailedPayload"];
+        };
+        /** RunFailedPayload */
+        RunFailedPayload: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "failed";
+            /** Terminal Receipt Id */
+            terminal_receipt_id: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** RunPartialEventEnvelope */
+        RunPartialEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_partial";
+            public_payload: components["schemas"]["RunPartialPayload"];
+        };
+        /** RunPartialPayload */
+        RunPartialPayload: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "partial";
+            /** Terminal Receipt Id */
+            terminal_receipt_id: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** RunSnapshot */
+        RunSnapshot: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "waiting_for_human" | "partial" | "completed" | "blocked" | "failed" | "cancelled";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            budget: components["schemas"]["RunBudget"];
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+            draft: components["schemas"]["DefinitionDraft"] | null;
+            /** Clarifications */
+            clarifications: components["schemas"]["ClarificationRequest"][];
+            /** Last Sequence */
+            last_sequence: number;
+            terminal_receipt: components["schemas"]["TerminalReceipt"] | null;
+            /** Final Output */
+            final_output: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** RunStartRequest */
+        RunStartRequest: {
+            /** Expected State Version */
+            expected_state_version: number;
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+            /** Provider Send Confirmed */
+            provider_send_confirmed: boolean;
+            /** Client Request Id */
+            client_request_id: string;
+        };
+        /** RunStartedEventEnvelope */
+        RunStartedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_started";
+            public_payload: components["schemas"]["RunStartedPayload"];
+        };
+        /** RunStartedPayload */
+        RunStartedPayload: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "running";
+        };
+        /** SampleCell */
+        SampleCell: {
+            /** Column Name */
+            column_name: string;
+            /**
+             * Value Kind
+             * @enum {string}
+             */
+            value_kind: "missing" | "null" | "string" | "integer" | "decimal" | "boolean" | "json";
+            /** Text */
+            text: string | null;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** SampleRow */
+        SampleRow: {
+            /** Row Number */
+            row_number: number;
+            /** Cells */
+            cells: components["schemas"]["SampleCell"][];
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+        };
+        /** SourceArtifact */
+        SourceArtifact: {
+            source_ref: components["schemas"]["SourceIdentity"];
+            /** Parser Version */
+            parser_version: string;
+            /**
+             * Parse Status
+             * @enum {string}
+             */
+            parse_status: "ready" | "partial" | "blocked" | "failed";
+            /** Tables */
+            tables: components["schemas"]["TableProfile"][];
+            /** Text Line Count */
+            text_line_count: number | null;
+            /** Issues */
+            issues: components["schemas"]["SourceIssue"][];
+        };
+        /** SourceBatchResult */
+        SourceBatchResult: {
+            /** Items */
+            items: components["schemas"]["SourceImportItem"][];
+        };
+        /** SourceExcerpt */
+        SourceExcerpt: {
+            source_ref: components["schemas"]["EvidenceRef"];
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** SourceExcerptRequest */
+        SourceExcerptRequest: {
+            /** Locator */
+            locator: components["schemas"]["CsvRowsLocator"] | components["schemas"]["JsonPointerLocator"] | components["schemas"]["TextLinesLocator"];
+        };
+        /** SourceIdentity */
+        SourceIdentity: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Source Id */
+            source_id: string;
+            /** Revision Id */
+            revision_id: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** SourceImportItem */
+        SourceImportItem: {
+            /** File Index */
+            file_index: number;
+            /** Original Name */
+            original_name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "accepted" | "partial" | "blocked" | "failed";
+            revision: components["schemas"]["SourceRevision"] | null;
+            error: components["schemas"]["WorkspaceError"] | null;
+        };
+        /** SourceIssue */
+        SourceIssue: {
+            /** Code */
+            code: string;
+            /** Locator */
+            locator: (components["schemas"]["CsvRowsLocator"] | components["schemas"]["JsonPointerLocator"] | components["schemas"]["TextLinesLocator"]) | null;
+            /** Message */
+            message: string;
+        };
+        /** SourceRevision */
+        SourceRevision: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Source Id */
+            source_id: string;
+            /** Revision Id */
+            revision_id: string;
+            /** Original Name */
+            original_name: string;
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "text/csv" | "application/json" | "text/markdown" | "text/plain";
+            /** Byte Size */
+            byte_size: number;
+            /** Sha256 */
+            sha256: string;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Effective Time */
+            effective_time: string | null;
+            /**
+             * Permission Status
+             * @enum {string}
+             */
+            permission_status: "read_allowed" | "denied" | "unknown";
+            /**
+             * Parse Status
+             * @enum {string}
+             */
+            parse_status: "pending" | "ready" | "partial" | "blocked" | "failed";
+            /** Parser Version */
+            parser_version: string;
+        };
+        /** SourceUploadFile */
+        SourceUploadFile: {
+            /** Original Name */
+            original_name: string;
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "text/csv" | "application/json" | "text/markdown" | "text/plain";
+            /** Content Base64 */
+            content_base64: string;
+        };
+        /** SourceUploadRequest */
+        SourceUploadRequest: {
+            /** Files */
+            files: components["schemas"]["SourceUploadFile"][];
+            /** Local Read Confirmed */
+            local_read_confirmed: boolean;
+        };
+        /** TableKey */
+        TableKey: {
+            source_ref: components["schemas"]["SourceIdentity"];
+            /** Table Id */
+            table_id: string;
+            /** Columns */
+            columns: string[];
+        };
+        /** TableProfile */
+        TableProfile: {
+            /** Table Id */
+            table_id: string;
+            /** Row Count */
+            row_count: number;
+            /** Columns */
+            columns: components["schemas"]["ColumnProfile"][];
+            /** Duplicate Row Count */
+            duplicate_row_count: number;
+            /** Sample Rows */
+            sample_rows: components["schemas"]["SampleRow"][];
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+        };
+        /** TerminalReceipt */
+        TerminalReceipt: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Receipt Id */
+            receipt_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Terminal Tool
+             * @enum {string}
+             */
+            terminal_tool: "create_clarification" | "submit_for_review" | "finish_run";
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "waiting_for_human" | "partial";
+            /** Draft Id */
+            draft_id: string | null;
+            /** Draft Version */
+            draft_version: number | null;
+            /** Draft Sha256 */
+            draft_sha256: string | null;
+            /** Clarification Ids */
+            clarification_ids: string[];
+            /** Provider Receipt Ids */
+            provider_receipt_ids: string[];
+            /** Tool Receipt Ids */
+            tool_receipt_ids: string[];
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+        };
+        /** TextLinesLocator */
+        TextLinesLocator: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "text_lines";
+            /** Line Start */
+            line_start: number;
+            /** Line End */
+            line_end: number;
+        };
+        /** ToolCompletedEventEnvelope */
+        ToolCompletedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "tool_completed";
+            public_payload: components["schemas"]["ToolCompletedPayload"];
+        };
+        /** ToolCompletedPayload */
+        ToolCompletedPayload: {
+            /** Call Id */
+            call_id: string;
+            /** Tool Receipt Id */
+            tool_receipt_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "rejected";
+        };
+        /** ToolFailedEventEnvelope */
+        ToolFailedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "tool_failed";
+            public_payload: components["schemas"]["ToolFailedPayload"];
+        };
+        /** ToolFailedPayload */
+        ToolFailedPayload: {
+            /** Call Id */
+            call_id: string;
+            /** Error Code */
+            error_code: string;
+        };
+        /** ToolRequestedEventEnvelope */
+        ToolRequestedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "tool_requested";
+            public_payload: components["schemas"]["ToolRequestedPayload"];
+        };
+        /** ToolRequestedPayload */
+        ToolRequestedPayload: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "list_sources" | "read_source" | "inspect_dataset" | "update_definition_draft" | "create_clarification" | "submit_for_review" | "finish_run";
+            /** Ordinal */
+            ordinal: number;
+        };
+        /** ToolStartedEventEnvelope */
+        ToolStartedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "tool_started";
+            public_payload: components["schemas"]["ToolRequestedPayload"];
+        };
+        /** UnknownItem */
+        UnknownItem: {
+            /** Property Path */
+            property_path: string;
+            /** Reason */
+            reason: string;
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
         /** WorkbenchArea */
         WorkbenchArea: {
@@ -274,6 +1666,549 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
+        /** RelationshipProfile */
+        RelationshipProfile: {
+            left: components["schemas"]["TableKey"];
+            right: components["schemas"]["TableKey"];
+            /** Left Rows */
+            left_rows: number;
+            /** Right Rows */
+            right_rows: number;
+            /** Left Distinct Keys */
+            left_distinct_keys: number;
+            /** Right Distinct Keys */
+            right_distinct_keys: number;
+            /** Left Null Keys */
+            left_null_keys: number;
+            /** Right Null Keys */
+            right_null_keys: number;
+            /** Matched Distinct Keys */
+            matched_distinct_keys: number;
+            /** Unmatched Left Rows */
+            unmatched_left_rows: number;
+            /** Unmatched Right Rows */
+            unmatched_right_rows: number;
+            /** Prospective Join Rows */
+            prospective_join_rows: number;
+            /**
+             * Observed Cardinality
+             * @enum {string}
+             */
+            observed_cardinality: "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many" | "unknown";
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+            /** Limitations */
+            limitations: string[];
+        };
+        /** ProviderConfigSnapshot */
+        ProviderConfigSnapshot: {
+            /**
+             * Endpoint Id
+             * @constant
+             */
+            endpoint_id: "deepseek_chat_completions";
+            /**
+             * Model
+             * @enum {string}
+             */
+            model: "deepseek-v4-flash" | "deepseek-v4-pro";
+            /**
+             * Thinking
+             * @constant
+             */
+            thinking: "enabled";
+            /**
+             * Reasoning Effort
+             * @constant
+             */
+            reasoning_effort: "high";
+        };
+        /** ProviderReceipt */
+        ProviderReceipt: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Receipt Id */
+            receipt_id: string;
+            /** Attempt Id */
+            attempt_id: string | null;
+            /** Mission Id */
+            mission_id: string | null;
+            /** Run Id */
+            run_id: string | null;
+            /** Turn Index */
+            turn_index: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "blocked" | "failed" | "cancelled";
+            config: components["schemas"]["ProviderConfigSnapshot"];
+            /** P0 Sha256 */
+            p0_sha256: string;
+            /** Input Tokens */
+            input_tokens: number | null;
+            /** Output Tokens */
+            output_tokens: number | null;
+            /** Cache Hit Tokens */
+            cache_hit_tokens: number | null;
+            /** Cache Miss Tokens */
+            cache_miss_tokens: number | null;
+            /** Context Manifest Id */
+            context_manifest_id: string | null;
+            /** Context Manifest Sha256 */
+            context_manifest_sha256: string | null;
+            /** Tool Schema Sha256 */
+            tool_schema_sha256: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** ToolReceipt */
+        ToolReceipt: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Receipt Id */
+            receipt_id: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Call Id */
+            call_id: string;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "list_sources" | "read_source" | "inspect_dataset" | "update_definition_draft" | "create_clarification" | "submit_for_review" | "finish_run";
+            /** Arguments Sha256 */
+            arguments_sha256: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "rejected" | "blocked" | "failed";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** ContextManifestInput */
+        ContextManifestInput: {
+            /** Mission State Version */
+            mission_state_version: number;
+            /** Turn Index */
+            turn_index: number;
+            /** Draft Id */
+            draft_id: string | null;
+            /** Draft Version */
+            draft_version: number | null;
+            /** Draft Sha256 */
+            draft_sha256: string | null;
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+            /** Clarification Ids */
+            clarification_ids: string[];
+            /** Tool Receipt Ids */
+            tool_receipt_ids: string[];
+            budget: components["schemas"]["RunBudget"];
+            /** Excluded Reasons */
+            excluded_reasons: string[];
+        };
+        /** ContextPacketManifest */
+        ContextPacketManifest: {
+            /** Mission State Version */
+            mission_state_version: number;
+            /** Turn Index */
+            turn_index: number;
+            /** Draft Id */
+            draft_id: string | null;
+            /** Draft Version */
+            draft_version: number | null;
+            /** Draft Sha256 */
+            draft_sha256: string | null;
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+            /** Clarification Ids */
+            clarification_ids: string[];
+            /** Tool Receipt Ids */
+            tool_receipt_ids: string[];
+            budget: components["schemas"]["RunBudget"];
+            /** Excluded Reasons */
+            excluded_reasons: string[];
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Manifest Id */
+            manifest_id: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** ContextSnapshot */
+        ContextSnapshot: {
+            mission: components["schemas"]["Mission"];
+            run: components["schemas"]["RunSnapshot"];
+            /** Sources */
+            sources: components["schemas"]["SourceRevision"][];
+            draft: components["schemas"]["DefinitionDraft"] | null;
+            /** Clarifications */
+            clarifications: components["schemas"]["ClarificationRequest"][];
+        };
+        /** DomainRejection */
+        DomainRejection: {
+            /** Code */
+            code: string;
+            /** Reason */
+            reason: string;
+        };
+        /** ListSourcesArguments */
+        ListSourcesArguments: Record<string, never>;
+        /** ReadSourceArguments */
+        ReadSourceArguments: {
+            /** Revision Id */
+            revision_id: string;
+            /** Locator */
+            locator: components["schemas"]["CsvRowsLocator"] | components["schemas"]["JsonPointerLocator"] | components["schemas"]["TextLinesLocator"];
+        };
+        /** InspectTableArguments */
+        InspectTableArguments: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "table";
+            /** Revision Id */
+            revision_id: string;
+            /** Table Id */
+            table_id: string;
+        };
+        /** InspectRelationshipArguments */
+        InspectRelationshipArguments: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "relationship";
+            left: components["schemas"]["TableKey"];
+            right: components["schemas"]["TableKey"];
+        };
+        /** UpdateDefinitionDraftArguments */
+        UpdateDefinitionDraftArguments: {
+            /** Expected Version */
+            expected_version: number;
+            /** Expected Sha256 */
+            expected_sha256: string | null;
+            /** Fields */
+            fields: components["schemas"]["DefinitionField"][];
+            /** Relationships */
+            relationships: components["schemas"]["RelationshipCandidate"][];
+            /** Unresolved Items */
+            unresolved_items: string[];
+        };
+        /** CreateClarificationArguments */
+        CreateClarificationArguments: {
+            /** Draft Version */
+            draft_version: number;
+            /** Draft Sha256 */
+            draft_sha256: string;
+            /** Questions */
+            questions: components["schemas"]["ClarificationQuestion"][];
+        };
+        /** SubmitForReviewArguments */
+        SubmitForReviewArguments: {
+            /** Draft Version */
+            draft_version: number;
+            /** Draft Sha256 */
+            draft_sha256: string;
+        };
+        /** FinishRunArguments */
+        FinishRunArguments: {
+            /**
+             * Outcome
+             * @constant
+             */
+            outcome: "partial";
+            /** Reason */
+            reason: string;
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+        };
+        /** ListSourcesCall */
+        ListSourcesCall: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            name: "list_sources";
+            arguments: components["schemas"]["ListSourcesArguments"];
+        };
+        /** ReadSourceCall */
+        ReadSourceCall: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            name: "read_source";
+            arguments: components["schemas"]["ReadSourceArguments"];
+        };
+        /** InspectDatasetCall */
+        InspectDatasetCall: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            name: "inspect_dataset";
+            /** Arguments */
+            arguments: components["schemas"]["InspectTableArguments"] | components["schemas"]["InspectRelationshipArguments"];
+        };
+        /** UpdateDefinitionDraftCall */
+        UpdateDefinitionDraftCall: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            name: "update_definition_draft";
+            arguments: components["schemas"]["UpdateDefinitionDraftArguments"];
+        };
+        /** CreateClarificationCall */
+        CreateClarificationCall: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            name: "create_clarification";
+            arguments: components["schemas"]["CreateClarificationArguments"];
+        };
+        /** SubmitForReviewCall */
+        SubmitForReviewCall: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            name: "submit_for_review";
+            arguments: components["schemas"]["SubmitForReviewArguments"];
+        };
+        /** FinishRunCall */
+        FinishRunCall: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            name: "finish_run";
+            arguments: components["schemas"]["FinishRunArguments"];
+        };
+        /** RunToolResult */
+        RunToolResult: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "rejected";
+            /** Output */
+            output: components["schemas"]["SourceRevision"][] | components["schemas"]["SourceExcerpt"] | components["schemas"]["TableProfile"] | components["schemas"]["RelationshipProfile"] | components["schemas"]["DefinitionDraft"] | components["schemas"]["ClarificationRequest"] | components["schemas"]["TerminalReceipt"] | components["schemas"]["DomainRejection"];
+            tool_receipt: components["schemas"]["ToolReceipt"];
+            terminal_snapshot: components["schemas"]["RunSnapshot"] | null;
+        };
+        /** RunTerminalPayload */
+        RunTerminalPayload: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "waiting_for_human" | "partial" | "completed" | "blocked" | "failed" | "cancelled";
+            /** Terminal Receipt Id */
+            terminal_receipt_id: string | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** ClarificationRequestedEventInput */
+        ClarificationRequestedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "clarification_requested";
+            public_payload: components["schemas"]["ClarificationRequestedPayload"];
+        };
+        /** DraftUpdatedEventInput */
+        DraftUpdatedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "draft_updated";
+            public_payload: components["schemas"]["DraftUpdatedPayload"];
+        };
+        /** MessageCreatedEventInput */
+        MessageCreatedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "message_created";
+            public_payload: components["schemas"]["MessageCreatedPayload"];
+        };
+        /** ModelCompletedEventInput */
+        ModelCompletedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "model_completed";
+            public_payload: components["schemas"]["ModelCompletedPayload"];
+        };
+        /** ModelDeltaEventInput */
+        ModelDeltaEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "model_delta";
+            public_payload: components["schemas"]["ModelDeltaPayload"];
+        };
+        /** ModelStartedEventInput */
+        ModelStartedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "model_started";
+            public_payload: components["schemas"]["ModelStartedPayload"];
+        };
+        /** RunBlockedEventInput */
+        RunBlockedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_blocked";
+            public_payload: components["schemas"]["RunBlockedPayload"];
+        };
+        /** RunCancelledEventInput */
+        RunCancelledEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_cancelled";
+            public_payload: components["schemas"]["RunCancelledPayload"];
+        };
+        /** RunCompletedEventInput */
+        RunCompletedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_completed";
+            public_payload: components["schemas"]["RunCompletedPayload"];
+        };
+        /** RunFailedEventInput */
+        RunFailedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_failed";
+            public_payload: components["schemas"]["RunFailedPayload"];
+        };
+        /** RunPartialEventInput */
+        RunPartialEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_partial";
+            public_payload: components["schemas"]["RunPartialPayload"];
+        };
+        /** RunStartedEventInput */
+        RunStartedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_started";
+            public_payload: components["schemas"]["RunStartedPayload"];
+        };
+        /** ToolCompletedEventInput */
+        ToolCompletedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "tool_completed";
+            public_payload: components["schemas"]["ToolCompletedPayload"];
+        };
+        /** ToolFailedEventInput */
+        ToolFailedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "tool_failed";
+            public_payload: components["schemas"]["ToolFailedPayload"];
+        };
+        /** ToolRequestedEventInput */
+        ToolRequestedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "tool_requested";
+            public_payload: components["schemas"]["ToolRequestedPayload"];
+        };
+        /** ToolStartedEventInput */
+        ToolStartedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "tool_started";
+            public_payload: components["schemas"]["ToolRequestedPayload"];
+        };
+        /** RunEventInput */
+        RunEventInput: components["schemas"]["RunStartedEventInput"] | components["schemas"]["MessageCreatedEventInput"] | components["schemas"]["ModelStartedEventInput"] | components["schemas"]["ModelDeltaEventInput"] | components["schemas"]["ModelCompletedEventInput"] | components["schemas"]["ToolRequestedEventInput"] | components["schemas"]["ToolStartedEventInput"] | components["schemas"]["ToolCompletedEventInput"] | components["schemas"]["ToolFailedEventInput"] | components["schemas"]["DraftUpdatedEventInput"] | components["schemas"]["ClarificationRequestedEventInput"] | components["schemas"]["RunCompletedEventInput"] | components["schemas"]["RunPartialEventInput"] | components["schemas"]["RunBlockedEventInput"] | components["schemas"]["RunFailedEventInput"] | components["schemas"]["RunCancelledEventInput"];
+        /** AgentRunResult */
+        AgentRunResult: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "not_implemented";
+            /** Detail */
+            detail: string;
+        };
+        EvidenceLocator: components["schemas"]["CsvRowsLocator"] | components["schemas"]["JsonPointerLocator"] | components["schemas"]["TextLinesLocator"];
+        InspectDatasetArguments: components["schemas"]["InspectTableArguments"] | components["schemas"]["InspectRelationshipArguments"];
+        DomainToolCall: components["schemas"]["ListSourcesCall"] | components["schemas"]["ReadSourceCall"] | components["schemas"]["InspectDatasetCall"] | components["schemas"]["UpdateDefinitionDraftCall"] | components["schemas"]["CreateClarificationCall"] | components["schemas"]["SubmitForReviewCall"] | components["schemas"]["FinishRunCall"];
     };
     responses: never;
     parameters: never;
@@ -432,6 +2367,681 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    fetch_sources_api_workspaces__workspace_id__sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceRevision"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    upload_sources_api_workspaces__workspace_id__sources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceBatchResult"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    fetch_source_artifact_api_workspaces__workspace_id__sources__revision_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceArtifact"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    read_source_excerpt_api_workspaces__workspace_id__sources__revision_id__read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceExcerptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceExcerpt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    create_mission_draft_attempt_api_workspaces__workspace_id__mission_draft_attempts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MissionDraftAttemptCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissionDraftAttempt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    fetch_mission_draft_attempt_api_workspaces__workspace_id__mission_draft_attempts__attempt_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissionDraftAttempt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    confirm_mission_draft_attempt_api_workspaces__workspace_id__mission_draft_attempts__attempt_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MissionDraftConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Mission"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    fetch_missions_api_workspaces__workspace_id__missions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Mission"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    fetch_mission_snapshot_api_workspaces__workspace_id__missions__mission_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissionSnapshot"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    start_run_api_workspaces__workspace_id__missions__mission_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSnapshot"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    fetch_run_snapshot_api_workspaces__workspace_id__missions__mission_id__runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSnapshot"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    cancel_run_api_workspaces__workspace_id__missions__mission_id__runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSnapshot"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    run_events_api_workspaces__workspace_id__missions__mission_id__runs__run_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A public Run SSE stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
                 };
             };
             /** @description Not Found */

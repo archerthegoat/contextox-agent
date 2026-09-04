@@ -9,10 +9,12 @@ from uuid import UUID
 import contextox.store as store_module
 from contextox.store import (
     InvalidWorkspaceNameError,
+    Path2NotImplementedError,
     WorkspaceSchemaUnsupportedError,
     WorkspaceStore,
     WorkspaceStoreBusyError,
     WorkspaceStoreError,
+    WorkspaceNotFoundError,
     WorkspaceStoreUnavailableError,
 )
 
@@ -288,3 +290,46 @@ class StoreTests(unittest.TestCase):
                     connection.execute("PRAGMA user_version").fetchone()[0],
                     1,
                 )
+
+    def test_path2_store_seams_check_workspace_before_not_implemented(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-store-path2-") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Path 2").workspace_id
+            mission_id = "00000000-0000-4000-8000-000000000002"
+            run_id = "00000000-0000-4000-8000-000000000003"
+            attempt_id = "00000000-0000-4000-8000-000000000004"
+            calls = (
+                lambda: store.get_run_snapshot(workspace_id, mission_id, run_id),
+                lambda: store.get_context_snapshot(workspace_id, mission_id, run_id),
+                lambda: store.record_context_manifest(workspace_id, mission_id, run_id, None),
+                lambda: store.mark_run_running(workspace_id, mission_id, run_id),
+                lambda: store.validate_run_tool_batch(workspace_id, mission_id, run_id, []),
+                lambda: store.execute_run_tool(workspace_id, mission_id, run_id, None),
+                lambda: store.record_provider_receipt(workspace_id, mission_id, run_id, None),
+                lambda: store.append_run_event(workspace_id, mission_id, run_id, None),
+                lambda: store.fail_run(workspace_id, mission_id, run_id, "failed", "failure"),
+                lambda: store.save_run_final_output(workspace_id, mission_id, run_id, "partial"),
+                lambda: store.get_mission_draft_attempt(workspace_id, attempt_id),
+                lambda: store.save_mission_draft_result(workspace_id, attempt_id, None, None),
+                lambda: store.fail_mission_draft_attempt(workspace_id, attempt_id, "failed", "failure", None),
+            )
+            for call in calls:
+                with self.subTest(call=call):
+                    with self.assertRaises(Path2NotImplementedError):
+                        call()
+
+            with self.assertRaises(WorkspaceNotFoundError):
+                store.get_run_snapshot(
+                    "00000000-0000-4000-8000-000000000099", mission_id, run_id
+                )
+            with self.assertRaises(WorkspaceNotFoundError):
+                store.get_run_snapshot("not-a-workspace", mission_id, run_id)
+
+            with sqlite3.connect(store.db_path) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                    ).fetchall(),
+                    [("workspaces",)],
+                )
+            self.assertEqual(len(store.list_workspaces()), 1)

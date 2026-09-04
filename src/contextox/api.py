@@ -3,29 +3,109 @@ import sqlite3
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from uuid import RFC_4122, UUID, uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, TypeAdapter
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from contextox import __version__
 from contextox.models import (
+    AgentRunResult,
+    CancelRunRequest,
+    ClarificationRequest,
+    ContextManifestInput,
+    ContextPacketManifest,
+    ContextSnapshot,
+    DefinitionDraft,
+    DomainRejection,
+    DomainToolCall,
+    DraftUpdatedPayload,
     EventEnvelope,
     EvidenceLane,
+    EvidenceLocator,
+    FinishRunArguments,
     HealthCheck,
     HealthResponse,
+    InspectDatasetArguments,
+    Mission,
+    MissionDraftAttempt,
+    MissionDraftAttemptCreateRequest,
+    MissionDraftConfirmRequest,
+    MissionDraftPayload,
+    MissionSnapshot,
+    ProviderConfigSnapshot,
+    ProviderReceipt,
     ReadinessResponse,
+    RelationshipProfile,
+    RunEventEnvelope,
+    RunEventInput,
+    RunSnapshot,
+    RunStartRequest,
+    RunStartedPayload,
+    RunToolResult,
+    SourceArtifact,
+    SourceBatchResult,
+    SourceExcerpt,
+    SourceExcerptRequest,
+    SourceImportItem,
+    SourceIdentity,
+    SourceIssue,
+    SourceRevision,
+    SourceUploadFile,
+    SourceUploadRequest,
+    TableKey,
+    TableProfile,
+    TerminalReceipt,
+    ToolReceipt,
+    UpdateDefinitionDraftArguments,
     Workspace,
     WorkspaceCreateRequest,
     WorkspaceError,
     WorkbenchArea,
     WorkbenchSnapshot,
+    ClarificationQuestion,
+    CsvRowsLocator,
+    DefinitionField,
+    FinishRunCall,
+    InspectDatasetCall,
+    InspectRelationshipArguments,
+    InspectTableArguments,
+    JsonPointerLocator,
+    ListSourcesArguments,
+    ListSourcesCall,
+    MessageCreatedPayload,
+    ModelCompletedPayload,
+    ModelDeltaPayload,
+    ModelStartedPayload,
+    ReadSourceArguments,
+    ReadSourceCall,
+    RelationshipCandidate,
+    RunTerminalPayload,
+    SampleCell,
+    SampleRow,
+    SubmitForReviewArguments,
+    SubmitForReviewCall,
+    TextLinesLocator,
+    ToolCompletedPayload,
+    ToolFailedPayload,
+    ToolRequestedPayload,
+    UnknownItem,
+    UpdateDefinitionDraftCall,
+    CreateClarificationArguments,
+    CreateClarificationCall,
 )
 from contextox.store import (
     InvalidWorkspaceNameError,
+    Path2NotImplementedError,
     WorkspaceCreateOutcomeUnknownError,
+    WorkspaceNotFoundError,
     WorkspaceSchemaUnsupportedError,
     WorkspaceStore,
     WorkspaceStoreBusyError,
@@ -35,6 +115,109 @@ from contextox.store import (
 
 
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
+PATH2_BODY_LIMIT_BYTES = 12 * 1024 * 1024
+
+
+class _RequestBodyTooLarge(Exception):
+    pass
+
+
+async def _send_request_body_error(send: Any) -> None:
+    envelope = WorkspaceError(
+        code="invalid_request",
+        message="Request body exceeds the 12 MiB limit.",
+        request_id=f"req_{uuid4().hex}",
+    )
+    body = envelope.model_dump_json().encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 422,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body, "more_body": False})
+
+
+class _Path2BodyLimitMiddleware:
+    """Bound new-path bodies while preserving the existing N2a routes."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or not _is_path2_http_path(scope.get("path", "")):
+            await self.app(scope, receive, send)
+            return
+
+        content_length = next(
+            (
+                int(value)
+                for key, value in scope.get("headers", [])
+                if key.lower() == b"content-length" and value.isdigit()
+            ),
+            None,
+        )
+        if content_length is not None and content_length > PATH2_BODY_LIMIT_BYTES:
+            await _send_request_body_error(send)
+            return
+
+        total = 0
+
+        async def limited_receive() -> dict[str, Any]:
+            nonlocal total
+            message = await receive()
+            if message.get("type") == "http.request":
+                total += len(message.get("body", b""))
+                if total > PATH2_BODY_LIMIT_BYTES:
+                    scope["_contextox_body_too_large"] = True
+                    raise _RequestBodyTooLarge()
+            return message
+
+        response_started = False
+
+        async def tracking_send(message: dict[str, Any]) -> None:
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _RequestBodyTooLarge:
+            if not response_started:
+                await _send_request_body_error(send)
+
+
+def _is_path2_http_path(path: object) -> bool:
+    if not isinstance(path, str):
+        return False
+    parts = path.split("/")
+    if len(parts) < 5 or parts[1:3] != ["api", "workspaces"]:
+        return False
+    suffix = parts[4:]
+    if suffix in (["sources"], ["mission-draft-attempts"]):
+        return True
+    if len(suffix) == 2 and suffix[0] in {"sources", "mission-draft-attempts"}:
+        return True
+    if len(suffix) == 3:
+        if suffix[0] == "sources":
+            return suffix[2] == "read"
+        if suffix[0] == "mission-draft-attempts":
+            return suffix[2] == "confirm"
+        if suffix[0] == "missions" and suffix[2] == "runs":
+            return True
+        return False
+    if suffix == ["missions"] or (len(suffix) == 2 and suffix[0] == "missions"):
+        return True
+    if len(suffix) == 4 and suffix[0] == "missions" and suffix[2] == "runs":
+        return True
+    if len(suffix) == 5 and suffix[0] == "missions" and suffix[2] == "runs":
+        return suffix[4] in {"cancel", "events"}
+    return False
 
 
 def _readiness_checks(app: FastAPI) -> list[HealthCheck]:
@@ -114,83 +297,7 @@ def _event() -> EventEnvelope:
     )
 
 
-def _workspace_store(app: FastAPI) -> WorkspaceStore:
-    store = getattr(app.state, "workspace_store", None)
-    if store is not None:
-        return store
-    error = getattr(app.state, "workspace_store_error", None)
-    if isinstance(error, WorkspaceStoreError):
-        raise error
-    raise WorkspaceStoreUnavailableError()
-
-
-def _workspace_error(
-    request: Request,
-    *,
-    status_code: int,
-    code: str,
-    message: str,
-) -> JSONResponse:
-    request_id = f"req_{uuid4().hex}"
-    envelope = WorkspaceError(code=code, message=message, request_id=request_id)
-    return JSONResponse(status_code=status_code, content=envelope.model_dump(mode="json"))
-
-
-def _workspace_store_error_response(
-    request: Request,
-    error: BaseException,
-) -> JSONResponse:
-    if isinstance(error, InvalidWorkspaceNameError):
-        return _workspace_error(
-            request,
-            status_code=422,
-            code="invalid_workspace_name",
-            message=(
-                "Workspace name must be 1–80 Unicode characters after trimming "
-                "and must not contain control characters."
-            ),
-        )
-    if isinstance(error, WorkspaceCreateOutcomeUnknownError):
-        return _workspace_error(
-            request,
-            status_code=503,
-            code="workspace_create_outcome_unknown",
-            message=(
-                "Workspace creation outcome is unknown; reconcile the workspace list "
-                "before retrying."
-            ),
-        )
-    if isinstance(error, WorkspaceStoreBusyError):
-        return _workspace_error(
-            request,
-            status_code=503,
-            code="workspace_store_busy",
-            message="Workspace store is busy; try again after the current local operation finishes.",
-        )
-    if isinstance(error, WorkspaceSchemaUnsupportedError):
-        return _workspace_error(
-            request,
-            status_code=503,
-            code="workspace_schema_unsupported",
-            message="Workspace store schema is unsupported.",
-        )
-    return _workspace_error(
-        request,
-        status_code=503,
-        code="workspace_store_unavailable",
-        message="Workspace store is unavailable.",
-    )
-
-
-def _is_canonical_uuid4(value: str) -> bool:
-    try:
-        parsed = UUID(value)
-    except (AttributeError, ValueError):
-        return False
-    return parsed.version == 4 and parsed.variant == RFC_4122 and str(parsed) == value
-
-
-def _format_sse(event: EventEnvelope) -> str:
+def _format_sse(event: EventEnvelope | RunEventEnvelope) -> str:
     return (
         f"id: {event.event_id}\n"
         f"event: {event.event_type}\n"
@@ -278,6 +385,244 @@ def _evidence() -> list[EvidenceLane]:
     ]
 
 
+def _workspace_store(app: FastAPI) -> WorkspaceStore:
+    store = getattr(app.state, "workspace_store", None)
+    if store is not None:
+        return store
+    error = getattr(app.state, "workspace_store_error", None)
+    if isinstance(error, WorkspaceStoreError):
+        raise error
+    raise WorkspaceStoreUnavailableError()
+
+
+def _workspace_error(
+    request: Request,
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+) -> JSONResponse:
+    del request
+    request_id = f"req_{uuid4().hex}"
+    envelope = WorkspaceError(code=code, message=message, request_id=request_id)
+    return JSONResponse(status_code=status_code, content=envelope.model_dump(mode="json"))
+
+
+def _workspace_store_error_response(
+    request: Request,
+    error: BaseException,
+) -> JSONResponse:
+    if isinstance(error, WorkspaceNotFoundError):
+        return _workspace_error(
+            request,
+            status_code=404,
+            code="workspace_not_found",
+            message="Workspace was not found.",
+        )
+    if isinstance(error, Path2NotImplementedError):
+        return _workspace_error(
+            request,
+            status_code=503,
+            code="path2_not_implemented",
+            message="This Path 2 capability is not implemented in W0.2.",
+        )
+    if isinstance(error, InvalidWorkspaceNameError):
+        return _workspace_error(
+            request,
+            status_code=422,
+            code="invalid_workspace_name",
+            message=(
+                "Workspace name must be 1–80 Unicode characters after trimming "
+                "and must not contain control characters."
+            ),
+        )
+    if isinstance(error, WorkspaceCreateOutcomeUnknownError):
+        return _workspace_error(
+            request,
+            status_code=503,
+            code="workspace_create_outcome_unknown",
+            message=(
+                "Workspace creation outcome is unknown; reconcile the workspace list "
+                "before retrying."
+            ),
+        )
+    if isinstance(error, WorkspaceStoreBusyError):
+        return _workspace_error(
+            request,
+            status_code=503,
+            code="workspace_store_busy",
+            message="Workspace store is busy; try again after the current local operation finishes.",
+        )
+    if isinstance(error, WorkspaceSchemaUnsupportedError):
+        return _workspace_error(
+            request,
+            status_code=503,
+            code="workspace_schema_unsupported",
+            message="Workspace store schema is unsupported.",
+        )
+    return _workspace_error(
+        request,
+        status_code=503,
+        code="workspace_store_unavailable",
+        message="Workspace store is unavailable.",
+    )
+
+
+def _is_canonical_uuid4(value: str) -> bool:
+    try:
+        parsed = UUID(value)
+    except (AttributeError, ValueError):
+        return False
+    return parsed.version == 4 and parsed.variant == RFC_4122 and str(parsed) == value
+
+
+def _invalid_workspace_path(request: Request, workspace_id: str) -> JSONResponse | None:
+    if _is_canonical_uuid4(workspace_id):
+        return None
+    return _workspace_error(
+        request,
+        status_code=404,
+        code="workspace_not_found",
+        message="Workspace was not found.",
+    )
+
+
+def _invalid_object_path(request: Request, object_id: str) -> JSONResponse | None:
+    if _is_canonical_uuid4(object_id):
+        return None
+    return _workspace_error(
+        request,
+        status_code=422,
+        code="invalid_request",
+        message="Invalid request.",
+    )
+
+
+def _raise_path2_after_workspace_check(store: WorkspaceStore, workspace_id: str) -> None:
+    if store.get_workspace(workspace_id) is None:
+        raise WorkspaceNotFoundError()
+    raise Path2NotImplementedError()
+
+
+_SHARED_OPENAPI_MODELS: tuple[type[BaseModel], ...] = (
+    SourceIdentity,
+    SourceRevision,
+    CsvRowsLocator,
+    JsonPointerLocator,
+    TextLinesLocator,
+    SourceIssue,
+    SourceExcerpt,
+    SourceArtifact,
+    TableKey,
+    TableProfile,
+    RelationshipProfile,
+    MissionDraftPayload,
+    MissionDraftAttempt,
+    Mission,
+    RunSnapshot,
+    MissionSnapshot,
+    DefinitionField,
+    RelationshipCandidate,
+    DefinitionDraft,
+    ClarificationQuestion,
+    ClarificationRequest,
+    ProviderConfigSnapshot,
+    ProviderReceipt,
+    ToolReceipt,
+    TerminalReceipt,
+    ContextManifestInput,
+    ContextPacketManifest,
+    ContextSnapshot,
+    DomainRejection,
+    ListSourcesArguments,
+    ReadSourceArguments,
+    InspectTableArguments,
+    InspectRelationshipArguments,
+    UpdateDefinitionDraftArguments,
+    CreateClarificationArguments,
+    SubmitForReviewArguments,
+    FinishRunArguments,
+    ListSourcesCall,
+    ReadSourceCall,
+    InspectDatasetCall,
+    UpdateDefinitionDraftCall,
+    CreateClarificationCall,
+    SubmitForReviewCall,
+    FinishRunCall,
+    RunToolResult,
+    RunStartedPayload,
+    MessageCreatedPayload,
+    ModelStartedPayload,
+    ModelDeltaPayload,
+    ModelCompletedPayload,
+    ToolRequestedPayload,
+    ToolCompletedPayload,
+    ToolFailedPayload,
+    DraftUpdatedPayload,
+    RunTerminalPayload,
+    RunEventInput,
+    RunEventEnvelope,
+    SourceUploadFile,
+    SourceUploadRequest,
+    SourceImportItem,
+    SourceBatchResult,
+    SourceExcerptRequest,
+    MissionDraftAttemptCreateRequest,
+    MissionDraftConfirmRequest,
+    RunStartRequest,
+    CancelRunRequest,
+    AgentRunResult,
+)
+
+_SHARED_OPENAPI_ALIASES: tuple[tuple[str, Any], ...] = (
+    ("EvidenceLocator", EvidenceLocator),
+    ("InspectDatasetArguments", InspectDatasetArguments),
+    ("DomainToolCall", DomainToolCall),
+)
+
+
+def _rewrite_schema_refs(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _rewrite_schema_refs(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_rewrite_schema_refs(item) for item in value]
+    if isinstance(value, str) and value.startswith("#/$defs/"):
+        return "#/components/schemas/" + value.removeprefix("#/$defs/")
+    return value
+
+
+def _register_schema(schema: dict[str, Any], name: str, annotation: Any) -> None:
+    raw = (
+        annotation.model_json_schema(ref_template="#/$defs/{model}")
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel)
+        else TypeAdapter(annotation).json_schema(ref_template="#/$defs/{model}")
+    )
+    definitions = raw.pop("$defs", {})
+    components = schema.setdefault("components", {}).setdefault("schemas", {})
+    for definition_name, definition in definitions.items():
+        components.setdefault(definition_name, _rewrite_schema_refs(definition))
+    components[name] = _rewrite_schema_refs(raw)
+
+
+def _install_shared_openapi(app: FastAPI) -> None:
+    def custom_openapi() -> dict[str, Any]:
+        if app.openapi_schema is None:
+            app.openapi_schema = get_openapi(
+                title=app.title,
+                version=app.version,
+                summary=app.summary,
+                description=app.description,
+                routes=app.routes,
+            )
+            for model in _SHARED_OPENAPI_MODELS:
+                _register_schema(app.openapi_schema, model.__name__, model)
+            for name, annotation in _SHARED_OPENAPI_ALIASES:
+                _register_schema(app.openapi_schema, name, annotation)
+        return app.openapi_schema
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
+
+
 def create_app(
     *,
     static_dir: Path | None = None,
@@ -293,6 +638,7 @@ def create_app(
             "call a model provider, or persist customer material."
         ),
     )
+    app.add_middleware(_Path2BodyLimitMiddleware)
     app.state.static_dir = resolved_static_dir
     app.state.data_dir = data_dir.resolve() if data_dir else None
     app.state.workspace_store = None
@@ -302,7 +648,7 @@ def create_app(
             app.state.workspace_store = WorkspaceStore.open(app.state.data_dir)
         except WorkspaceStoreError as error:
             app.state.workspace_store_error = error
-        except (OSError, sqlite3.Error) as error:
+        except (OSError, sqlite3.Error):
             app.state.workspace_store_error = WorkspaceStoreUnavailableError()
 
     @app.exception_handler(RequestValidationError)
@@ -310,6 +656,16 @@ def create_app(
         request: Request,
         _error: RequestValidationError,
     ) -> JSONResponse:
+        path_parts = request.url.path.split("/")
+        if len(path_parts) > 3 and path_parts[1:3] == ["api", "workspaces"]:
+            path_workspace_id = path_parts[3]
+            if not _is_canonical_uuid4(path_workspace_id):
+                return _workspace_error(
+                    request,
+                    status_code=404,
+                    code="workspace_not_found",
+                    message="Workspace was not found.",
+                )
         if request.url.path == "/api/workspaces" and request.method == "POST":
             return _workspace_error(
                 request,
@@ -323,9 +679,30 @@ def create_app(
         return _workspace_error(
             request,
             status_code=422,
-            code="invalid_workspace_name",
-            message="Invalid Workspace request.",
+            code="invalid_request",
+            message="Invalid request.",
         )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def path2_http_exception(
+        request: Request,
+        error: StarletteHTTPException,
+    ) -> JSONResponse:
+        if request.scope.get("_contextox_body_too_large"):
+            return _workspace_error(
+                request,
+                status_code=422,
+                code="invalid_request",
+                message="Request body exceeds the 12 MiB limit.",
+            )
+        if error.status_code == 400 and _is_path2_http_path(request.url.path):
+            return _workspace_error(
+                request,
+                status_code=422,
+                code="invalid_request",
+                message="Invalid request.",
+            )
+        return await http_exception_handler(request, error)
 
     @app.get("/api/health", response_model=HealthResponse, tags=["system"])
     def health() -> HealthResponse:
@@ -422,13 +799,9 @@ def create_app(
         workspace_id: str,
         request: Request,
     ) -> Workspace | JSONResponse:
-        if not _is_canonical_uuid4(workspace_id):
-            return _workspace_error(
-                request,
-                status_code=404,
-                code="workspace_not_found",
-                message="Workspace was not found.",
-            )
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
         try:
             workspace = _workspace_store(app).get_workspace(workspace_id)
         except WorkspaceStoreError as error:
@@ -441,6 +814,360 @@ def create_app(
                 message="Workspace was not found.",
             )
         return workspace
+
+    @app.post(
+        "/api/workspaces/{workspace_id}/sources",
+        response_model=SourceBatchResult,
+        status_code=200,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["sources"],
+    )
+    def upload_sources(
+        workspace_id: str,
+        _payload: SourceUploadRequest,
+        request: Request,
+    ) -> SourceBatchResult | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/sources",
+        response_model=list[SourceRevision],
+        responses={
+            404: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["sources"],
+    )
+    def fetch_sources(
+        workspace_id: str,
+        request: Request,
+    ) -> list[SourceRevision] | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/sources/{revision_id}",
+        response_model=SourceArtifact,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["sources"],
+    )
+    def fetch_source_artifact(
+        workspace_id: str,
+        revision_id: str,
+        request: Request,
+    ) -> SourceArtifact | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        invalid = _invalid_object_path(request, revision_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.post(
+        "/api/workspaces/{workspace_id}/sources/{revision_id}/read",
+        response_model=SourceExcerpt,
+        status_code=200,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["sources"],
+    )
+    def read_source_excerpt(
+        workspace_id: str,
+        revision_id: str,
+        _payload: SourceExcerptRequest,
+        request: Request,
+    ) -> SourceExcerpt | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        invalid = _invalid_object_path(request, revision_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.post(
+        "/api/workspaces/{workspace_id}/mission-draft-attempts",
+        response_model=MissionDraftAttempt,
+        status_code=202,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["missions"],
+    )
+    def create_mission_draft_attempt(
+        workspace_id: str,
+        _payload: MissionDraftAttemptCreateRequest,
+        request: Request,
+    ) -> MissionDraftAttempt | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}",
+        response_model=MissionDraftAttempt,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["missions"],
+    )
+    def fetch_mission_draft_attempt(
+        workspace_id: str,
+        attempt_id: str,
+        request: Request,
+    ) -> MissionDraftAttempt | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        invalid = _invalid_object_path(request, attempt_id)
+        if invalid is not None:
+            return invalid
+        try:
+            return _workspace_store(app).get_mission_draft_attempt(workspace_id, attempt_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.post(
+        "/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}/confirm",
+        response_model=Mission,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["missions"],
+    )
+    def confirm_mission_draft_attempt(
+        workspace_id: str,
+        attempt_id: str,
+        _payload: MissionDraftConfirmRequest,
+        request: Request,
+    ) -> Mission | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        invalid = _invalid_object_path(request, attempt_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/missions",
+        response_model=list[Mission],
+        responses={
+            404: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["missions"],
+    )
+    def fetch_missions(
+        workspace_id: str,
+        request: Request,
+    ) -> list[Mission] | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/missions/{mission_id}",
+        response_model=MissionSnapshot,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["missions"],
+    )
+    def fetch_mission_snapshot(
+        workspace_id: str,
+        mission_id: str,
+        request: Request,
+    ) -> MissionSnapshot | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        invalid = _invalid_object_path(request, mission_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.post(
+        "/api/workspaces/{workspace_id}/missions/{mission_id}/runs",
+        response_model=RunSnapshot,
+        status_code=202,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["runs"],
+    )
+    def start_run(
+        workspace_id: str,
+        mission_id: str,
+        _payload: RunStartRequest,
+        request: Request,
+    ) -> RunSnapshot | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        invalid = _invalid_object_path(request, mission_id)
+        if invalid is not None:
+            return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}",
+        response_model=RunSnapshot,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["runs"],
+    )
+    def fetch_run_snapshot(
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        request: Request,
+    ) -> RunSnapshot | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        for object_id in (mission_id, run_id):
+            invalid = _invalid_object_path(request, object_id)
+            if invalid is not None:
+                return invalid
+        try:
+            return _workspace_store(app).get_run_snapshot(workspace_id, mission_id, run_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.post(
+        "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/cancel",
+        response_model=RunSnapshot,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["runs"],
+    )
+    def cancel_run(
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        _payload: CancelRunRequest,
+        request: Request,
+    ) -> RunSnapshot | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        for object_id in (mission_id, run_id):
+            invalid = _invalid_object_path(request, object_id)
+            if invalid is not None:
+                return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/events",
+        response_model=RunEventEnvelope,
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "A public Run SSE stream.",
+                "content": {"text/event-stream": {"schema": {"type": "string"}}},
+            },
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["runs"],
+    )
+    def run_events(
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        request: Request,
+        _last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ) -> StreamingResponse | JSONResponse:
+        del _last_event_id
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        for object_id in (mission_id, run_id):
+            invalid = _invalid_object_path(request, object_id)
+            if invalid is not None:
+                return invalid
+        try:
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
 
     @app.get(
         "/api/events",
@@ -485,4 +1212,5 @@ def create_app(
                 },
             )
 
+    _install_shared_openapi(app)
     return app
