@@ -18,6 +18,7 @@ from contextox.models import (
 from contextox.sources import (
     MAX_EXCERPT_CHARS,
     MAX_FILE_BYTES,
+    MAX_JSON_POINTER_CHARS,
     MAX_SAMPLE_CELL_CHARS,
     MAX_SAMPLE_ROWS,
     MAX_TABLE_COLUMNS,
@@ -361,6 +362,25 @@ class SourceParsingTests(unittest.TestCase):
         )
         self.assertEqual(artifact.issues[0].code, "json_record_not_object")
         self.assertEqual(artifact.issues[0].locator.pointer, "/orders/1")
+
+    def test_json_long_table_pointer_rejects_unrepresentable_row_locators(self) -> None:
+        table_name = "t" * (MAX_JSON_POINTER_CHARS - 3)
+        content = (
+            (
+                '{"'
+                + table_name
+                + '":['
+                + ",".join(["0"] * 10 + ['{"id":1}'])
+                + "]}"
+            ).encode()
+        )
+        revision = _revision(content, "application/json")
+
+        artifact = parse_source(revision, content)
+
+        self.assertEqual(artifact.parse_status, "blocked")
+        self.assertEqual(artifact.tables, [])
+        self.assertEqual(artifact.issues[0].code, "json_pointer_limit")
 
     def test_text_sources_report_lines_and_bound_fragment_display(self) -> None:
         content = "alpha\nbeta\ngamma".encode()

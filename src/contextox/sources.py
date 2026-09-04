@@ -588,7 +588,10 @@ def _json_record_table(
         return None, [
             _issue("json_pointer_limit", "JSON table locator exceeds the limit.")
         ]
-    if records and len(table_id) + 2 > MAX_JSON_POINTER_CHARS:
+    if records and (
+        len(table_id) + 1 + len(str(len(records) - 1))
+        > MAX_JSON_POINTER_CHARS
+    ):
         return None, [
             _issue("json_pointer_limit", "JSON row locator exceeds the limit.")
         ]
