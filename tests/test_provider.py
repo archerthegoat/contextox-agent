@@ -1,5 +1,6 @@
 import http.client
 import json
+import multiprocessing
 import os
 import socket
 import ssl
@@ -12,9 +13,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Event, Thread
 from unittest.mock import patch
 
+import contextox.provider as provider_module
 from contextox.provider import (
     DEEPSEEK_ENDPOINT,
     DeepSeekProvider,
+    ProviderBusyError,
     ProviderAuthError,
     ProviderCancelledError,
     ProviderContextBudgetError,
@@ -23,6 +26,7 @@ from contextox.provider import (
     ProviderTimeoutUnknownError,
     ProviderTimeouts,
     ProviderUnavailableError,
+    ProviderUnreachableError,
     ProviderUsage,
 )
 
@@ -243,6 +247,184 @@ def _event(payload: object) -> bytes:
     return b"data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n\n"
 
 
+def _synthetic_call_id(packet_bytes: bytes) -> str:
+    return json.loads(packet_bytes.decode("utf-8"))["call_id"]
+
+
+def _synthetic_send(send_conn, call_id: str, sequence: int, event_type: str, **fields: object) -> None:
+    message = {
+        "call_id": call_id,
+        "sequence": sequence,
+        "event_type": event_type,
+        **fields,
+    }
+    send_conn.send_bytes(
+        json.dumps(message, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+
+
+def _synthetic_completion() -> dict[str, object]:
+    return {
+        "completion_id": "synthetic-completion",
+        "content": "visible",
+        "reasoning_content": "must-stay-transient",
+        "tool_calls": [],
+        "finish_reason": "stop",
+        "usage": {
+            "input_tokens": 7,
+            "output_tokens": 4,
+            "cache_hit_tokens": 2,
+            "cache_miss_tokens": 5,
+        },
+    }
+
+
+def _child_emit_success(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    _synthetic_send(send_conn, call_id, 2, "request_started")
+    _synthetic_send(send_conn, call_id, 3, "activity")
+    _synthetic_send(send_conn, call_id, 4, "content_delta", content="visible")
+    _synthetic_send(send_conn, call_id, 5, "result", completion=_synthetic_completion())
+    send_conn.close()
+
+
+def _child_wait_before_connected(send_conn, packet_bytes: bytes) -> None:
+    time.sleep(10.0)
+
+
+def _child_wait_after_connected(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    time.sleep(10.0)
+
+
+def _child_wait_after_request_started(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    _synthetic_send(send_conn, call_id, 2, "request_started")
+    time.sleep(10.0)
+
+
+def _child_send_activity_then_wait(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    _synthetic_send(send_conn, call_id, 2, "request_started")
+    _synthetic_send(send_conn, call_id, 3, "activity")
+    time.sleep(10.0)
+
+
+def _child_send_late_result_after_request(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    _synthetic_send(send_conn, call_id, 2, "request_started")
+    time.sleep(0.8)
+    try:
+        _synthetic_send(send_conn, call_id, 3, "content_delta", content="late-visible")
+        _synthetic_send(send_conn, call_id, 4, "result", completion=_synthetic_completion())
+    except OSError:
+        return
+
+
+def _child_crash_before_request(send_conn, packet_bytes: bytes) -> None:
+    os._exit(3)
+
+
+def _child_crash_after_request(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    _synthetic_send(send_conn, call_id, 2, "request_started")
+    os._exit(3)
+
+
+def _child_send_illegal_event(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "illegal")
+    time.sleep(10.0)
+
+
+def _child_send_out_of_order(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "request_started")
+    time.sleep(10.0)
+
+
+def _child_send_duplicate_sequence(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    try:
+        _synthetic_send(send_conn, call_id, 1, "connected")
+    except OSError:
+        return
+    time.sleep(10.0)
+
+
+def _child_send_oversized(send_conn, packet_bytes: bytes) -> None:
+    try:
+        send_conn.send_bytes(b"x" * (provider_module.IPC_MAX_MESSAGE_BYTES + 1))
+    except OSError:
+        return
+    time.sleep(10.0)
+
+
+def _child_run_stalled_transport(send_conn, packet_bytes: bytes, stall: str) -> None:
+    ipc = None
+    try:
+        call_id, model, url, headers, body, stream, timeouts, max_context_bytes = (
+            provider_module._provider_child_packet(packet_bytes)
+        )
+        ipc = provider_module._ChildIpc(send_conn, call_id)
+        if stall == "dns":
+            def blocked_getaddrinfo(*args, **kwargs):
+                time.sleep(10.0)
+
+            provider_module.socket.getaddrinfo = blocked_getaddrinfo
+        elif stall == "tcp":
+            def blocked_create_connection(*args, **kwargs):
+                time.sleep(10.0)
+
+            provider_module.socket.create_connection = blocked_create_connection
+        else:
+            raise AssertionError("unknown synthetic transport stall")
+        request = provider_module.Request(url, data=body, headers=headers, method="POST")
+        provider = DeepSeekProvider(model=model, transport=provider_module._UrllibTransport())
+        provider._complete_request(
+            request,
+            stream=stream,
+            timeouts=timeouts,
+            cancel_event=None,
+            max_context_bytes=max_context_bytes,
+            on_content=lambda content: provider_module._send_child_content(ipc, content),
+            on_phase=lambda event_type: ipc.send(event_type),
+            on_activity=lambda: ipc.send("activity"),
+        )
+    except provider_module.ProviderError as exc:
+        if ipc is not None:
+            try:
+                ipc.send("error", code=exc.code, usage=provider_module._usage_to_ipc(exc.usage))
+            except provider_module._ChildIpcSendError:
+                pass
+    except Exception:
+        if ipc is not None:
+            try:
+                ipc.send("error", code="provider_protocol_error", usage=None)
+            except provider_module._ChildIpcSendError:
+                pass
+    finally:
+        try:
+            send_conn.close()
+        except (OSError, ValueError):
+            pass
+
+
+def _child_blocking_dns(send_conn, packet_bytes: bytes) -> None:
+    _child_run_stalled_transport(send_conn, packet_bytes, "dns")
+
+
+def _child_blocking_tcp_connect(send_conn, packet_bytes: bytes) -> None:
+    _child_run_stalled_transport(send_conn, packet_bytes, "tcp")
+
+
 class _PartialTLSResponse:
     def __init__(self, cert_path: str, key_path: str, *, prefix_body: bytes, partial_body: bytes) -> None:
         self.server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -342,6 +524,53 @@ class _PartialTLSResponse:
         self.thread.join(2.0)
 
 
+class _BlockingSocketServer:
+    def __init__(self) -> None:
+        self.listen = socket.socket()
+        self.listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.listen.bind(("127.0.0.1", 0))
+        self.listen.listen(1)
+        self.listen.settimeout(0.1)
+        self.accepted = Event()
+        self.release = Event()
+        self.errors: list[str] = []
+        self.thread = Thread(target=self._serve)
+
+    @property
+    def port(self) -> int:
+        return int(self.listen.getsockname()[1])
+
+    def _serve(self) -> None:
+        conn: socket.socket | None = None
+        try:
+            while not self.release.is_set():
+                try:
+                    conn, _ = self.listen.accept()
+                    self.accepted.set()
+                    self.release.wait(2.0)
+                    return
+                except TimeoutError:
+                    continue
+        except OSError as exc:
+            if not self.release.is_set():
+                self.errors.append(repr(exc))
+        finally:
+            if conn is not None:
+                conn.close()
+            self.listen.close()
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self.release.set()
+        try:
+            self.listen.close()
+        except OSError:
+            pass
+        self.thread.join(2.0)
+
+
 class ProviderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -362,6 +591,627 @@ class ProviderTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls._tls_material.close()
         super().tearDownClass()
+
+    @staticmethod
+    def _active_child_pids() -> set[int | None]:
+        return {process.pid for process in multiprocessing.active_children()}
+
+    def _wait_for_provider_slot(self, timeout: float = 2.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if provider_module._PROVIDER_CHILD_SLOT.acquire(blocking=False):
+                provider_module._PROVIDER_CHILD_SLOT.release()
+            else:
+                return
+            time.sleep(0.01)
+        self.fail("Provider child slot was not acquired")
+
+    def test_default_transport_uses_spawn_child_and_only_emits_public_content(self) -> None:
+        stream = (
+            _event(
+                {
+                    "id": "spawn-completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "content": "visible",
+                                "reasoning_content": "hidden",
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            )
+            + _event(
+                {
+                    "id": "spawn-completion",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "usage": _usage(),
+                }
+            )
+            + b"data: [DONE]\n\n"
+        )
+        state = {"requests": 0, "body": b""}
+
+        def callback(handler):
+            state["requests"] += 1
+            length = int(handler.headers.get("Content-Length", "0"))
+            state["body"] = handler.rfile.read(length)
+            handler.send_response(200)
+            handler.send_header("Content-Type", "text/event-stream")
+            handler.send_header("Content-Length", str(len(stream)))
+            handler.send_header("Connection", "close")
+            handler.end_headers()
+            handler.wfile.write(stream)
+            handler.wfile.flush()
+
+        server, server_thread = _start_loopback_server(callback)
+        before_children = self._active_child_pids()
+        content_deltas: list[str] = []
+        original_get_context = provider_module.multiprocessing.get_context
+        try:
+            with patch.object(
+                provider_module.multiprocessing,
+                "get_context",
+                wraps=original_get_context,
+            ) as get_context, patch.object(
+                provider_module,
+                "DEEPSEEK_ENDPOINT",
+                "http://127.0.0.1:%d/chat/completions" % server.server_port,
+            ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                completion = DeepSeekProvider().complete(
+                    [{"role": "user", "content": "synthetic"}],
+                    stream=True,
+                    tools=[],
+                    user_id="ws-opaque",
+                    timeouts=ProviderTimeouts(
+                        connect_ms=2000,
+                        first_event_ms=2000,
+                        idle_ms=2000,
+                        total_ms=5000,
+                    ),
+                    on_content=content_deltas.append,
+                )
+            get_context.assert_called_once_with("spawn")
+            self.assertEqual(completion.content, "visible")
+            self.assertEqual(completion.reasoning_content, "hidden")
+            self.assertEqual(content_deltas, ["visible"])
+            self.assertEqual(completion.usage, ProviderUsage(7, 4, 2, 5))
+            self.assertEqual(state["requests"], 1)
+            self.assertNotIn(b"test-secret", state["body"])
+        finally:
+            server_thread.join(2.0)
+            server.server_close()
+        self.assertFalse(server_thread.is_alive())
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_default_spawn_dns_and_tcp_connect_are_bounded(self) -> None:
+        cases = (
+            (_child_blocking_dns, "http://provider.invalid/chat/completions"),
+            (_child_blocking_tcp_connect, "http://127.0.0.1:1/chat/completions"),
+        )
+        for target, endpoint in cases:
+            with self.subTest(target=target.__name__):
+                before_children = self._active_child_pids()
+                started_at = time.monotonic()
+                with patch.object(provider_module, "_provider_child_main", target), patch.object(
+                    provider_module, "DEEPSEEK_ENDPOINT", endpoint
+                ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                    with self.assertRaises(ProviderUnreachableError):
+                        DeepSeekProvider().complete(
+                            [{"role": "user", "content": "synthetic"}],
+                            stream=True,
+                            tools=[],
+                            user_id="ws-opaque",
+                            timeouts=ProviderTimeouts(
+                                connect_ms=150,
+                                first_event_ms=1000,
+                                idle_ms=1000,
+                                total_ms=1000,
+                            ),
+                        )
+                self.assertLess(time.monotonic() - started_at, 1.5)
+                self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_default_spawn_tls_handshake_is_bounded_by_connect_deadline(self) -> None:
+        server = _BlockingSocketServer()
+        before_children = self._active_child_pids()
+        server.start()
+        started_at = time.monotonic()
+        try:
+            with patch.object(
+                provider_module,
+                "DEEPSEEK_ENDPOINT",
+                "https://127.0.0.1:%d/chat/completions" % server.port,
+            ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                with self.assertRaises(ProviderUnreachableError):
+                    DeepSeekProvider().complete(
+                        [{"role": "user", "content": "synthetic"}],
+                        stream=True,
+                        tools=[],
+                        user_id="ws-opaque",
+                        timeouts=ProviderTimeouts(
+                            connect_ms=500,
+                            first_event_ms=2000,
+                            idle_ms=2000,
+                            total_ms=3000,
+                        ),
+                    )
+            self.assertTrue(server.accepted.wait(0.2))
+            self.assertLess(time.monotonic() - started_at, 1.5)
+        finally:
+            server.close()
+        self.assertFalse(server.thread.is_alive())
+        self.assertEqual(server.errors, [])
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_default_spawn_request_send_and_first_response_are_bounded(self) -> None:
+        server = _BlockingSocketServer()
+        before_children = self._active_child_pids()
+        server.start()
+        try:
+            with patch.object(
+                provider_module,
+                "DEEPSEEK_ENDPOINT",
+                "http://127.0.0.1:%d/chat/completions" % server.port,
+            ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                with self.assertRaises(ProviderTimeoutUnknownError):
+                    DeepSeekProvider().complete(
+                        [{"role": "user", "content": "x" * 240000}],
+                        stream=True,
+                        tools=[],
+                        user_id="ws-opaque",
+                        timeouts=ProviderTimeouts(
+                            connect_ms=2000,
+                            first_event_ms=250,
+                            idle_ms=2000,
+                            total_ms=2000,
+                        ),
+                    )
+            self.assertTrue(server.accepted.wait(0.2))
+        finally:
+            server.close()
+        self.assertFalse(server.thread.is_alive())
+        self.assertEqual(server.errors, [])
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_default_spawn_http_error_is_bounded_and_not_retried(self) -> None:
+        state = {"requests": 0}
+
+        def callback(handler):
+            state["requests"] += 1
+            length = int(handler.headers.get("Content-Length", "0"))
+            handler.rfile.read(length)
+            body = b"private-upstream-error-body"
+            handler.send_response(500)
+            handler.send_header("Content-Length", str(len(body)))
+            handler.send_header("Connection", "close")
+            handler.end_headers()
+            handler.wfile.write(body)
+            handler.wfile.flush()
+
+        server, server_thread = _start_loopback_server(callback)
+        before_children = self._active_child_pids()
+        try:
+            with patch.object(
+                provider_module,
+                "DEEPSEEK_ENDPOINT",
+                "http://127.0.0.1:%d/chat/completions" % server.server_port,
+            ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                with self.assertRaises(ProviderUnavailableError) as context:
+                    DeepSeekProvider().complete(
+                        [{"role": "user", "content": "synthetic"}],
+                        stream=False,
+                        tools=None,
+                        user_id="ws-opaque",
+                        timeouts=ProviderTimeouts(
+                            connect_ms=2000,
+                            first_event_ms=2000,
+                            idle_ms=2000,
+                            total_ms=3000,
+                        ),
+                    )
+            self.assertEqual(str(context.exception), "provider_unavailable")
+            self.assertEqual(state["requests"], 1)
+        finally:
+            server_thread.join(2.0)
+            server.server_close()
+        self.assertFalse(server_thread.is_alive())
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_injected_transport_stays_in_process(self) -> None:
+        response = FakeResponse(
+            body=json.dumps(
+                {
+                    "id": "in-process",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "{}"},
+                        }
+                    ],
+                    "usage": _usage(),
+                }
+            ).encode()
+        )
+        with patch.object(provider_module.multiprocessing, "get_context", side_effect=AssertionError):
+            with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                completion = DeepSeekProvider(transport=FakeTransport(response)).complete(
+                    [{"role": "user", "content": "synthetic"}],
+                    stream=False,
+                    tools=None,
+                    user_id="ws-opaque",
+                )
+        self.assertEqual(completion.content, "{}")
+
+    def test_spawn_ipc_reconstructs_result_and_keeps_reasoning_out_of_content(self) -> None:
+        content_deltas: list[str] = []
+        before_children = self._active_child_pids()
+        with patch.object(provider_module, "_provider_child_main", _child_emit_success), patch.dict(
+            os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
+        ):
+            completion = DeepSeekProvider().complete(
+                [{"role": "user", "content": "synthetic"}],
+                stream=True,
+                tools=[],
+                user_id="ws-opaque",
+                timeouts=ProviderTimeouts(
+                    connect_ms=3000,
+                    first_event_ms=3000,
+                    idle_ms=3000,
+                    total_ms=5000,
+                ),
+                on_content=content_deltas.append,
+            )
+        self.assertEqual(content_deltas, ["visible"])
+        self.assertEqual(completion.content, "visible")
+        self.assertEqual(completion.reasoning_content, "must-stay-transient")
+        self.assertEqual(completion.usage, ProviderUsage(7, 4, 2, 5))
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_child_startup_failure_is_unreachable_and_releases_slot(self) -> None:
+        before_children = self._active_child_pids()
+        with patch.object(
+            provider_module.multiprocessing,
+            "get_context",
+            side_effect=RuntimeError("synthetic startup failure"),
+        ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+            with self.assertRaises(ProviderUnreachableError):
+                DeepSeekProvider().complete(
+                    [{"role": "user", "content": "synthetic"}],
+                    stream=False,
+                    tools=None,
+                    user_id="ws-opaque",
+                    timeouts=ProviderTimeouts(total_ms=500),
+                )
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_spawn_supervisor_bounds_connect_first_idle_and_total_phases(self) -> None:
+        cases = (
+            (
+                _child_wait_before_connected,
+                ProviderTimeouts(connect_ms=120, first_event_ms=1000, idle_ms=1000, total_ms=1000),
+                ProviderUnreachableError,
+            ),
+            (
+                _child_wait_after_connected,
+                ProviderTimeouts(connect_ms=3000, first_event_ms=120, idle_ms=1000, total_ms=250),
+                ProviderUnreachableError,
+            ),
+            (
+                _child_send_activity_then_wait,
+                ProviderTimeouts(connect_ms=3000, first_event_ms=1000, idle_ms=120, total_ms=3000),
+                ProviderTimeoutUnknownError,
+            ),
+            (
+                _child_wait_after_request_started,
+                ProviderTimeouts(connect_ms=3000, first_event_ms=3000, idle_ms=3000, total_ms=1200),
+                ProviderTimeoutUnknownError,
+            ),
+        )
+        for target, timeouts, expected in cases:
+            with self.subTest(target=target.__name__):
+                before_children = self._active_child_pids()
+                started_at = time.monotonic()
+                with patch.object(provider_module, "_provider_child_main", target), patch.dict(
+                    os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
+                ):
+                    with self.assertRaises(expected):
+                        DeepSeekProvider().complete(
+                            [{"role": "user", "content": "synthetic"}],
+                            stream=True,
+                            tools=[],
+                            user_id="ws-opaque",
+                            timeouts=timeouts,
+                        )
+                self.assertLess(time.monotonic() - started_at, 2.0)
+                self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_cancel_and_deadline_win_over_late_queued_success(self) -> None:
+        timeout_before_children = self._active_child_pids()
+        timeout_content: list[str] = []
+        with patch.object(
+            provider_module, "_provider_child_main", _child_send_late_result_after_request
+        ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+            with self.assertRaises(ProviderTimeoutUnknownError):
+                DeepSeekProvider().complete(
+                    [{"role": "user", "content": "synthetic"}],
+                    stream=True,
+                    tools=[],
+                    user_id="ws-opaque",
+                    timeouts=ProviderTimeouts(
+                        connect_ms=3000,
+                        first_event_ms=120,
+                        idle_ms=3000,
+                        total_ms=3000,
+                    ),
+                    on_content=timeout_content.append,
+                )
+        self.assertEqual(self._active_child_pids(), timeout_before_children)
+        self.assertEqual(timeout_content, [])
+
+        cancel_event = Event()
+        errors: list[BaseException] = []
+        cancel_content: list[str] = []
+
+        def run_provider() -> None:
+            try:
+                with patch.object(
+                    provider_module, "_provider_child_main", _child_send_late_result_after_request
+                ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
+                    DeepSeekProvider().complete(
+                        [{"role": "user", "content": "synthetic"}],
+                        stream=True,
+                        tools=[],
+                        user_id="ws-opaque",
+                        timeouts=ProviderTimeouts(
+                            connect_ms=3000,
+                            first_event_ms=3000,
+                            idle_ms=3000,
+                            total_ms=3000,
+                        ),
+                        cancel_event=cancel_event,
+                        on_content=cancel_content.append,
+                    )
+            except BaseException as exc:
+                errors.append(exc)
+
+        before_children = self._active_child_pids()
+        provider_thread = Thread(target=run_provider)
+        provider_thread.start()
+        try:
+            self._wait_for_provider_slot()
+            time.sleep(0.4)
+            cancel_event.set()
+            provider_thread.join(1.0)
+            self.assertFalse(provider_thread.is_alive())
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], ProviderCancelledError)
+            self.assertEqual(errors[0].code, "provider_cancelled_outcome_unknown")
+            self.assertEqual(cancel_content, [])
+        finally:
+            cancel_event.set()
+            provider_thread.join(2.0)
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_cancel_before_send_and_after_request_started_are_distinct(self) -> None:
+        for target, expected_code in (
+            (_child_wait_before_connected, "cancelled"),
+            (_child_wait_after_connected, "cancelled"),
+            (_child_wait_after_request_started, "provider_cancelled_outcome_unknown"),
+        ):
+            cancel_event = Event()
+            errors: list[BaseException] = []
+
+            def run_provider() -> None:
+                try:
+                    with patch.object(provider_module, "_provider_child_main", target), patch.dict(
+                        os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
+                    ):
+                        DeepSeekProvider().complete(
+                            [{"role": "user", "content": "synthetic"}],
+                            stream=True,
+                            tools=[],
+                            user_id="ws-opaque",
+                            timeouts=ProviderTimeouts(
+                                connect_ms=2000,
+                                first_event_ms=2000,
+                                idle_ms=2000,
+                                total_ms=5000,
+                            ),
+                            cancel_event=cancel_event,
+                        )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            before_children = self._active_child_pids()
+            provider_thread = Thread(target=run_provider)
+            provider_thread.start()
+            try:
+                self._wait_for_provider_slot()
+                time.sleep(0.4)
+                cancel_event.set()
+                provider_thread.join(1.0)
+                self.assertFalse(provider_thread.is_alive())
+                self.assertEqual(len(errors), 1)
+                self.assertIsInstance(errors[0], ProviderCancelledError)
+                self.assertEqual(errors[0].code, expected_code)
+            finally:
+                cancel_event.set()
+                provider_thread.join(2.0)
+            self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_global_provider_child_slot_is_one_and_wait_is_cancelable(self) -> None:
+        first_cancel = Event()
+        first_errors: list[BaseException] = []
+
+        def run_first() -> None:
+            try:
+                with patch.object(provider_module, "_provider_child_main", _child_wait_after_request_started), patch.dict(
+                    os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
+                ):
+                    DeepSeekProvider().complete(
+                        [{"role": "user", "content": "first"}],
+                        stream=True,
+                        tools=[],
+                        user_id="ws-opaque",
+                        timeouts=ProviderTimeouts(
+                            connect_ms=2000,
+                            first_event_ms=2000,
+                            idle_ms=2000,
+                            total_ms=5000,
+                        ),
+                        cancel_event=first_cancel,
+                    )
+            except BaseException as exc:
+                first_errors.append(exc)
+
+        before_children = self._active_child_pids()
+        first_thread = Thread(target=run_first)
+        first_thread.start()
+        try:
+            self._wait_for_provider_slot()
+            second_cancel = Event()
+            second_errors: list[BaseException] = []
+
+            def run_second() -> None:
+                try:
+                    with patch.object(provider_module, "_provider_child_main", _child_wait_after_request_started), patch.dict(
+                        os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
+                    ):
+                        DeepSeekProvider().complete(
+                            [{"role": "user", "content": "second"}],
+                            stream=True,
+                            tools=[],
+                            user_id="ws-opaque",
+                            timeouts=ProviderTimeouts(
+                                connect_ms=2000,
+                                first_event_ms=2000,
+                                idle_ms=2000,
+                                total_ms=150,
+                            ),
+                            cancel_event=second_cancel,
+                        )
+                except BaseException as exc:
+                    second_errors.append(exc)
+
+            second_thread = Thread(target=run_second)
+            second_thread.start()
+            second_thread.join(1.0)
+            self.assertFalse(second_thread.is_alive())
+            self.assertEqual(len(second_errors), 1)
+            self.assertIsInstance(second_errors[0], ProviderBusyError)
+            self.assertEqual(len(self._active_child_pids() - before_children), 1)
+
+            cancel_wait_event = Event()
+            cancel_wait_errors: list[BaseException] = []
+
+            def run_cancel_wait() -> None:
+                try:
+                    with patch.object(provider_module, "_provider_child_main", _child_wait_after_request_started), patch.dict(
+                        os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
+                    ):
+                        DeepSeekProvider().complete(
+                            [{"role": "user", "content": "cancel-wait"}],
+                            stream=True,
+                            tools=[],
+                            user_id="ws-opaque",
+                            timeouts=ProviderTimeouts(total_ms=5000),
+                            cancel_event=cancel_wait_event,
+                        )
+                except BaseException as exc:
+                    cancel_wait_errors.append(exc)
+
+            cancel_wait_thread = Thread(target=run_cancel_wait)
+            cancel_wait_thread.start()
+            time.sleep(0.1)
+            cancel_wait_event.set()
+            cancel_wait_thread.join(1.0)
+            self.assertFalse(cancel_wait_thread.is_alive())
+            self.assertEqual(len(cancel_wait_errors), 1)
+            self.assertIsInstance(cancel_wait_errors[0], ProviderCancelledError)
+            self.assertEqual(cancel_wait_errors[0].code, "cancelled")
+        finally:
+            first_cancel.set()
+            first_thread.join(2.0)
+        self.assertEqual(len(first_errors), 1)
+        self.assertEqual(first_errors[0].code, "provider_cancelled_outcome_unknown")
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_child_crash_and_ipc_protocol_failures_are_fail_closed(self) -> None:
+        cases = (
+            (_child_crash_before_request, ProviderUnreachableError),
+            (_child_crash_after_request, ProviderTimeoutUnknownError),
+            (_child_send_illegal_event, ProviderProtocolError),
+            (_child_send_out_of_order, ProviderProtocolError),
+            (_child_send_duplicate_sequence, ProviderProtocolError),
+            (_child_send_oversized, ProviderProtocolError),
+        )
+        for target, expected in cases:
+            before_children = self._active_child_pids()
+            with patch.object(provider_module, "_provider_child_main", target), patch.dict(
+                os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
+            ):
+                with self.assertRaises(expected):
+                    DeepSeekProvider().complete(
+                        [{"role": "user", "content": "synthetic"}],
+                        stream=True,
+                        tools=[],
+                        user_id="ws-opaque",
+                        timeouts=ProviderTimeouts(
+                            connect_ms=1000,
+                            first_event_ms=1000,
+                            idle_ms=1000,
+                            total_ms=1500,
+                        ),
+                    )
+            self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_ipc_rejects_stale_duplicate_and_unknown_messages(self) -> None:
+        valid_result = {
+            "call_id": "call-1",
+            "sequence": 1,
+            "event_type": "result",
+            "completion": _synthetic_completion(),
+        }
+        raw_result = json.dumps(valid_result, separators=(",", ":")).encode()
+        with self.assertRaises(provider_module._ProviderIpcProtocolError):
+            provider_module._decode_ipc_message(
+                raw_result,
+                expected_call_id="different-call",
+                expected_sequence=0,
+                connected=True,
+                request_started=True,
+                terminal=False,
+                max_context_bytes=provider_module.MAX_CONTEXT_BYTES,
+            )
+        with self.assertRaises(provider_module._ProviderIpcProtocolError):
+            provider_module._decode_ipc_message(
+                raw_result,
+                expected_call_id="call-1",
+                expected_sequence=0,
+                connected=True,
+                request_started=True,
+                terminal=True,
+                max_context_bytes=provider_module.MAX_CONTEXT_BYTES,
+            )
+        connected = json.dumps(
+            {"call_id": "call-1", "sequence": 1, "event_type": "connected"}, separators=(",", ":")
+        ).encode()
+        with self.assertRaises(provider_module._ProviderIpcProtocolError):
+            provider_module._decode_ipc_message(
+                connected,
+                expected_call_id="call-1",
+                expected_sequence=1,
+                connected=True,
+                request_started=False,
+                terminal=False,
+                max_context_bytes=provider_module.MAX_CONTEXT_BYTES,
+            )
 
     def test_nonstream_payload_is_fixed_and_has_no_tools(self) -> None:
         response = FakeResponse(
@@ -924,7 +1774,7 @@ class ProviderTests(unittest.TestCase):
                 "http://127.0.0.1:%d/chat/completions" % server.server_port,
             ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
                 with self.assertRaises(ProviderTimeoutUnknownError):
-                    DeepSeekProvider().complete(
+                    DeepSeekProvider(transport=provider_module._UrllibTransport()).complete(
                         [{"role": "user", "content": "synthetic"}],
                         stream=True,
                         tools=[],
@@ -984,7 +1834,7 @@ class ProviderTests(unittest.TestCase):
                 "DEEPSEEK_ENDPOINT",
                 "http://127.0.0.1:%d/chat/completions" % server.server_port,
             ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
-                completion = DeepSeekProvider().complete(
+                completion = DeepSeekProvider(transport=provider_module._UrllibTransport()).complete(
                     [{"role": "user", "content": "synthetic"}],
                     stream=False,
                     tools=None,
@@ -1028,7 +1878,7 @@ class ProviderTests(unittest.TestCase):
                     "DEEPSEEK_ENDPOINT",
                     "http://127.0.0.1:%d/chat/completions" % server.server_port,
                 ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
-                    DeepSeekProvider().complete(
+                    DeepSeekProvider(transport=provider_module._UrllibTransport()).complete(
                         [{"role": "user", "content": "synthetic"}],
                         stream=True,
                         tools=[],
@@ -1082,7 +1932,7 @@ class ProviderTests(unittest.TestCase):
                 "http://127.0.0.1:%d/chat/completions" % server.server_port,
             ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
                 with self.assertRaises(ProviderTimeoutUnknownError):
-                    DeepSeekProvider().complete(
+                    DeepSeekProvider(transport=provider_module._UrllibTransport()).complete(
                         [{"role": "user", "content": "synthetic"}],
                         stream=True,
                         tools=[],
@@ -1124,7 +1974,7 @@ class ProviderTests(unittest.TestCase):
                 "http://127.0.0.1:%d/chat/completions" % server.server_port,
             ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
                 with self.assertRaises(ProviderUnavailableError):
-                    DeepSeekProvider().complete(
+                    DeepSeekProvider(transport=provider_module._UrllibTransport()).complete(
                         [{"role": "user", "content": "synthetic"}],
                         stream=False,
                         tools=None,
@@ -1228,7 +2078,7 @@ class ProviderTests(unittest.TestCase):
                     "DEEPSEEK_ENDPOINT",
                     "https://127.0.0.1:%d/chat/completions" % server.server_port,
                 ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
-                    completion = DeepSeekProvider().complete(
+                    completion = DeepSeekProvider(transport=provider_module._UrllibTransport()).complete(
                         [{"role": "user", "content": "synthetic"}],
                         stream=stream,
                         tools=[] if stream else None,
@@ -1306,7 +2156,7 @@ class ProviderTests(unittest.TestCase):
                     "https://127.0.0.1:%d/chat/completions" % source.port,
                 ), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
                     with self.assertRaises(ProviderTimeoutUnknownError):
-                        DeepSeekProvider().complete(
+                        DeepSeekProvider(transport=provider_module._UrllibTransport()).complete(
                             [{"role": "user", "content": "synthetic"}],
                             stream=True,
                             tools=[],
@@ -1334,7 +2184,7 @@ class ProviderTests(unittest.TestCase):
         def run_provider() -> None:
             try:
                 with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False):
-                    DeepSeekProvider().complete(
+                    DeepSeekProvider(transport=provider_module._UrllibTransport()).complete(
                         [{"role": "user", "content": "synthetic"}],
                         stream=True,
                         tools=[],

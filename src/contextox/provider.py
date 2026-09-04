@@ -10,16 +10,19 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import multiprocessing
 import os
 import select
 import socket
 import ssl
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
+from uuid import uuid4
 
 from contextox.models import ProviderConfigSnapshot
 
@@ -30,6 +33,13 @@ MAX_OUTPUT_TOKENS = 4096
 MAX_CONTEXT_BYTES = 262144
 READ_CHUNK_BYTES = 1024
 READ_POLL_INTERVAL_MS = 100
+IPC_MAX_MESSAGE_BYTES = MAX_CONTEXT_BYTES + 65536
+IPC_MAX_CONTENT_DELTA_CODEPOINTS = 4096
+IPC_POLL_INTERVAL_MS = 25
+PROCESS_JOIN_TIMEOUT_SECONDS = 0.25
+
+
+_PROVIDER_CHILD_SLOT = threading.BoundedSemaphore(1)
 
 
 class ProviderError(RuntimeError):
@@ -56,6 +66,11 @@ class ProviderNotConfiguredError(ProviderError):
 class ProviderUnreachableError(ProviderError):
     def __init__(self) -> None:
         super().__init__("provider_unreachable", "blocked")
+
+
+class ProviderBusyError(ProviderError):
+    def __init__(self) -> None:
+        super().__init__("provider_busy", "blocked")
 
 
 class ProviderAuthError(ProviderError):
@@ -99,8 +114,11 @@ class ProviderProtocolError(ProviderError):
 
 
 class ProviderCancelledError(ProviderError):
-    def __init__(self) -> None:
-        super().__init__("cancelled", "cancelled")
+    def __init__(self, *, outcome_unknown: bool = False) -> None:
+        super().__init__(
+            "provider_cancelled_outcome_unknown" if outcome_unknown else "cancelled",
+            "cancelled",
+        )
 
 
 class ProviderContextBudgetError(ProviderError):
@@ -145,6 +163,272 @@ class ProviderTimeouts:
     first_event_ms: int = 60000
     idle_ms: int = 30000
     total_ms: int = 120000
+
+
+class _ProviderIpcProtocolError(Exception):
+    """An invalid message on the current one-shot Provider channel."""
+
+
+class _ProviderIpcClosed(Exception):
+    """The current one-shot Provider channel closed without a terminal message."""
+
+
+class _ChildIpcSendError(Exception):
+    """The parent disappeared while the child was reporting a result."""
+
+
+_IPC_EVENT_KEYS: dict[str, frozenset[str]] = {
+    "connected": frozenset({"call_id", "sequence", "event_type"}),
+    "request_started": frozenset({"call_id", "sequence", "event_type"}),
+    "activity": frozenset({"call_id", "sequence", "event_type"}),
+    "content_delta": frozenset({"call_id", "sequence", "event_type", "content"}),
+    "result": frozenset({"call_id", "sequence", "event_type", "completion"}),
+    "error": frozenset({"call_id", "sequence", "event_type", "code", "usage"}),
+}
+_IPC_TERMINAL_EVENTS = frozenset({"result", "error"})
+_IPC_ERROR_CODES = frozenset(
+    {
+        "cancelled",
+        "context_budget_exceeded",
+        "provider_auth_failed",
+        "provider_balance_insufficient",
+        "provider_not_configured",
+        "provider_protocol_error",
+        "provider_rate_limited",
+        "provider_request_invalid",
+        "provider_stream_interrupted",
+        "provider_timeout_unknown",
+        "provider_unavailable",
+        "provider_unreachable",
+        "provider_cancelled_outcome_unknown",
+    }
+)
+
+
+def _bounded_ipc_string(value: object, *, field_name: str, max_bytes: int) -> str:
+    if not isinstance(value, str) or not value:
+        raise _ProviderIpcProtocolError(f"{field_name} must be a non-empty string")
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise _ProviderIpcProtocolError(f"{field_name} is not valid UTF-8") from exc
+    if size > max_bytes:
+        raise _ProviderIpcProtocolError(f"{field_name} exceeds its bound")
+    return value
+
+
+def _usage_to_ipc(usage: ProviderUsage | None) -> dict[str, object] | None:
+    if usage is None:
+        return None
+    return {
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cache_hit_tokens": usage.cache_hit_tokens,
+        "cache_miss_tokens": usage.cache_miss_tokens,
+    }
+
+
+def _usage_from_ipc(value: object) -> ProviderUsage | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _ProviderIpcProtocolError("IPC usage must be an object or null")
+    if set(value) != {"input_tokens", "output_tokens", "cache_hit_tokens", "cache_miss_tokens"}:
+        raise _ProviderIpcProtocolError("IPC usage fields are not exact")
+    input_tokens = _strict_nonnegative_int(value["input_tokens"])
+    output_tokens = _strict_nonnegative_int(value["output_tokens"])
+    cache_hit = value["cache_hit_tokens"]
+    cache_miss = value["cache_miss_tokens"]
+    if cache_hit is not None:
+        cache_hit = _strict_nonnegative_int(cache_hit)
+    if cache_miss is not None:
+        cache_miss = _strict_nonnegative_int(cache_miss)
+    return ProviderUsage(input_tokens, output_tokens, cache_hit, cache_miss)
+
+
+def _completion_to_ipc(completion: ProviderCompletion) -> dict[str, object]:
+    return {
+        "completion_id": completion.completion_id,
+        "content": completion.content,
+        "reasoning_content": completion.reasoning_content,
+        "tool_calls": [
+            {"call_id": call.call_id, "name": call.name, "arguments": call.arguments}
+            for call in completion.tool_calls
+        ],
+        "finish_reason": completion.finish_reason,
+        "usage": _usage_to_ipc(completion.usage),
+    }
+
+
+def _completion_from_ipc(value: object, *, max_context_bytes: int) -> ProviderCompletion:
+    if not isinstance(value, dict):
+        raise _ProviderIpcProtocolError("IPC completion must be an object")
+    expected = {
+        "completion_id",
+        "content",
+        "reasoning_content",
+        "tool_calls",
+        "finish_reason",
+        "usage",
+    }
+    if set(value) != expected:
+        raise _ProviderIpcProtocolError("IPC completion fields are not exact")
+    completion_id = _bounded_ipc_string(
+        value["completion_id"], field_name="completion_id", max_bytes=4096
+    )
+    content = value["content"]
+    reasoning = value["reasoning_content"]
+    if not isinstance(content, str) or not isinstance(reasoning, str):
+        raise _ProviderIpcProtocolError("IPC completion text fields must be strings")
+    try:
+        text_bytes = len(content.encode("utf-8")) + len(reasoning.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise _ProviderIpcProtocolError("IPC completion text is not valid UTF-8") from exc
+    if text_bytes > max_context_bytes:
+        raise _ProviderIpcProtocolError("IPC completion text exceeds its bound")
+    finish_reason = value["finish_reason"]
+    if finish_reason is not None:
+        finish_reason = _bounded_ipc_string(
+            finish_reason, field_name="finish_reason", max_bytes=256
+        )
+    raw_calls = value["tool_calls"]
+    if not isinstance(raw_calls, list):
+        raise _ProviderIpcProtocolError("IPC tool calls must be a list")
+    calls: list[ProviderToolCall] = []
+    total_call_bytes = text_bytes
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict) or set(raw_call) != {"call_id", "name", "arguments"}:
+            raise _ProviderIpcProtocolError("IPC tool call fields are not exact")
+        call_id = _bounded_ipc_string(raw_call["call_id"], field_name="call_id", max_bytes=4096)
+        name = _bounded_ipc_string(raw_call["name"], field_name="name", max_bytes=4096)
+        arguments = raw_call["arguments"]
+        if not isinstance(arguments, str):
+            raise _ProviderIpcProtocolError("IPC tool arguments must be a string")
+        try:
+            total_call_bytes += len(call_id.encode("utf-8"))
+            total_call_bytes += len(name.encode("utf-8"))
+            total_call_bytes += len(arguments.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise _ProviderIpcProtocolError("IPC tool call is not valid UTF-8") from exc
+        if total_call_bytes > max_context_bytes:
+            raise _ProviderIpcProtocolError("IPC completion exceeds its bound")
+        calls.append(ProviderToolCall(call_id, name, arguments))
+    usage = _usage_from_ipc(value["usage"])
+    return ProviderCompletion(
+        completion_id=completion_id,
+        content=content,
+        reasoning_content=reasoning,
+        tool_calls=tuple(calls),
+        finish_reason=finish_reason,
+        usage=usage,
+    )
+
+
+def _decode_ipc_message(
+    raw: bytes,
+    *,
+    expected_call_id: str,
+    expected_sequence: int,
+    connected: bool,
+    request_started: bool,
+    terminal: bool,
+    max_context_bytes: int,
+) -> dict[str, object]:
+    if len(raw) > IPC_MAX_MESSAGE_BYTES:
+        raise _ProviderIpcProtocolError("IPC message exceeds its bound")
+    try:
+        value = _strict_json_loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _ProviderIpcProtocolError("IPC message is not strict JSON") from exc
+    if not isinstance(value, dict):
+        raise _ProviderIpcProtocolError("IPC message must be an object")
+    event_type = value.get("event_type")
+    if not isinstance(event_type, str) or event_type not in _IPC_EVENT_KEYS:
+        raise _ProviderIpcProtocolError("IPC event type is not allowed")
+    if set(value) != _IPC_EVENT_KEYS[event_type]:
+        raise _ProviderIpcProtocolError("IPC message fields are not exact")
+    if value.get("call_id") != expected_call_id:
+        raise _ProviderIpcProtocolError("IPC call identity is stale or unknown")
+    sequence = value.get("sequence")
+    if type(sequence) is not int or sequence != expected_sequence + 1:
+        raise _ProviderIpcProtocolError("IPC sequence is not strictly monotonic")
+    if terminal:
+        raise _ProviderIpcProtocolError("IPC message arrived after a terminal event")
+    if event_type == "connected":
+        if connected or request_started:
+            raise _ProviderIpcProtocolError("IPC connected event is out of order")
+    elif event_type == "request_started":
+        if not connected or request_started:
+            raise _ProviderIpcProtocolError("IPC request_started event is out of order")
+    elif event_type in {"activity", "content_delta", "result"}:
+        if not request_started:
+            raise _ProviderIpcProtocolError("IPC response event is out of order")
+    if event_type == "content_delta":
+        content = value["content"]
+        if not isinstance(content, str) or not content:
+            raise _ProviderIpcProtocolError("IPC content delta must be non-empty text")
+        if len(content) > IPC_MAX_CONTENT_DELTA_CODEPOINTS:
+            raise _ProviderIpcProtocolError("IPC content delta exceeds its bound")
+        try:
+            content_bytes = len(content.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise _ProviderIpcProtocolError("IPC content delta is not valid UTF-8") from exc
+        if content_bytes > IPC_MAX_MESSAGE_BYTES:
+            raise _ProviderIpcProtocolError("IPC content delta exceeds its byte bound")
+    elif event_type == "result":
+        _completion_from_ipc(value["completion"], max_context_bytes=max_context_bytes)
+    elif event_type == "error":
+        code = value["code"]
+        if not isinstance(code, str) or code not in _IPC_ERROR_CODES:
+            raise _ProviderIpcProtocolError("IPC error code is not allowed")
+        _usage_from_ipc(value["usage"])
+    return value
+
+
+def _encode_bounded_json(value: object, *, max_bytes: int) -> bytes:
+    try:
+        raw = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise _ProviderIpcProtocolError("IPC value is not strict JSON") from exc
+    if len(raw) > max_bytes:
+        raise _ProviderIpcProtocolError("IPC value exceeds its bound")
+    return raw
+
+
+def _provider_error_from_code(code: str, *, usage: ProviderUsage | None = None) -> ProviderError:
+    if code == "cancelled":
+        return ProviderCancelledError()
+    if code == "provider_cancelled_outcome_unknown":
+        return ProviderCancelledError(outcome_unknown=True)
+    if code == "context_budget_exceeded":
+        return ProviderContextBudgetError()
+    if code == "provider_auth_failed":
+        return ProviderAuthError()
+    if code == "provider_balance_insufficient":
+        return ProviderBalanceError()
+    if code == "provider_not_configured":
+        return ProviderNotConfiguredError()
+    if code == "provider_rate_limited":
+        return ProviderRateLimitError()
+    if code == "provider_request_invalid":
+        return ProviderRequestError()
+    if code == "provider_stream_interrupted":
+        return ProviderStreamInterruptedError()
+    if code == "provider_timeout_unknown":
+        return ProviderTimeoutUnknownError()
+    if code == "provider_unreachable":
+        return ProviderUnreachableError()
+    if code == "provider_unavailable":
+        return ProviderUnavailableError()
+    if code == "provider_protocol_error":
+        return ProviderProtocolError(usage=usage)
+    raise _ProviderIpcProtocolError("IPC error code cannot be mapped")
 
 
 def _strict_nonnegative_int(value: object) -> int:
@@ -535,6 +819,7 @@ class _UrllibTransport:
         total_deadline: float | None = None,
         cancel_event: Any | None = None,
         max_context_bytes: int = MAX_CONTEXT_BYTES,
+        on_phase: Callable[[str], None] | None = None,
     ) -> object:
         parsed = urlsplit(request.full_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -560,6 +845,8 @@ class _UrllibTransport:
             sock = connection.sock
             if sock is None:
                 raise ProviderUnreachableError()
+            if on_phase is not None:
+                on_phase("connected")
             if cancel_event is not None and cancel_event.is_set():
                 raise ProviderCancelledError()
             now = time.monotonic()
@@ -571,6 +858,8 @@ class _UrllibTransport:
             selector = parsed.path or "/"
             if parsed.query:
                 selector += "?" + parsed.query
+            if on_phase is not None:
+                on_phase("request_started")
             connection.request(
                 request.get_method(),
                 selector,
@@ -620,6 +909,7 @@ class DeepSeekProvider:
         if model not in {"deepseek-v4-flash", "deepseek-v4-pro"}:
             raise ValueError("model must be an approved DeepSeek model")
         self.model = model
+        self._use_supervised_child = transport is None
         self.transport = transport if transport is not None else _UrllibTransport()
 
     @property
@@ -695,8 +985,8 @@ class DeepSeekProvider:
             raise ProviderNotConfiguredError()
         if type(max_tokens) is not int or max_tokens < 1 or max_tokens > MAX_OUTPUT_TOKENS:
             raise ValueError("max_tokens exceeds the fixed provider budget")
-        if type(max_context_bytes) is not int or max_context_bytes < 1:
-            raise ValueError("max_context_bytes must be positive")
+        if type(max_context_bytes) is not int or not 1 <= max_context_bytes <= MAX_CONTEXT_BYTES:
+            raise ValueError("max_context_bytes must be within the fixed provider budget")
 
         payload = self.build_payload(
             messages,
@@ -729,6 +1019,42 @@ class DeepSeekProvider:
             },
             method="POST",
         )
+        if self._use_supervised_child:
+            return self._complete_via_child(
+                request,
+                stream=stream,
+                timeouts=timeouts,
+                cancel_event=cancel_event,
+                max_context_bytes=max_context_bytes,
+                on_content=on_content,
+            )
+        return self._complete_request(
+            request,
+            stream=stream,
+            timeouts=timeouts,
+            cancel_event=cancel_event,
+            max_context_bytes=max_context_bytes,
+            on_content=on_content,
+        )
+
+    def _complete_request(
+        self,
+        request: Request,
+        *,
+        stream: bool,
+        timeouts: ProviderTimeouts,
+        cancel_event: Any | None,
+        max_context_bytes: int,
+        on_content: Callable[[str], None] | None,
+        on_phase: Callable[[str], None] | None = None,
+        on_activity: Callable[[], None] | None = None,
+    ) -> ProviderCompletion:
+        """Execute one already-built request in the current process.
+
+        Production callers reach this method only from the supervised child;
+        injected fake transports continue to use it directly in tests.
+        """
+
         started_at = time.monotonic()
         try:
             response = self._open(
@@ -737,6 +1063,7 @@ class DeepSeekProvider:
                 started_at,
                 cancel_event=cancel_event,
                 max_context_bytes=max_context_bytes,
+                on_phase=on_phase,
             )
         except ProviderError:
             raise
@@ -757,6 +1084,7 @@ class DeepSeekProvider:
                     cancel_event=cancel_event,
                     max_context_bytes=max_context_bytes,
                     on_content=on_content,
+                    on_activity=on_activity,
                 )
             return self._read_nonstream(
                 response,
@@ -764,6 +1092,7 @@ class DeepSeekProvider:
                 timeouts=timeouts,
                 cancel_event=cancel_event,
                 max_context_bytes=max_context_bytes,
+                on_activity=on_activity,
             )
         except ProviderError:
             raise
@@ -782,6 +1111,211 @@ class DeepSeekProvider:
             if callable(close):
                 close()
 
+    def _complete_via_child(
+        self,
+        request: Request,
+        *,
+        stream: bool,
+        timeouts: ProviderTimeouts,
+        cancel_event: Any | None,
+        max_context_bytes: int,
+        on_content: Callable[[str], None] | None,
+    ) -> ProviderCompletion:
+        """Run the production request in one supervised, disposable child."""
+
+        request_data = request.data
+        if not isinstance(request_data, bytes):
+            raise ProviderProtocolError()
+        try:
+            body_text = request_data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ProviderProtocolError() from exc
+        call_id = str(uuid4())
+        packet = {
+            "call_id": call_id,
+            "model": self.model,
+            "url": request.full_url,
+            "method": request.get_method(),
+            "headers": dict(request.header_items()),
+            "body": body_text,
+            "stream": stream,
+            "timeouts": {
+                "connect_ms": timeouts.connect_ms,
+                "first_event_ms": timeouts.first_event_ms,
+                "idle_ms": timeouts.idle_ms,
+                "total_ms": timeouts.total_ms,
+            },
+            "max_context_bytes": max_context_bytes,
+        }
+        try:
+            packet_bytes = _encode_bounded_json(packet, max_bytes=IPC_MAX_MESSAGE_BYTES)
+        except _ProviderIpcProtocolError as exc:
+            raise ProviderContextBudgetError() from exc
+
+        started_at = time.monotonic()
+        total_ms = timeouts.total_ms
+        if type(total_ms) is not int or total_ms <= 0:
+            raise ProviderBusyError()
+        slot_deadline = started_at + total_ms / 1000
+        acquired = False
+        process: Any | None = None
+        receive_conn: Any | None = None
+        request_started = False
+        connected = False
+        saw_activity = False
+        last_activity_at = started_at
+        expected_sequence = 0
+        terminal = False
+        try:
+            while not acquired:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ProviderCancelledError()
+                remaining = slot_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ProviderBusyError()
+                acquired = _PROVIDER_CHILD_SLOT.acquire(
+                    timeout=min(remaining, IPC_POLL_INTERVAL_MS / 1000)
+                )
+
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderCancelledError()
+            if slot_deadline - time.monotonic() <= 0:
+                raise ProviderBusyError()
+
+            send_conn: Any | None = None
+            try:
+                context = multiprocessing.get_context("spawn")
+                receive_conn, send_conn = context.Pipe(duplex=False)
+                process = context.Process(
+                    target=_provider_child_main,
+                    args=(send_conn, packet_bytes),
+                    daemon=True,
+                )
+                process.start()
+            except Exception as exc:
+                raise ProviderUnreachableError() from exc
+            finally:
+                if send_conn is not None:
+                    try:
+                        send_conn.close()
+                    except (OSError, ValueError):
+                        pass
+
+            connect_deadline = started_at + max(timeouts.connect_ms, 0) / 1000
+            first_event_deadline = started_at + max(timeouts.first_event_ms, 0) / 1000
+            total_deadline = slot_deadline
+
+            def check_supervision() -> None:
+                if cancel_event is not None and cancel_event.is_set():
+                    if request_started:
+                        raise ProviderCancelledError(outcome_unknown=True)
+                    raise ProviderCancelledError()
+                now = time.monotonic()
+                if not connected and now >= connect_deadline:
+                    raise ProviderUnreachableError()
+                if request_started and not saw_activity and now >= first_event_deadline:
+                    raise ProviderTimeoutUnknownError()
+                if saw_activity and now >= last_activity_at + max(timeouts.idle_ms, 0) / 1000:
+                    raise ProviderTimeoutUnknownError()
+                if now >= total_deadline:
+                    if request_started:
+                        raise ProviderTimeoutUnknownError()
+                    raise ProviderUnreachableError()
+
+            while True:
+                while True:
+                    check_supervision()
+                    try:
+                        if not receive_conn.poll(0):
+                            break
+                        try:
+                            raw_message = receive_conn.recv_bytes(IPC_MAX_MESSAGE_BYTES)
+                        except EOFError as exc:
+                            raise _ProviderIpcClosed() from exc
+                        except OSError as exc:
+                            if process.is_alive():
+                                raise _ProviderIpcProtocolError() from exc
+                            raise _ProviderIpcClosed() from exc
+                    except (EOFError, OSError) as exc:
+                        raise _ProviderIpcClosed() from exc
+
+                    try:
+                        message = _decode_ipc_message(
+                            raw_message,
+                            expected_call_id=call_id,
+                            expected_sequence=expected_sequence,
+                            connected=connected,
+                            request_started=request_started,
+                            terminal=terminal,
+                            max_context_bytes=max_context_bytes,
+                        )
+                    except _ProviderIpcProtocolError as exc:
+                        raise ProviderProtocolError() from exc
+                    expected_sequence += 1
+                    event_type = message["event_type"]
+                    if event_type == "connected":
+                        connected = True
+                    elif event_type == "request_started":
+                        request_started = True
+                    elif event_type in {"activity", "content_delta"}:
+                        saw_activity = True
+                        last_activity_at = time.monotonic()
+                        if event_type == "content_delta" and on_content is not None:
+                            on_content(message["content"])
+                    elif event_type == "result":
+                        terminal = True
+                        return _completion_from_ipc(
+                            message["completion"], max_context_bytes=max_context_bytes
+                        )
+                    elif event_type == "error":
+                        terminal = True
+                        code = message["code"]
+                        usage = _usage_from_ipc(message["usage"])
+                        if request_started and code == "cancelled":
+                            raise ProviderCancelledError(outcome_unknown=True)
+                        if request_started and code == "provider_unreachable":
+                            raise ProviderTimeoutUnknownError()
+                        if not request_started and code == "provider_unavailable":
+                            raise ProviderUnreachableError()
+                        raise _provider_error_from_code(code, usage=usage)
+
+                check_supervision()
+                if not process.is_alive():
+                    raise _ProviderIpcClosed()
+
+                now = time.monotonic()
+                wait_seconds = IPC_POLL_INTERVAL_MS / 1000
+                if not connected:
+                    wait_seconds = min(wait_seconds, max(0.0, connect_deadline - now))
+                elif request_started and not saw_activity:
+                    wait_seconds = min(wait_seconds, max(0.0, first_event_deadline - now))
+                elif saw_activity:
+                    wait_seconds = min(
+                        wait_seconds,
+                        max(0.0, last_activity_at + max(timeouts.idle_ms, 0) / 1000 - now),
+                    )
+                wait_seconds = min(wait_seconds, max(0.0, total_deadline - now))
+                try:
+                    receive_conn.poll(wait_seconds)
+                except (EOFError, OSError) as exc:
+                    raise _ProviderIpcClosed() from exc
+        except _ProviderIpcProtocolError as exc:
+            raise ProviderProtocolError() from exc
+        except _ProviderIpcClosed as exc:
+            if request_started:
+                raise ProviderTimeoutUnknownError() from exc
+            raise ProviderUnreachableError() from exc
+        finally:
+            if process is not None:
+                _stop_provider_process(process)
+            if receive_conn is not None:
+                try:
+                    receive_conn.close()
+                except (OSError, ValueError):
+                    pass
+            if acquired:
+                _PROVIDER_CHILD_SLOT.release()
+
     def _open(
         self,
         request: Request,
@@ -790,6 +1324,7 @@ class DeepSeekProvider:
         *,
         cancel_event: Any | None,
         max_context_bytes: int,
+        on_phase: Callable[[str], None] | None = None,
     ) -> object:
         elapsed = time.monotonic() - started_at
         remaining_seconds = timeouts.total_ms / 1000 - elapsed
@@ -816,6 +1351,7 @@ class DeepSeekProvider:
                 total_deadline=deadline,
                 cancel_event=cancel_event,
                 max_context_bytes=max_context_bytes,
+                on_phase=on_phase,
             )
         elif callable(open_method):
             response = open_method(request, timeout_seconds)
@@ -942,6 +1478,7 @@ class DeepSeekProvider:
         timeouts: ProviderTimeouts,
         cancel_event: Any | None,
         max_context_bytes: int,
+        on_activity: Callable[[], None] | None,
     ) -> ProviderCompletion:
         if cancel_event is not None and cancel_event.is_set():
             raise ProviderCancelledError()
@@ -977,6 +1514,8 @@ class DeepSeekProvider:
                 body.extend(chunk_bytes)
                 saw_data = True
                 last_data_at = time.monotonic()
+                if on_activity is not None:
+                    on_activity()
             raw = bytes(body)
         if cancel_event is not None and cancel_event.is_set():
             raise ProviderCancelledError()
@@ -1050,6 +1589,7 @@ class DeepSeekProvider:
         cancel_event: Any | None,
         max_context_bytes: int,
         on_content: Callable[[str], None] | None,
+        on_activity: Callable[[], None] | None,
     ) -> ProviderCompletion:
         completion_id: str | None = None
         content_parts: list[str] = []
@@ -1113,6 +1653,8 @@ class DeepSeekProvider:
                     raise ProviderProtocolError(usage=usage)
                 if chunk_usage is not None:
                     usage = chunk_usage
+                if on_activity is not None:
+                    on_activity()
                 if tool_slots.get(-1, {}).get("finish_reason") is not None:
                     final_usage_present = chunk_usage is not None
                 if on_content is not None and len(content_parts) > content_cursor:
@@ -1356,3 +1898,211 @@ class DeepSeekProvider:
                 raise ProviderProtocolError()
         if data_lines:
             yield "\n".join(data_lines)
+
+
+class _ChildIpc:
+    """Write-only, per-call JSON messages from a Provider child."""
+
+    def __init__(self, send_conn: Any, call_id: str) -> None:
+        self._send_conn = send_conn
+        self._call_id = call_id
+        self._sequence = 0
+        self._terminal = False
+
+    def send(self, event_type: str, **fields: object) -> None:
+        if self._terminal:
+            raise _ChildIpcSendError()
+        sequence = self._sequence + 1
+        message = {
+            "call_id": self._call_id,
+            "sequence": sequence,
+            "event_type": event_type,
+            **fields,
+        }
+        try:
+            raw = _encode_bounded_json(message, max_bytes=IPC_MAX_MESSAGE_BYTES)
+            self._send_conn.send_bytes(raw)
+        except _ProviderIpcProtocolError as exc:
+            if event_type == "result":
+                self.send("error", code="context_budget_exceeded", usage=None)
+                return
+            raise _ChildIpcSendError() from exc
+        except (EOFError, OSError, ValueError) as exc:
+            raise _ChildIpcSendError() from exc
+        self._sequence = sequence
+        if event_type in _IPC_TERMINAL_EVENTS:
+            self._terminal = True
+
+
+def _send_child_content(ipc: _ChildIpc, content: str) -> None:
+    if not isinstance(content, str):
+        raise _ChildIpcSendError()
+    for offset in range(0, len(content), IPC_MAX_CONTENT_DELTA_CODEPOINTS):
+        ipc.send(
+            "content_delta",
+            content=content[offset : offset + IPC_MAX_CONTENT_DELTA_CODEPOINTS],
+        )
+
+
+def _stop_provider_process(process: Any) -> None:
+    """Terminate and reap one child without allowing cleanup to hang."""
+
+    try:
+        alive = bool(process.is_alive())
+    except Exception:
+        alive = False
+    if alive:
+        try:
+            process.terminate()
+        except Exception:
+            pass
+    try:
+        process.join(PROCESS_JOIN_TIMEOUT_SECONDS)
+    except Exception:
+        pass
+    try:
+        alive = bool(process.is_alive())
+    except Exception:
+        alive = False
+    if alive:
+        killer = getattr(process, "kill", None)
+        if callable(killer):
+            try:
+                killer()
+            except Exception:
+                pass
+        try:
+            process.join(PROCESS_JOIN_TIMEOUT_SECONDS)
+        except Exception:
+            pass
+    close = getattr(process, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+
+
+def _provider_child_packet(
+    packet_bytes: bytes,
+) -> tuple[str, str, str, dict[str, str], bytes, bool, ProviderTimeouts, int]:
+    if not isinstance(packet_bytes, bytes) or len(packet_bytes) > IPC_MAX_MESSAGE_BYTES:
+        raise _ProviderIpcProtocolError()
+    try:
+        packet = _strict_json_loads(packet_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _ProviderIpcProtocolError() from exc
+    if not isinstance(packet, dict):
+        raise _ProviderIpcProtocolError()
+    expected = {
+        "call_id",
+        "model",
+        "url",
+        "method",
+        "headers",
+        "body",
+        "stream",
+        "timeouts",
+        "max_context_bytes",
+    }
+    if set(packet) != expected:
+        raise _ProviderIpcProtocolError()
+    call_id = packet["call_id"]
+    model = packet["model"]
+    url = packet["url"]
+    method = packet["method"]
+    body = packet["body"]
+    stream = packet["stream"]
+    max_context_bytes = packet["max_context_bytes"]
+    if not isinstance(call_id, str) or not call_id:
+        raise _ProviderIpcProtocolError()
+    if not isinstance(model, str) or model not in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+        raise _ProviderIpcProtocolError()
+    if not isinstance(url, str) or not url or not isinstance(method, str) or method != "POST":
+        raise _ProviderIpcProtocolError()
+    if not isinstance(body, str) or len(body.encode("utf-8")) > MAX_CONTEXT_BYTES:
+        raise _ProviderIpcProtocolError()
+    if type(stream) is not bool:
+        raise _ProviderIpcProtocolError()
+    if type(max_context_bytes) is not int or max_context_bytes < 1 or max_context_bytes > MAX_CONTEXT_BYTES:
+        raise _ProviderIpcProtocolError()
+    raw_headers = packet["headers"]
+    if not isinstance(raw_headers, dict):
+        raise _ProviderIpcProtocolError()
+    headers_by_name: dict[str, str] = {}
+    for key, value in raw_headers.items():
+        if not isinstance(key, str) or not isinstance(value, str) or not value:
+            raise _ProviderIpcProtocolError()
+        normalized_key = key.lower()
+        if normalized_key in headers_by_name:
+            raise _ProviderIpcProtocolError()
+        headers_by_name[normalized_key] = value
+    if set(headers_by_name) != {"accept", "authorization", "content-type"}:
+        raise _ProviderIpcProtocolError()
+    headers = {
+        "Accept": headers_by_name["accept"],
+        "Authorization": headers_by_name["authorization"],
+        "Content-Type": headers_by_name["content-type"],
+    }
+    raw_timeouts = packet["timeouts"]
+    if not isinstance(raw_timeouts, dict) or set(raw_timeouts) != {
+        "connect_ms",
+        "first_event_ms",
+        "idle_ms",
+        "total_ms",
+    }:
+        raise _ProviderIpcProtocolError()
+    if any(type(value) is not int for value in raw_timeouts.values()):
+        raise _ProviderIpcProtocolError()
+    timeouts = ProviderTimeouts(
+        connect_ms=raw_timeouts["connect_ms"],
+        first_event_ms=raw_timeouts["first_event_ms"],
+        idle_ms=raw_timeouts["idle_ms"],
+        total_ms=raw_timeouts["total_ms"],
+    )
+    return call_id, model, url, headers, body.encode("utf-8"), stream, timeouts, max_context_bytes
+
+
+def _provider_child_main(send_conn: Any, packet_bytes: bytes) -> None:
+    """Top-level spawn target; it owns no ContextOx state beyond one request."""
+
+    ipc: _ChildIpc | None = None
+    try:
+        call_id, model, url, headers, body, stream, timeouts, max_context_bytes = _provider_child_packet(
+            packet_bytes
+        )
+        ipc = _ChildIpc(send_conn, call_id)
+
+        def on_phase(event_type: str) -> None:
+            ipc.send(event_type)
+
+        request = Request(url, data=body, headers=headers, method="POST")
+        provider = DeepSeekProvider(model=model, transport=_UrllibTransport())
+        completion = provider._complete_request(
+            request,
+            stream=stream,
+            timeouts=timeouts,
+            cancel_event=None,
+            max_context_bytes=max_context_bytes,
+            on_content=lambda content: _send_child_content(ipc, content),
+            on_phase=on_phase,
+            on_activity=lambda: ipc.send("activity"),
+        )
+        ipc.send("result", completion=_completion_to_ipc(completion))
+    except ProviderError as exc:
+        if ipc is not None:
+            try:
+                ipc.send("error", code=exc.code, usage=_usage_to_ipc(exc.usage))
+            except _ChildIpcSendError:
+                pass
+    except Exception:
+        if ipc is not None:
+            try:
+                ipc.send("error", code="provider_protocol_error", usage=None)
+            except _ChildIpcSendError:
+                pass
+    finally:
+        try:
+            send_conn.close()
+        except (OSError, ValueError):
+            pass
