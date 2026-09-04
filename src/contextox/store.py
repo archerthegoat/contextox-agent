@@ -242,6 +242,7 @@ CREATE TABLE source_revisions (
     artifact_json TEXT NOT NULL,
     PRIMARY KEY (workspace_id, source_id, revision_id),
     UNIQUE (workspace_id, revision_id),
+    UNIQUE (workspace_id, source_id, revision_id, sha256),
     FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id)
 )
 """
@@ -278,8 +279,8 @@ CREATE TABLE mission_sources (
     UNIQUE (workspace_id, mission_id, ordinal),
     FOREIGN KEY (workspace_id, mission_id)
         REFERENCES missions(workspace_id, mission_id),
-    FOREIGN KEY (workspace_id, source_id, revision_id)
-        REFERENCES source_revisions(workspace_id, source_id, revision_id)
+    FOREIGN KEY (workspace_id, source_id, revision_id, sha256)
+        REFERENCES source_revisions(workspace_id, source_id, revision_id, sha256)
 )
 """
 
@@ -342,8 +343,8 @@ CREATE TABLE run_sources (
     UNIQUE (workspace_id, mission_id, run_id, ordinal),
     FOREIGN KEY (workspace_id, mission_id, run_id)
         REFERENCES runs(workspace_id, mission_id, run_id),
-    FOREIGN KEY (workspace_id, source_id, revision_id)
-        REFERENCES source_revisions(workspace_id, source_id, revision_id)
+    FOREIGN KEY (workspace_id, source_id, revision_id, sha256)
+        REFERENCES source_revisions(workspace_id, source_id, revision_id, sha256)
 )
 """
 
@@ -407,15 +408,22 @@ CREATE TABLE context_manifests (
     PRIMARY KEY (workspace_id, mission_id, run_id, manifest_id),
     UNIQUE (workspace_id, mission_id, run_id, turn_index),
     UNIQUE (workspace_id, mission_id, run_id, sha256),
+    UNIQUE (workspace_id, mission_id, run_id, manifest_id, sha256),
     CHECK (
-        (draft_id IS NULL AND draft_version IS NULL)
-        OR (draft_id IS NOT NULL AND draft_version IS NOT NULL)
+        (draft_id IS NULL AND draft_version IS NULL AND draft_sha256 IS NULL)
+        OR (
+            draft_id IS NOT NULL
+            AND draft_version IS NOT NULL
+            AND draft_sha256 IS NOT NULL
+        )
     ),
     CHECK (draft_version IS NULL OR draft_version > 0),
     FOREIGN KEY (workspace_id, mission_id, run_id)
         REFERENCES runs(workspace_id, mission_id, run_id),
-    FOREIGN KEY (workspace_id, mission_id, draft_id, draft_version)
-        REFERENCES definition_drafts(workspace_id, mission_id, draft_id, version)
+    FOREIGN KEY (workspace_id, mission_id, draft_id, draft_version, draft_sha256)
+        REFERENCES definition_drafts(
+            workspace_id, mission_id, draft_id, version, sha256
+        )
 )
 """
 
@@ -431,8 +439,11 @@ CREATE TABLE clarification_requests (
     status TEXT NOT NULL,
     questions_json TEXT NOT NULL,
     PRIMARY KEY (workspace_id, mission_id, run_id, clarification_id),
+    CHECK (draft_version > 0),
     FOREIGN KEY (workspace_id, mission_id, run_id)
-        REFERENCES runs(workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id),
+    FOREIGN KEY (workspace_id, mission_id, draft_version, draft_sha256)
+        REFERENCES definition_drafts(workspace_id, mission_id, version, sha256)
 )
 """
 
@@ -452,6 +463,8 @@ CREATE TABLE definition_drafts (
     PRIMARY KEY (workspace_id, mission_id, draft_id, version),
     UNIQUE (workspace_id, mission_id, version),
     UNIQUE (workspace_id, mission_id, sha256),
+    UNIQUE (workspace_id, mission_id, draft_id, version, sha256),
+    UNIQUE (workspace_id, mission_id, version, sha256),
     CHECK (version > 0),
     FOREIGN KEY (workspace_id, mission_id)
         REFERENCES missions(workspace_id, mission_id)
@@ -484,15 +497,34 @@ CREATE TABLE provider_receipts (
     UNIQUE (workspace_id, mission_id, run_id, turn_index),
     CHECK (turn_index > 0),
     CHECK (
-        (attempt_id IS NOT NULL AND mission_id IS NULL AND run_id IS NULL)
-        OR (attempt_id IS NULL AND mission_id IS NOT NULL AND run_id IS NOT NULL)
+        (
+            attempt_id IS NOT NULL
+            AND mission_id IS NULL
+            AND run_id IS NULL
+            AND context_manifest_id IS NULL
+            AND context_manifest_sha256 IS NULL
+            AND tool_schema_sha256 IS NULL
+            AND turn_index = 1
+        )
+        OR (
+            attempt_id IS NULL
+            AND mission_id IS NOT NULL
+            AND run_id IS NOT NULL
+            AND context_manifest_id IS NOT NULL
+            AND context_manifest_sha256 IS NOT NULL
+            AND tool_schema_sha256 IS NOT NULL
+        )
     ),
     FOREIGN KEY (workspace_id, attempt_id)
         REFERENCES mission_draft_attempts(workspace_id, attempt_id),
     FOREIGN KEY (workspace_id, mission_id, run_id)
         REFERENCES runs(workspace_id, mission_id, run_id),
-    FOREIGN KEY (workspace_id, mission_id, run_id, context_manifest_id)
-        REFERENCES context_manifests(workspace_id, mission_id, run_id, manifest_id)
+    FOREIGN KEY (
+        workspace_id, mission_id, run_id,
+        context_manifest_id, context_manifest_sha256
+    ) REFERENCES context_manifests(
+        workspace_id, mission_id, run_id, manifest_id, sha256
+    )
 )
 """
 
@@ -539,14 +571,20 @@ CREATE TABLE terminal_receipts (
     PRIMARY KEY (workspace_id, receipt_id),
     UNIQUE (workspace_id, mission_id, run_id),
     CHECK (
-        (draft_id IS NULL AND draft_version IS NULL)
-        OR (draft_id IS NOT NULL AND draft_version IS NOT NULL)
+        (draft_id IS NULL AND draft_version IS NULL AND draft_sha256 IS NULL)
+        OR (
+            draft_id IS NOT NULL
+            AND draft_version IS NOT NULL
+            AND draft_sha256 IS NOT NULL
+        )
     ),
     CHECK (draft_version IS NULL OR draft_version > 0),
     FOREIGN KEY (workspace_id, mission_id, run_id)
         REFERENCES runs(workspace_id, mission_id, run_id),
-    FOREIGN KEY (workspace_id, mission_id, draft_id, draft_version)
-        REFERENCES definition_drafts(workspace_id, mission_id, draft_id, version)
+    FOREIGN KEY (workspace_id, mission_id, draft_id, draft_version, draft_sha256)
+        REFERENCES definition_drafts(
+            workspace_id, mission_id, draft_id, version, sha256
+        )
 )
 """
 

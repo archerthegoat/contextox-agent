@@ -442,11 +442,25 @@ class StoreTests(unittest.TestCase):
                         "manifest-sha-versioned",
                     ),
                 )
-                for invalid_id, invalid_version in ((draft_id, None), (None, 2)):
+                invalid_draft_refs = (
+                    (draft_id, None, None),
+                    (None, 2, None),
+                    (None, None, "draft-sha-2"),
+                    (draft_id, 2, None),
+                    (draft_id, None, "draft-sha-2"),
+                    (None, 2, "draft-sha-2"),
+                    ("wrong-draft-id", 2, "draft-sha-2"),
+                    (draft_id, 2, "wrong-draft-sha"),
+                    (draft_id, 3, "draft-sha-3"),
+                )
+                for index, (invalid_id, invalid_version, invalid_sha256) in enumerate(
+                    invalid_draft_refs
+                ):
                     with self.subTest(
                         table="context_manifests",
                         draft_id=invalid_id,
                         draft_version=invalid_version,
+                        draft_sha256=invalid_sha256,
                     ):
                         with self.assertRaises(sqlite3.IntegrityError):
                             connection.execute(
@@ -455,33 +469,16 @@ class StoreTests(unittest.TestCase):
                                     workspace_id,
                                     mission_id,
                                     run_id,
-                                    f"manifest-invalid-{invalid_id}-{invalid_version}",
+                                    f"manifest-invalid-{index}",
                                     1,
                                     2,
                                     invalid_id,
                                     invalid_version,
-                                    None,
+                                    invalid_sha256,
                                     *manifest_tail,
-                                    f"manifest-invalid-sha-{invalid_id}-{invalid_version}",
+                                    f"manifest-invalid-sha-{index}",
                                 ),
                             )
-                with self.assertRaises(sqlite3.IntegrityError):
-                    connection.execute(
-                        insert_manifest_sql,
-                        (
-                            workspace_id,
-                            mission_id,
-                            run_id,
-                            "manifest-missing-version",
-                            1,
-                            2,
-                            draft_id,
-                            3,
-                            "draft-sha-3",
-                            *manifest_tail,
-                            "manifest-sha-missing-version",
-                        ),
-                    )
 
                 insert_terminal_sql = """
                     INSERT INTO terminal_receipts
@@ -504,11 +501,14 @@ class StoreTests(unittest.TestCase):
                     insert_terminal_sql,
                     (*terminal_prefix, None, None, None, "[]", "[]", "[]", "[]"),
                 )
-                for invalid_id, invalid_version in ((draft_id, None), (None, 2)):
+                for index, (invalid_id, invalid_version, invalid_sha256) in enumerate(
+                    invalid_draft_refs
+                ):
                     with self.subTest(
                         table="terminal_receipts",
                         draft_id=invalid_id,
                         draft_version=invalid_version,
+                        draft_sha256=invalid_sha256,
                     ):
                         with self.assertRaises(sqlite3.IntegrityError):
                             connection.execute(
@@ -517,39 +517,19 @@ class StoreTests(unittest.TestCase):
                                     workspace_id,
                                     mission_id,
                                     second_run_id,
-                                    f"terminal-invalid-{invalid_id}-{invalid_version}",
+                                    f"terminal-invalid-{index}",
                                     "2026-01-01T00:00:00+00:00",
                                     "finish_run",
                                     "partial",
                                     invalid_id,
                                     invalid_version,
-                                    None,
+                                    invalid_sha256,
                                     "[]",
                                     "[]",
                                     "[]",
                                     "[]",
                                 ),
                             )
-                with self.assertRaises(sqlite3.IntegrityError):
-                    connection.execute(
-                        insert_terminal_sql,
-                        (
-                            workspace_id,
-                            mission_id,
-                            second_run_id,
-                            "terminal-missing-version",
-                            "2026-01-01T00:00:00+00:00",
-                            "finish_run",
-                            "partial",
-                            draft_id,
-                            3,
-                            "draft-sha-3",
-                            "[]",
-                            "[]",
-                            "[]",
-                            "[]",
-                        ),
-                    )
                 connection.execute(
                     insert_terminal_sql,
                     (
@@ -566,6 +546,48 @@ class StoreTests(unittest.TestCase):
                         "[]",
                         "[]",
                         "[]",
+                        "[]",
+                    ),
+                )
+
+                insert_clarification_sql = """
+                    INSERT INTO clarification_requests
+                        (workspace_id, mission_id, run_id, clarification_id,
+                         draft_version, draft_sha256, status, questions_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                for index, (invalid_version, invalid_sha256) in enumerate(
+                    ((2, "wrong-draft-sha"), (1, "draft-sha-2"), (0, "draft-sha-2"))
+                ):
+                    with self.subTest(
+                        table="clarification_requests",
+                        draft_version=invalid_version,
+                        draft_sha256=invalid_sha256,
+                    ):
+                        with self.assertRaises(sqlite3.IntegrityError):
+                            connection.execute(
+                                insert_clarification_sql,
+                                (
+                                    workspace_id,
+                                    mission_id,
+                                    second_run_id,
+                                    f"clarification-invalid-{index}",
+                                    invalid_version,
+                                    invalid_sha256,
+                                    "awaiting_answer",
+                                    "[]",
+                                ),
+                            )
+                connection.execute(
+                    insert_clarification_sql,
+                    (
+                        workspace_id,
+                        mission_id,
+                        second_run_id,
+                        "clarification-exact",
+                        2,
+                        "draft-sha-2",
+                        "awaiting_answer",
                         "[]",
                     ),
                 )
@@ -621,6 +643,18 @@ class StoreTests(unittest.TestCase):
                     ).fetchall(),
                     [(0, "source-a", "revision-a"), (1, "source-b", "revision-b")],
                 )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        insert_mission_source_sql,
+                        (
+                            workspace_id,
+                            mission_id,
+                            2,
+                            "source-c",
+                            "revision-c",
+                            "wrong-sha",
+                        ),
+                    )
                 for values in (
                     (workspace_id, mission_id, 0, *sources[2]),
                     (workspace_id, mission_id, 2, *sources[0]),
@@ -655,6 +689,19 @@ class StoreTests(unittest.TestCase):
                     ).fetchall(),
                     [(0, "source-a", "revision-a"), (1, "source-b", "revision-b")],
                 )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        insert_run_source_sql,
+                        (
+                            workspace_id,
+                            mission_id,
+                            run_id,
+                            2,
+                            "source-c",
+                            "revision-c",
+                            "wrong-sha",
+                        ),
+                    )
                 for values in (
                     (workspace_id, mission_id, run_id, 0, *sources[2]),
                     (workspace_id, mission_id, run_id, 2, *sources[0]),
@@ -669,18 +716,50 @@ class StoreTests(unittest.TestCase):
             workspace_id = store.create_workspace("Provider receipt parent").workspace_id
             mission_id = "mission-provider"
             run_id = "run-provider"
+            manifest_id = "manifest-provider"
+            manifest_sha256 = "manifest-provider-sha"
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
                 connection.execute("PRAGMA foreign_keys=ON")
                 for attempt_id in ("attempt-provider-1", "attempt-provider-2"):
                     _insert_attempt(connection, workspace_id, attempt_id)
                 _insert_mission(connection, workspace_id, mission_id, "attempt-provider-1")
                 _insert_run(connection, workspace_id, mission_id, run_id, "provider-parent")
+                connection.execute(
+                    """
+                    INSERT INTO context_manifests
+                        (workspace_id, mission_id, run_id, manifest_id,
+                         mission_state_version, turn_index, draft_id, draft_version,
+                         draft_sha256, source_refs_json, clarification_ids_json,
+                         tool_receipt_ids_json, budget_json, excluded_reasons_json,
+                         sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        workspace_id,
+                        mission_id,
+                        run_id,
+                        manifest_id,
+                        1,
+                        1,
+                        None,
+                        None,
+                        None,
+                        "[]",
+                        "[]",
+                        "[]",
+                        "{}",
+                        "[]",
+                        manifest_sha256,
+                    ),
+                )
 
                 insert_receipt_sql = """
                     INSERT INTO provider_receipts
                         (workspace_id, receipt_id, attempt_id, mission_id, run_id,
-                         turn_index, created_at, status, config_json, p0_sha256)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         turn_index, created_at, status, config_json, p0_sha256,
+                         context_manifest_id, context_manifest_sha256,
+                         tool_schema_sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
 
                 def receipt_values(
@@ -689,6 +768,9 @@ class StoreTests(unittest.TestCase):
                     parent_mission_id: str | None,
                     parent_run_id: str | None,
                     turn_index: int,
+                    parent_manifest_id: str | None = None,
+                    parent_manifest_sha256: str | None = None,
+                    tool_schema_sha256: str | None = None,
                 ) -> tuple[object, ...]:
                     return (
                         workspace_id,
@@ -701,15 +783,14 @@ class StoreTests(unittest.TestCase):
                         "succeeded",
                         "{}",
                         "p0-sha",
+                        parent_manifest_id,
+                        parent_manifest_sha256,
+                        tool_schema_sha256,
                     )
 
                 connection.execute(
                     insert_receipt_sql,
                     receipt_values("receipt-attempt", "attempt-provider-1", None, None, 1),
-                )
-                connection.execute(
-                    insert_receipt_sql,
-                    receipt_values("receipt-run", None, mission_id, run_id, 1),
                 )
                 invalid_shapes = (
                     receipt_values("receipt-null", None, None, None, 1),
@@ -719,15 +800,107 @@ class StoreTests(unittest.TestCase):
                         mission_id,
                         run_id,
                         1,
+                        manifest_id,
+                        manifest_sha256,
+                        "tool-schema-sha",
                     ),
                     receipt_values("receipt-mission-only", None, mission_id, None, 1),
                     receipt_values("receipt-run-only", None, None, run_id, 1),
-                    receipt_values("receipt-zero-turn", None, mission_id, run_id, 0),
+                    receipt_values(
+                        "receipt-zero-turn",
+                        None,
+                        mission_id,
+                        run_id,
+                        0,
+                        manifest_id,
+                        manifest_sha256,
+                        "tool-schema-sha",
+                    ),
+                    receipt_values(
+                        "receipt-attempt-turn-two",
+                        "attempt-provider-2",
+                        None,
+                        None,
+                        2,
+                    ),
+                    receipt_values(
+                        "receipt-attempt-with-context",
+                        "attempt-provider-2",
+                        None,
+                        None,
+                        1,
+                        manifest_id,
+                        manifest_sha256,
+                        "tool-schema-sha",
+                    ),
+                    receipt_values(
+                        "receipt-run-missing-manifest-id",
+                        None,
+                        mission_id,
+                        run_id,
+                        1,
+                        None,
+                        manifest_sha256,
+                        "tool-schema-sha",
+                    ),
+                    receipt_values(
+                        "receipt-run-missing-manifest-hash",
+                        None,
+                        mission_id,
+                        run_id,
+                        1,
+                        manifest_id,
+                        None,
+                        "tool-schema-sha",
+                    ),
+                    receipt_values(
+                        "receipt-run-missing-tool-hash",
+                        None,
+                        mission_id,
+                        run_id,
+                        1,
+                        manifest_id,
+                        manifest_sha256,
+                        None,
+                    ),
+                    receipt_values(
+                        "receipt-run-wrong-manifest-id",
+                        None,
+                        mission_id,
+                        run_id,
+                        1,
+                        "wrong-manifest",
+                        manifest_sha256,
+                        "tool-schema-sha",
+                    ),
+                    receipt_values(
+                        "receipt-run-wrong-manifest-hash",
+                        None,
+                        mission_id,
+                        run_id,
+                        1,
+                        manifest_id,
+                        "wrong-manifest-sha",
+                        "tool-schema-sha",
+                    ),
                 )
                 for values in invalid_shapes:
                     with self.subTest(receipt_id=values[1]):
                         with self.assertRaises(sqlite3.IntegrityError):
                             connection.execute(insert_receipt_sql, values)
+                connection.execute(
+                    insert_receipt_sql,
+                    receipt_values(
+                        "receipt-run",
+                        None,
+                        mission_id,
+                        run_id,
+                        1,
+                        manifest_id,
+                        manifest_sha256,
+                        "tool-schema-sha",
+                    ),
+                )
 
                 self.assertEqual(
                     connection.execute(
