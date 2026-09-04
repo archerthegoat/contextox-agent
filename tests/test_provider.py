@@ -306,6 +306,14 @@ def _child_wait_after_request_started(send_conn, packet_bytes: bytes) -> None:
     time.sleep(10.0)
 
 
+def _child_send_content_then_wait(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    _synthetic_send(send_conn, call_id, 2, "request_started")
+    _synthetic_send(send_conn, call_id, 3, "content_delta", content="ready")
+    time.sleep(10.0)
+
+
 def _child_send_activity_then_wait(send_conn, packet_bytes: bytes) -> None:
     call_id = _synthetic_call_id(packet_bytes)
     _synthetic_send(send_conn, call_id, 1, "connected")
@@ -1107,11 +1115,12 @@ class ProviderTests(unittest.TestCase):
 
     def test_global_provider_child_slot_is_one_and_wait_is_cancelable(self) -> None:
         first_cancel = Event()
+        first_request_started = Event()
         first_errors: list[BaseException] = []
 
         def run_first() -> None:
             try:
-                with patch.object(provider_module, "_provider_child_main", _child_wait_after_request_started), patch.dict(
+                with patch.object(provider_module, "_provider_child_main", _child_send_content_then_wait), patch.dict(
                     os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
                 ):
                     DeepSeekProvider().complete(
@@ -1126,6 +1135,7 @@ class ProviderTests(unittest.TestCase):
                             total_ms=5000,
                         ),
                         cancel_event=first_cancel,
+                        on_content=lambda _content: first_request_started.set(),
                     )
             except BaseException as exc:
                 first_errors.append(exc)
@@ -1134,7 +1144,7 @@ class ProviderTests(unittest.TestCase):
         first_thread = Thread(target=run_first)
         first_thread.start()
         try:
-            self._wait_for_provider_slot()
+            self.assertTrue(first_request_started.wait(2.0))
             second_cancel = Event()
             second_errors: list[BaseException] = []
 
