@@ -121,3 +121,16 @@
 - 本次派发状态：RUNNING，任务已接单并完成基线核对，不是仅创建文档。模块交付与其最终检查结果仍待该任务提交后复核；本节不自动更新后续进度。
 - Git 权限：仅本地限定文件与小步 commit；不 push、不 merge main、不发布/部署、不删除分支或 worktree。
 - 真实案例：NOT RUN；真实模型：NOT RUN；人工验收：PENDING。共享基线检查通过不替代本模块或端到端验证。
+
+## 12. W2.1 Provider 网络生命周期修正（待人批准）
+
+- 目标：使 DNS、TCP、TLS、请求发送和响应读取都受主进程可执行的 deadline、取消和关闭约束。
+- 实现范围：`src/contextox/provider.py`、`tests/test_provider.py`；如现有文件无法保持职责清晰，新增单一私有 `src/contextox/provider_process.py` 前必须由主协调者复核，不扩大公共 API。
+- 生产默认路径：每次 Provider 请求使用一个 `spawn` 子进程；注入 fake transport 的单元测试路径可以保持进程内执行。
+- 子进程禁止接收 Store、SQLite、领域工具、任意路径和业务状态；禁止写文件、日志或持久状态。
+- IPC 使用每次调用独占的有界单向通道；禁止共享 Queue、可复用 Pipe、共享锁和后台常驻 worker。
+- V0 全局并发 Provider 子进程上限为 1；等待可取消并计入 Run budget。
+- 请求发送后发生取消、超时或异常时，结果保持 unknown；不得自动重试。
+- 必测反例：DNS 阻塞、TCP connect 阻塞、TLS handshake 阻塞、request send 阻塞、first/idle/total timeout、各阶段取消、服务关闭、子进程 crash、非法/越序/超限 IPC、并发槽位、无晚到回调、无残留子进程。
+- 回归：既有 Provider、Agent 和全量标准库测试；真实 DeepSeek 调用仍需单独授权。
+- Git：只允许本地小步提交；经协调复核后按本次确认的集成生命周期推送、合并和读回。
