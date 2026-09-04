@@ -86,6 +86,109 @@ def _normalize_sql(sql: str | None) -> str:
     return " ".join((sql or "").split()).casefold()
 
 
+def _insert_attempt(
+    connection: sqlite3.Connection,
+    workspace_id: str,
+    attempt_id: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO mission_draft_attempts
+            (workspace_id, attempt_id, created_at, original_input, status)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (workspace_id, attempt_id, "2026-01-01T00:00:00+00:00", "input", "ready"),
+    )
+
+
+def _insert_mission(
+    connection: sqlite3.Connection,
+    workspace_id: str,
+    mission_id: str,
+    attempt_id: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO missions
+            (workspace_id, mission_id, created_at, state_version, status,
+             title, goal, completion_criteria_json, scope_notes_json,
+             original_attempt_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            workspace_id,
+            mission_id,
+            "2026-01-01T00:00:00+00:00",
+            1,
+            "active",
+            "Title",
+            "Goal",
+            "[]",
+            "[]",
+            attempt_id,
+        ),
+    )
+
+
+def _insert_run(
+    connection: sqlite3.Connection,
+    workspace_id: str,
+    mission_id: str,
+    run_id: str,
+    client_request_id: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO runs
+            (workspace_id, mission_id, run_id, client_request_id, created_at,
+             status, budget_json, last_sequence)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            workspace_id,
+            mission_id,
+            run_id,
+            client_request_id,
+            "2026-01-01T00:00:00+00:00",
+            "failed",
+            "{}",
+            0,
+        ),
+    )
+
+
+def _insert_source_revision(
+    connection: sqlite3.Connection,
+    workspace_id: str,
+    source_id: str,
+    revision_id: str,
+    sha256: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO source_revisions
+            (workspace_id, source_id, revision_id, original_name, media_type,
+             byte_size, sha256, observed_at, permission_status, parse_status,
+             parser_version, artifact_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            workspace_id,
+            source_id,
+            revision_id,
+            f"{source_id}.csv",
+            "text/csv",
+            1,
+            sha256,
+            "2026-01-01T00:00:00+00:00",
+            "allowed",
+            "succeeded",
+            "v1",
+            "{}",
+        ),
+    )
+
+
 class StoreTests(unittest.TestCase):
     def test_initializes_exact_v2_schema_and_persists_after_restart(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
@@ -146,45 +249,8 @@ class StoreTests(unittest.TestCase):
             run_id = "00000000-0000-4000-8000-000000000012"
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
                 connection.execute("PRAGMA foreign_keys=ON")
-                connection.execute(
-                    """
-                    INSERT INTO mission_draft_attempts
-                        (workspace_id, attempt_id, created_at, original_input, status)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (workspace_id, attempt_id, "2026-01-01T00:00:00+00:00", "input", "ready"),
-                )
-                connection.execute(
-                    """
-                    INSERT INTO missions
-                        (workspace_id, mission_id, created_at, state_version, status,
-                         title, goal, completion_criteria_json, scope_notes_json,
-                         original_attempt_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        workspace_id,
-                        mission_id,
-                        "2026-01-01T00:00:00+00:00",
-                        1,
-                        "active",
-                        "Title",
-                        "Goal",
-                        "[]",
-                        "[]",
-                        attempt_id,
-                    ),
-                )
-                run_values = (
-                    workspace_id,
-                    mission_id,
-                    run_id,
-                    "client-1",
-                    "2026-01-01T00:00:00+00:00",
-                    "queued",
-                    "{}",
-                    0,
-                )
+                _insert_attempt(connection, workspace_id, attempt_id)
+                _insert_mission(connection, workspace_id, mission_id, attempt_id)
                 connection.execute(
                     """
                     INSERT INTO runs
@@ -192,7 +258,16 @@ class StoreTests(unittest.TestCase):
                          status, budget_json, last_sequence)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    run_values,
+                    (
+                        workspace_id,
+                        mission_id,
+                        run_id,
+                        "client-1",
+                        "2026-01-01T00:00:00+00:00",
+                        "queued",
+                        "{}",
+                        0,
+                    ),
                 )
                 with self.assertRaises(sqlite3.IntegrityError):
                     connection.execute(
@@ -213,23 +288,459 @@ class StoreTests(unittest.TestCase):
                             0,
                         ),
                     )
+                _insert_run(
+                    connection,
+                    workspace_id,
+                    mission_id,
+                    "00000000-0000-4000-8000-000000000014",
+                    "client-3",
+                )
+
+    def test_definition_draft_history_and_nullable_references_are_enforced(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Draft constraints").workspace_id
+            mission_id = "mission-draft"
+            attempt_id = "attempt-draft"
+            run_id = "run-draft-null"
+            second_run_id = "run-draft-versioned"
+            draft_id = "draft-1"
+            with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                _insert_attempt(connection, workspace_id, attempt_id)
+                _insert_mission(connection, workspace_id, mission_id, attempt_id)
+                _insert_run(connection, workspace_id, mission_id, run_id, "draft-null")
+                _insert_run(
+                    connection,
+                    workspace_id,
+                    mission_id,
+                    second_run_id,
+                    "draft-versioned",
+                )
+
+                insert_draft_sql = """
+                    INSERT INTO definition_drafts
+                        (workspace_id, mission_id, draft_id, version, sha256, status,
+                         semantic_approval, fields_json, relationships_json,
+                         unresolved_items_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
                 connection.execute(
-                    """
-                    INSERT INTO runs
-                        (workspace_id, mission_id, run_id, client_request_id, created_at,
-                         status, budget_json, last_sequence)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                    insert_draft_sql,
                     (
                         workspace_id,
                         mission_id,
-                        "00000000-0000-4000-8000-000000000014",
-                        "client-3",
-                        "2026-01-01T00:00:00+00:00",
-                        "failed",
-                        "{}",
-                        0,
+                        draft_id,
+                        1,
+                        "draft-sha-1",
+                        "draft",
+                        "pending",
+                        "[]",
+                        "[]",
+                        "[]",
                     ),
+                )
+                connection.execute(
+                    insert_draft_sql,
+                    (
+                        workspace_id,
+                        mission_id,
+                        draft_id,
+                        2,
+                        "draft-sha-2",
+                        "draft",
+                        "pending",
+                        "[]",
+                        "[]",
+                        "[]",
+                    ),
+                )
+                self.assertEqual(
+                    connection.execute(
+                        """
+                        SELECT draft_id, version, sha256
+                        FROM definition_drafts
+                        WHERE workspace_id = ? AND mission_id = ?
+                        ORDER BY version
+                        """,
+                        (workspace_id, mission_id),
+                    ).fetchall(),
+                    [(draft_id, 1, "draft-sha-1"), (draft_id, 2, "draft-sha-2")],
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        insert_draft_sql,
+                        (
+                            workspace_id,
+                            mission_id,
+                            "another-draft",
+                            2,
+                            "draft-sha-another",
+                            "draft",
+                            "pending",
+                            "[]",
+                            "[]",
+                            "[]",
+                        ),
+                    )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        insert_draft_sql,
+                        (
+                            workspace_id,
+                            mission_id,
+                            "zero-draft",
+                            0,
+                            "draft-sha-zero",
+                            "draft",
+                            "pending",
+                            "[]",
+                            "[]",
+                            "[]",
+                        ),
+                    )
+
+                insert_manifest_sql = """
+                    INSERT INTO context_manifests
+                        (workspace_id, mission_id, run_id, manifest_id,
+                         mission_state_version, turn_index, draft_id, draft_version,
+                         draft_sha256, source_refs_json, clarification_ids_json,
+                         tool_receipt_ids_json, budget_json, excluded_reasons_json,
+                         sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                manifest_tail = ("[]", "[]", "[]", "{}", "[]")
+                connection.execute(
+                    insert_manifest_sql,
+                    (
+                        workspace_id,
+                        mission_id,
+                        run_id,
+                        "manifest-null",
+                        1,
+                        1,
+                        None,
+                        None,
+                        None,
+                        *manifest_tail,
+                        "manifest-sha-null",
+                    ),
+                )
+                connection.execute(
+                    insert_manifest_sql,
+                    (
+                        workspace_id,
+                        mission_id,
+                        second_run_id,
+                        "manifest-versioned",
+                        1,
+                        1,
+                        draft_id,
+                        2,
+                        "draft-sha-2",
+                        *manifest_tail,
+                        "manifest-sha-versioned",
+                    ),
+                )
+                for invalid_id, invalid_version in ((draft_id, None), (None, 2)):
+                    with self.subTest(
+                        table="context_manifests",
+                        draft_id=invalid_id,
+                        draft_version=invalid_version,
+                    ):
+                        with self.assertRaises(sqlite3.IntegrityError):
+                            connection.execute(
+                                insert_manifest_sql,
+                                (
+                                    workspace_id,
+                                    mission_id,
+                                    run_id,
+                                    f"manifest-invalid-{invalid_id}-{invalid_version}",
+                                    1,
+                                    2,
+                                    invalid_id,
+                                    invalid_version,
+                                    None,
+                                    *manifest_tail,
+                                    f"manifest-invalid-sha-{invalid_id}-{invalid_version}",
+                                ),
+                            )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        insert_manifest_sql,
+                        (
+                            workspace_id,
+                            mission_id,
+                            run_id,
+                            "manifest-missing-version",
+                            1,
+                            2,
+                            draft_id,
+                            3,
+                            "draft-sha-3",
+                            *manifest_tail,
+                            "manifest-sha-missing-version",
+                        ),
+                    )
+
+                insert_terminal_sql = """
+                    INSERT INTO terminal_receipts
+                        (workspace_id, mission_id, run_id, receipt_id, created_at,
+                         terminal_tool, outcome, draft_id, draft_version, draft_sha256,
+                         clarification_ids_json, provider_receipt_ids_json,
+                         tool_receipt_ids_json, source_refs_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                terminal_prefix = (
+                    workspace_id,
+                    mission_id,
+                    run_id,
+                    "terminal-null",
+                    "2026-01-01T00:00:00+00:00",
+                    "finish_run",
+                    "partial",
+                )
+                connection.execute(
+                    insert_terminal_sql,
+                    (*terminal_prefix, None, None, None, "[]", "[]", "[]", "[]"),
+                )
+                for invalid_id, invalid_version in ((draft_id, None), (None, 2)):
+                    with self.subTest(
+                        table="terminal_receipts",
+                        draft_id=invalid_id,
+                        draft_version=invalid_version,
+                    ):
+                        with self.assertRaises(sqlite3.IntegrityError):
+                            connection.execute(
+                                insert_terminal_sql,
+                                (
+                                    workspace_id,
+                                    mission_id,
+                                    second_run_id,
+                                    f"terminal-invalid-{invalid_id}-{invalid_version}",
+                                    "2026-01-01T00:00:00+00:00",
+                                    "finish_run",
+                                    "partial",
+                                    invalid_id,
+                                    invalid_version,
+                                    None,
+                                    "[]",
+                                    "[]",
+                                    "[]",
+                                    "[]",
+                                ),
+                            )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        insert_terminal_sql,
+                        (
+                            workspace_id,
+                            mission_id,
+                            second_run_id,
+                            "terminal-missing-version",
+                            "2026-01-01T00:00:00+00:00",
+                            "finish_run",
+                            "partial",
+                            draft_id,
+                            3,
+                            "draft-sha-3",
+                            "[]",
+                            "[]",
+                            "[]",
+                            "[]",
+                        ),
+                    )
+                connection.execute(
+                    insert_terminal_sql,
+                    (
+                        workspace_id,
+                        mission_id,
+                        second_run_id,
+                        "terminal-versioned",
+                        "2026-01-01T00:00:00+00:00",
+                        "finish_run",
+                        "partial",
+                        draft_id,
+                        2,
+                        "draft-sha-2",
+                        "[]",
+                        "[]",
+                        "[]",
+                        "[]",
+                    ),
+                )
+
+    def test_source_reference_ordinals_preserve_order_and_reject_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Source order").workspace_id
+            mission_id = "mission-sources"
+            attempt_id = "attempt-sources"
+            run_id = "run-sources"
+            sources = (
+                ("source-a", "revision-a", "sha-a"),
+                ("source-b", "revision-b", "sha-b"),
+                ("source-c", "revision-c", "sha-c"),
+            )
+            with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                _insert_attempt(connection, workspace_id, attempt_id)
+                _insert_mission(connection, workspace_id, mission_id, attempt_id)
+                _insert_run(connection, workspace_id, mission_id, run_id, "source-order")
+                for source_id, revision_id, sha256 in sources:
+                    _insert_source_revision(
+                        connection,
+                        workspace_id,
+                        source_id,
+                        revision_id,
+                        sha256,
+                    )
+
+                insert_mission_source_sql = """
+                    INSERT INTO mission_sources
+                        (workspace_id, mission_id, ordinal, source_id, revision_id, sha256)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """
+                connection.execute(
+                    insert_mission_source_sql,
+                    (workspace_id, mission_id, 1, *sources[1]),
+                )
+                connection.execute(
+                    insert_mission_source_sql,
+                    (workspace_id, mission_id, 0, *sources[0]),
+                )
+                self.assertEqual(
+                    connection.execute(
+                        """
+                        SELECT ordinal, source_id, revision_id
+                        FROM mission_sources
+                        WHERE workspace_id = ? AND mission_id = ?
+                        ORDER BY ordinal
+                        """,
+                        (workspace_id, mission_id),
+                    ).fetchall(),
+                    [(0, "source-a", "revision-a"), (1, "source-b", "revision-b")],
+                )
+                for values in (
+                    (workspace_id, mission_id, 0, *sources[2]),
+                    (workspace_id, mission_id, 2, *sources[0]),
+                    (workspace_id, mission_id, -1, *sources[2]),
+                ):
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        connection.execute(insert_mission_source_sql, values)
+
+                insert_run_source_sql = """
+                    INSERT INTO run_sources
+                        (workspace_id, mission_id, run_id, ordinal,
+                         source_id, revision_id, sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+                connection.execute(
+                    insert_run_source_sql,
+                    (workspace_id, mission_id, run_id, 1, *sources[1]),
+                )
+                connection.execute(
+                    insert_run_source_sql,
+                    (workspace_id, mission_id, run_id, 0, *sources[0]),
+                )
+                self.assertEqual(
+                    connection.execute(
+                        """
+                        SELECT ordinal, source_id, revision_id
+                        FROM run_sources
+                        WHERE workspace_id = ? AND mission_id = ? AND run_id = ?
+                        ORDER BY ordinal
+                        """,
+                        (workspace_id, mission_id, run_id),
+                    ).fetchall(),
+                    [(0, "source-a", "revision-a"), (1, "source-b", "revision-b")],
+                )
+                for values in (
+                    (workspace_id, mission_id, run_id, 0, *sources[2]),
+                    (workspace_id, mission_id, run_id, 2, *sources[0]),
+                    (workspace_id, mission_id, run_id, -1, *sources[2]),
+                ):
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        connection.execute(insert_run_source_sql, values)
+
+    def test_provider_receipt_requires_one_valid_parent_shape_and_positive_turn(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Provider receipt parent").workspace_id
+            mission_id = "mission-provider"
+            run_id = "run-provider"
+            with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                for attempt_id in ("attempt-provider-1", "attempt-provider-2"):
+                    _insert_attempt(connection, workspace_id, attempt_id)
+                _insert_mission(connection, workspace_id, mission_id, "attempt-provider-1")
+                _insert_run(connection, workspace_id, mission_id, run_id, "provider-parent")
+
+                insert_receipt_sql = """
+                    INSERT INTO provider_receipts
+                        (workspace_id, receipt_id, attempt_id, mission_id, run_id,
+                         turn_index, created_at, status, config_json, p0_sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+
+                def receipt_values(
+                    receipt_id: str,
+                    attempt_id: str | None,
+                    parent_mission_id: str | None,
+                    parent_run_id: str | None,
+                    turn_index: int,
+                ) -> tuple[object, ...]:
+                    return (
+                        workspace_id,
+                        receipt_id,
+                        attempt_id,
+                        parent_mission_id,
+                        parent_run_id,
+                        turn_index,
+                        "2026-01-01T00:00:00+00:00",
+                        "succeeded",
+                        "{}",
+                        "p0-sha",
+                    )
+
+                connection.execute(
+                    insert_receipt_sql,
+                    receipt_values("receipt-attempt", "attempt-provider-1", None, None, 1),
+                )
+                connection.execute(
+                    insert_receipt_sql,
+                    receipt_values("receipt-run", None, mission_id, run_id, 1),
+                )
+                invalid_shapes = (
+                    receipt_values("receipt-null", None, None, None, 1),
+                    receipt_values(
+                        "receipt-mixed",
+                        "attempt-provider-2",
+                        mission_id,
+                        run_id,
+                        1,
+                    ),
+                    receipt_values("receipt-mission-only", None, mission_id, None, 1),
+                    receipt_values("receipt-run-only", None, None, run_id, 1),
+                    receipt_values("receipt-zero-turn", None, mission_id, run_id, 0),
+                )
+                for values in invalid_shapes:
+                    with self.subTest(receipt_id=values[1]):
+                        with self.assertRaises(sqlite3.IntegrityError):
+                            connection.execute(insert_receipt_sql, values)
+
+                self.assertEqual(
+                    connection.execute(
+                        """
+                        SELECT receipt_id, attempt_id, mission_id, run_id, turn_index
+                        FROM provider_receipts
+                        ORDER BY receipt_id
+                        """
+                    ).fetchall(),
+                    [
+                        ("receipt-attempt", "attempt-provider-1", None, None, 1),
+                        ("receipt-run", None, mission_id, run_id, 1),
+                    ],
                 )
 
     def test_migrates_exact_v1_and_preserves_multiple_workspaces(self) -> None:
@@ -558,6 +1069,58 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(v2_diagnostics["workspace_store_open"].actual, "open")
             self.assertEqual(v2_diagnostics["workspace_store_readwrite"].status, "ready")
             self.assertEqual(v2_diagnostics["workspace_store_schema"].actual, "user_version=2")
+
+    def test_open_and_doctor_fail_closed_for_foreign_key_violations(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
+            data_dir = Path(directory)
+            store = WorkspaceStore.open(data_dir)
+            workspace_id = store.create_workspace("Broken parent").workspace_id
+            with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                connection.execute("PRAGMA foreign_keys=OFF")
+                connection.execute(
+                    """
+                    INSERT INTO missions
+                        (workspace_id, mission_id, created_at, state_version, status,
+                         title, goal, completion_criteria_json, scope_notes_json,
+                         original_attempt_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        workspace_id,
+                        "mission-with-missing-attempt",
+                        "2026-01-01T00:00:00+00:00",
+                        1,
+                        "active",
+                        "Title",
+                        "Goal",
+                        "[]",
+                        "[]",
+                        "missing-attempt",
+                    ),
+                )
+                self.assertEqual(
+                    connection.execute("PRAGMA integrity_check").fetchone()[0],
+                    "ok",
+                )
+                self.assertNotEqual(
+                    connection.execute("PRAGMA foreign_key_check").fetchall(),
+                    [],
+                )
+
+            with self.assertRaises(WorkspaceStoreUnavailableError):
+                WorkspaceStore.open(data_dir)
+
+            diagnostics = {
+                diagnostic.key: diagnostic
+                for diagnostic in WorkspaceStore.diagnose(data_dir)
+            }
+            self.assertEqual(diagnostics["workspace_store_open"].status, "ready")
+            self.assertEqual(diagnostics["workspace_store_schema"].status, "blocked")
+            self.assertEqual(
+                diagnostics["workspace_store_schema"].actual,
+                "foreign_key_violation",
+            )
+            self.assertEqual(diagnostics["workspace_store_readwrite"].status, "not_run")
 
     def test_exact_schema_with_wal_mode_is_supported(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:

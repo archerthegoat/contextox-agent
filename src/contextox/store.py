@@ -270,10 +270,12 @@ _EXPECTED_MISSION_SOURCES_SQL = """
 CREATE TABLE mission_sources (
     workspace_id TEXT NOT NULL,
     mission_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
     source_id TEXT NOT NULL,
     revision_id TEXT NOT NULL,
     sha256 TEXT NOT NULL,
     PRIMARY KEY (workspace_id, mission_id, source_id, revision_id),
+    UNIQUE (workspace_id, mission_id, ordinal),
     FOREIGN KEY (workspace_id, mission_id)
         REFERENCES missions(workspace_id, mission_id),
     FOREIGN KEY (workspace_id, source_id, revision_id)
@@ -332,10 +334,12 @@ CREATE TABLE run_sources (
     workspace_id TEXT NOT NULL,
     mission_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
     source_id TEXT NOT NULL,
     revision_id TEXT NOT NULL,
     sha256 TEXT NOT NULL,
     PRIMARY KEY (workspace_id, mission_id, run_id, source_id, revision_id),
+    UNIQUE (workspace_id, mission_id, run_id, ordinal),
     FOREIGN KEY (workspace_id, mission_id, run_id)
         REFERENCES runs(workspace_id, mission_id, run_id),
     FOREIGN KEY (workspace_id, source_id, revision_id)
@@ -403,10 +407,15 @@ CREATE TABLE context_manifests (
     PRIMARY KEY (workspace_id, mission_id, run_id, manifest_id),
     UNIQUE (workspace_id, mission_id, run_id, turn_index),
     UNIQUE (workspace_id, mission_id, run_id, sha256),
+    CHECK (
+        (draft_id IS NULL AND draft_version IS NULL)
+        OR (draft_id IS NOT NULL AND draft_version IS NOT NULL)
+    ),
+    CHECK (draft_version IS NULL OR draft_version > 0),
     FOREIGN KEY (workspace_id, mission_id, run_id)
         REFERENCES runs(workspace_id, mission_id, run_id),
-    FOREIGN KEY (workspace_id, mission_id, draft_id)
-        REFERENCES definition_drafts(workspace_id, mission_id, draft_id)
+    FOREIGN KEY (workspace_id, mission_id, draft_id, draft_version)
+        REFERENCES definition_drafts(workspace_id, mission_id, draft_id, version)
 )
 """
 
@@ -440,9 +449,10 @@ CREATE TABLE definition_drafts (
     fields_json TEXT NOT NULL,
     relationships_json TEXT NOT NULL,
     unresolved_items_json TEXT NOT NULL,
-    PRIMARY KEY (workspace_id, mission_id, draft_id),
+    PRIMARY KEY (workspace_id, mission_id, draft_id, version),
     UNIQUE (workspace_id, mission_id, version),
     UNIQUE (workspace_id, mission_id, sha256),
+    CHECK (version > 0),
     FOREIGN KEY (workspace_id, mission_id)
         REFERENCES missions(workspace_id, mission_id)
 )
@@ -472,6 +482,11 @@ CREATE TABLE provider_receipts (
     PRIMARY KEY (workspace_id, receipt_id),
     UNIQUE (workspace_id, attempt_id),
     UNIQUE (workspace_id, mission_id, run_id, turn_index),
+    CHECK (turn_index > 0),
+    CHECK (
+        (attempt_id IS NOT NULL AND mission_id IS NULL AND run_id IS NULL)
+        OR (attempt_id IS NULL AND mission_id IS NOT NULL AND run_id IS NOT NULL)
+    ),
     FOREIGN KEY (workspace_id, attempt_id)
         REFERENCES mission_draft_attempts(workspace_id, attempt_id),
     FOREIGN KEY (workspace_id, mission_id, run_id)
@@ -523,10 +538,15 @@ CREATE TABLE terminal_receipts (
     source_refs_json TEXT NOT NULL,
     PRIMARY KEY (workspace_id, receipt_id),
     UNIQUE (workspace_id, mission_id, run_id),
+    CHECK (
+        (draft_id IS NULL AND draft_version IS NULL)
+        OR (draft_id IS NOT NULL AND draft_version IS NOT NULL)
+    ),
+    CHECK (draft_version IS NULL OR draft_version > 0),
     FOREIGN KEY (workspace_id, mission_id, run_id)
         REFERENCES runs(workspace_id, mission_id, run_id),
-    FOREIGN KEY (workspace_id, mission_id, draft_id)
-        REFERENCES definition_drafts(workspace_id, mission_id, draft_id)
+    FOREIGN KEY (workspace_id, mission_id, draft_id, draft_version)
+        REFERENCES definition_drafts(workspace_id, mission_id, draft_id, version)
 )
 """
 
@@ -638,11 +658,12 @@ def _validate_connection_schema(connection: sqlite3.Connection) -> None:
         if not _schema_is_exact(connection):
             raise WorkspaceSchemaUnsupportedError()
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        foreign_key_violations = connection.execute("PRAGMA foreign_key_check").fetchall()
     except WorkspaceStoreError:
         raise
     except sqlite3.DatabaseError as exc:
         raise _store_error(exc) from exc
-    if integrity != "ok":
+    if integrity != "ok" or foreign_key_violations:
         raise WorkspaceStoreUnavailableError()
 
 
@@ -1163,13 +1184,30 @@ class WorkspaceStore:
                 integrity = read_connection.execute("PRAGMA integrity_check").fetchone()[0]
                 if integrity != "ok":
                     raise WorkspaceStoreUnavailableError()
-                schema_check = StoreDiagnostic(
-                    key="workspace_store_schema",
-                    status="ready",
-                    detail="The Workspace database uses schema version 2.",
-                    actual=f"user_version={SCHEMA_VERSION}",
-                    expected=f"user_version={SCHEMA_VERSION}; exact v2 table set",
-                )
+                foreign_key_violations = read_connection.execute(
+                    "PRAGMA foreign_key_check"
+                ).fetchall()
+                if foreign_key_violations:
+                    schema_check = StoreDiagnostic(
+                        key="workspace_store_schema",
+                        status="blocked",
+                        detail="The Workspace database has invalid parent references.",
+                        actual="foreign_key_violation",
+                        expected="no foreign key violations",
+                    )
+                    readwrite_check = StoreDiagnostic(
+                        key="workspace_store_readwrite",
+                        status="not_run",
+                        detail="Read/write probe requires valid parent references.",
+                    )
+                else:
+                    schema_check = StoreDiagnostic(
+                        key="workspace_store_schema",
+                        status="ready",
+                        detail="The Workspace database uses schema version 2.",
+                        actual=f"user_version={SCHEMA_VERSION}",
+                        expected=f"user_version={SCHEMA_VERSION}; exact v2 table set",
+                    )
         except WorkspaceSchemaUnsupportedError:
             schema_check = StoreDiagnostic(
                 key="workspace_store_schema",
