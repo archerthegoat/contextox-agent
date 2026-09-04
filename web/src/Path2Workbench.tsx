@@ -311,6 +311,13 @@ const PATH2_OBJECT_POINTERS_PREFIX = "contextox.path2.object-pointers.";
 
 const PENDING_ACTION_KINDS: PendingActionKind[] = ["upload", "attempt", "confirm", "run_start", "cancel"];
 
+type PendingActionMutationFailure = "storage" | "conflict";
+
+type Path2ObjectPointersRead = {
+  pointers: Path2ObjectPointers;
+  readable: boolean;
+};
+
 function emptyPath2ObjectPointers(): Path2ObjectPointers {
   return {
     attemptId: null,
@@ -403,37 +410,63 @@ function parsePendingAction(value: unknown, workspaceId: string): Path2PendingAc
 }
 
 export function readPath2ObjectPointers(workspaceId: string): Path2ObjectPointers {
+  return readPath2ObjectPointersState(workspaceId).pointers;
+}
+
+function readPath2ObjectPointersState(workspaceId: string): Path2ObjectPointersRead {
   if (typeof window === "undefined") {
-    return emptyPath2ObjectPointers();
+    return { pointers: emptyPath2ObjectPointers(), readable: false };
   }
   try {
     const raw = window.sessionStorage.getItem(`${PATH2_OBJECT_POINTERS_PREFIX}${workspaceId}`);
     if (!raw) {
-      return emptyPath2ObjectPointers();
+      return { pointers: emptyPath2ObjectPointers(), readable: true };
     }
     const value: unknown = JSON.parse(raw);
     if (!isRecord(value)) {
-      return emptyPath2ObjectPointers();
+      return { pointers: emptyPath2ObjectPointers(), readable: false };
+    }
+    for (const key of ["attemptId", "missionId", "runId", "runMissionId"]) {
+      if (
+        Object.prototype.hasOwnProperty.call(value, key) &&
+        value[key] !== null &&
+        storedString(value[key]) === null
+      ) {
+        return { pointers: emptyPath2ObjectPointers(), readable: false };
+      }
     }
     const pendingActions: Path2PendingActions = {};
     const storedPendingActions = value.pendingActions;
+    if (storedPendingActions !== undefined && !isRecord(storedPendingActions)) {
+      return { pointers: emptyPath2ObjectPointers(), readable: false };
+    }
     if (isRecord(storedPendingActions)) {
-      PENDING_ACTION_KINDS.forEach((kind) => {
-        const pending = parsePendingAction(storedPendingActions[kind], workspaceId);
-        if (pending?.kind === kind) {
-          pendingActions[kind] = pending;
+      if (Object.keys(storedPendingActions).some((key) => !PENDING_ACTION_KINDS.includes(key as PendingActionKind))) {
+        return { pointers: emptyPath2ObjectPointers(), readable: false };
+      }
+      for (const kind of PENDING_ACTION_KINDS) {
+        if (!Object.prototype.hasOwnProperty.call(storedPendingActions, kind)) {
+          continue;
         }
-      });
+        const pending = parsePendingAction(storedPendingActions[kind], workspaceId);
+        if (!pending || pending.kind !== kind) {
+          return { pointers: emptyPath2ObjectPointers(), readable: false };
+        }
+        pendingActions[kind] = pending;
+      }
     }
     return {
-      attemptId: storedString(value.attemptId),
-      missionId: storedString(value.missionId),
-      runId: storedString(value.runId),
-      runMissionId: storedString(value.runMissionId),
-      pendingActions,
+      readable: true,
+      pointers: {
+        attemptId: storedString(value.attemptId),
+        missionId: storedString(value.missionId),
+        runId: storedString(value.runId),
+        runMissionId: storedString(value.runMissionId),
+        pendingActions,
+      },
     };
   } catch {
-    return emptyPath2ObjectPointers();
+    return { pointers: emptyPath2ObjectPointers(), readable: false };
   }
 }
 
@@ -445,7 +478,11 @@ export function writePath2ObjectPointers(
     return false;
   }
   try {
-    const next = { ...readPath2ObjectPointers(workspaceId), ...patch };
+    const stored = readPath2ObjectPointersState(workspaceId);
+    if (!stored.readable) {
+      return false;
+    }
+    const next = { ...stored.pointers, ...patch };
     const serialized = JSON.stringify(next);
     const storageKey = `${PATH2_OBJECT_POINTERS_PREFIX}${workspaceId}`;
     window.sessionStorage.setItem(
@@ -484,19 +521,52 @@ function writePendingAction(
   workspaceId: string,
   pending: Path2PendingAction,
   pointerPatch: Partial<Path2ObjectPointers> = {},
-): boolean {
-  const pointers = readPath2ObjectPointers(workspaceId);
+): PendingActionMutationFailure | null {
+  const stored = readPath2ObjectPointersState(workspaceId);
+  if (!stored.readable) {
+    return "storage";
+  }
+  if (stored.pointers.pendingActions[pending.kind]) {
+    return "conflict";
+  }
   return writePath2ObjectPointers(workspaceId, {
-    pendingActions: { ...pointers.pendingActions, [pending.kind]: pending },
+    pendingActions: { ...stored.pointers.pendingActions, [pending.kind]: pending },
     ...pointerPatch,
-  });
+  }) ? null : "storage";
 }
 
-function clearPendingAction(workspaceId: string, kind: PendingActionKind): boolean {
-  const pointers = readPath2ObjectPointers(workspaceId);
-  const pendingActions = { ...pointers.pendingActions };
+function clearPendingAction(
+  workspaceId: string,
+  kind: PendingActionKind,
+  expectedRequestId: string,
+  pointerPatch: Partial<Path2ObjectPointers> = {},
+): PendingActionMutationFailure | null {
+  const stored = readPath2ObjectPointersState(workspaceId);
+  if (!stored.readable) {
+    return "storage";
+  }
+  const pending = stored.pointers.pendingActions[kind];
+  if (!pending || pending.requestId !== expectedRequestId) {
+    return "conflict";
+  }
+  const pendingActions = { ...stored.pointers.pendingActions };
   delete pendingActions[kind];
-  return writePath2ObjectPointers(workspaceId, { pendingActions });
+  return writePath2ObjectPointers(workspaceId, { pendingActions, ...pointerPatch }) ? null : "storage";
+}
+
+function clearCurrentPendingAction(
+  workspaceId: string,
+  kind: PendingActionKind,
+): PendingActionMutationFailure | null {
+  const stored = readPath2ObjectPointersState(workspaceId);
+  if (!stored.readable) {
+    return "storage";
+  }
+  const pending = stored.pointers.pendingActions[kind];
+  if (!pending) {
+    return "conflict";
+  }
+  return clearPendingAction(workspaceId, kind, pending.requestId);
 }
 
 export function pendingConfirmMatchesIdentity(
@@ -796,18 +866,33 @@ export type ApiIssue = {
   message: string;
 };
 
+const PENDING_ACTION_LABELS: Record<PendingActionKind, string> = {
+  upload: "来源导入",
+  attempt: "Attempt 创建",
+  confirm: "草案确认",
+  run_start: "Run Start",
+  cancel: "Run 取消",
+};
+
 export function pendingActionIssue(kind: PendingActionKind): ApiIssue {
-  const labels: Record<PendingActionKind, string> = {
-    upload: "来源导入",
-    attempt: "Attempt 创建",
-    confirm: "草案确认",
-    run_start: "Run Start",
-    cancel: "Run 取消",
-  };
   return {
     kind: "unknown",
     code: "pending_action_unknown",
-    message: `${labels[kind]} 上一次请求的结果未知；当前仅保留阻塞状态，必须用精确对象回读或人工核对，不能恢复确认或自动重试。`,
+    message: `${PENDING_ACTION_LABELS[kind]} 上一次请求的结果未知；当前仅保留阻塞状态，必须用精确对象回读或人工核对，不能恢复确认或自动重试。`,
+  };
+}
+
+function pendingActionMutationIssue(
+  kind: PendingActionKind,
+  failure: PendingActionMutationFailure,
+): ApiIssue {
+  if (failure === "storage") {
+    return pendingActionStorageIssue();
+  }
+  return {
+    kind: "unknown",
+    code: "pending_action_unresolved",
+    message: `${PENDING_ACTION_LABELS[kind]}仍有一条未核销的请求标记；不能替换原 request 或自动重试，请先精确回读原对象或人工核对。`,
   };
 }
 
@@ -815,7 +900,7 @@ function pendingActionStorageIssue(): ApiIssue {
   return {
     kind: "blocked",
     code: "pending_action_persistence_unavailable",
-    message: "无法在当前 tab 保存待处理动作标记，未发送请求；请恢复本地存储后再试。",
+    message: "无法在当前 tab 安全读回或更新待处理动作标记；动作保持阻塞，不会自动重试或恢复新的外发。",
   };
 }
 
@@ -1125,14 +1210,6 @@ function staleAttemptIssue(): ApiIssue {
   };
 }
 
-function selectionChangedIssue(objectName: string): ApiIssue {
-  return {
-    kind: "failed",
-    code: "selection_changed",
-    message: `当前 ${objectName} 或来源选择已变化，旧请求结果已拒绝显示。`,
-  };
-}
-
 export function usePath2Workbench(
   workspace: Workspace | null,
   api: Path2Api = productionPath2Api,
@@ -1299,7 +1376,17 @@ export function usePath2Workbench(
           setMissionSnapshotState({ status: "failed", items: [], issue: scopeIssue() });
           return null;
         }
-        const pendingRunStart = readPath2ObjectPointers(currentWorkspaceId).pendingActions.run_start;
+        const pointerRead = readPath2ObjectPointersState(currentWorkspaceId);
+        if (!pointerRead.readable) {
+          const storageIssue = pendingActionStorageIssue();
+          setMissionSnapshotState({ status: "blocked", items: [], issue: storageIssue });
+          storeMissionSnapshot(null);
+          storeRunSnapshot(null);
+          replaceRunEventState(createRunEventState());
+          setRunReadbackIssue(storageIssue);
+          return null;
+        }
+        const pendingRunStart = pointerRead.pointers.pendingActions.run_start;
         const runStartOutcomeUnknown = pendingRunStart?.missionId === missionId;
         const nextForDisplay = runStartOutcomeUnknown
           ? { ...next, draft: null, clarifications: [], latest_run: null }
@@ -1328,13 +1415,17 @@ export function usePath2Workbench(
             runId: next.latest_run.run_id,
           });
           if (applied) {
-            writePath2ObjectPointers(currentWorkspaceId, {
+            const pointerWriteSucceeded = writePath2ObjectPointers(currentWorkspaceId, {
               missionId,
               runId: next.latest_run.run_id,
               runMissionId: missionId,
             });
-            preferredRunIdRef.current = next.latest_run.run_id;
-            preferredRunMissionIdRef.current = missionId;
+            if (pointerWriteSucceeded) {
+              preferredRunIdRef.current = next.latest_run.run_id;
+              preferredRunMissionIdRef.current = missionId;
+            } else {
+              setRunReadbackIssue(pendingActionStorageIssue());
+            }
           }
         }
         return nextForDisplay;
@@ -1344,7 +1435,15 @@ export function usePath2Workbench(
         }
         return null;
       }
-    }, [api, applyRunSnapshot, beginOperation, isOperationCurrent, storeMissionSnapshot]);
+    }, [
+      api,
+      applyRunSnapshot,
+      beginOperation,
+      isOperationCurrent,
+      replaceRunEventState,
+      storeMissionSnapshot,
+      storeRunSnapshot,
+    ]);
 
   const refreshSources = useCallback(async (): Promise<void> => {
     if (!workspaceId) {
@@ -1373,9 +1472,9 @@ export function usePath2Workbench(
     }
   }, [api, beginOperation, invalidateOperation, isOperationCurrent, workspaceId]);
 
-  const readRunSnapshot = useCallback(async (identity: RunIdentity): Promise<RunSnapshot | null> => {
+  const readRunSnapshot = useCallback(async (identity: RunIdentity, existingToken?: OperationToken): Promise<RunSnapshot | null> => {
     pendingRunIdRef.current = identity.runId;
-    const token = beginOperation("run_snapshot", identity);
+    const token = existingToken ?? beginOperation("run_snapshot", identity);
     try {
       const next = await executeExplicitRequest(() =>
         api.fetchRunSnapshot(identity.workspaceId, identity.missionId, identity.runId),
@@ -1437,7 +1536,10 @@ export function usePath2Workbench(
         }
         storeAttempt(latest);
         pendingAttemptIdRef.current = null;
-        writePath2ObjectPointers(currentWorkspaceId, { attemptId });
+        if (!writePath2ObjectPointers(currentWorkspaceId, { attemptId })) {
+          setAttemptActionNow(actionForIssue(pendingActionStorageIssue()));
+          return latest;
+        }
         setAttemptActionNow(attemptActionForResult(latest));
         if (latest.status !== "queued" && latest.status !== "running") {
           return latest;
@@ -1467,6 +1569,19 @@ export function usePath2Workbench(
         setMissionSnapshotState(failed);
         return;
       }
+      const pointerRead = readPath2ObjectPointersState(currentWorkspaceId);
+      if (!pointerRead.readable) {
+        const storageIssue = pendingActionStorageIssue();
+        setMissionState({ status: "blocked", items: [], issue: storageIssue });
+        setMissionSnapshotState({ status: "blocked", items: [], issue: storageIssue });
+        selectedMissionIdRef.current = null;
+        setSelectedMissionId(null);
+        storeMissionSnapshot(null);
+        storeRunSnapshot(null);
+        replaceRunEventState(createRunEventState());
+        setRunReadbackIssue(storageIssue);
+        return;
+      }
       setMissionState({ status: items.length > 0 ? "ready" : "empty", items, issue: null });
       if (items.length === 0) {
         selectedMissionIdRef.current = null;
@@ -1476,7 +1591,7 @@ export function usePath2Workbench(
         return;
       }
 
-      const pointers = readPath2ObjectPointers(currentWorkspaceId);
+      const pointers = pointerRead.pointers;
       const currentAttemptId = attemptRef.current?.attempt_id ?? pointers.attemptId;
       const confirmedMission = currentAttemptId
         ? items.find((item) => item.original_attempt_id === currentAttemptId) ?? null
@@ -1563,11 +1678,49 @@ export function usePath2Workbench(
         pendingConfirmMatchesIdentity(pendingConfirm, attemptRef.current, confirmedMission) &&
         confirmActionRef.current.status === "unknown"
       ) {
-        clearPendingAction(currentWorkspaceId, "confirm");
+        const currentPointerRead = readPath2ObjectPointersState(currentWorkspaceId);
+        if (!currentPointerRead.readable) {
+          setConfirmActionNow(actionForIssue(pendingActionStorageIssue()));
+          return;
+        }
+        const currentPendingConfirm = currentPointerRead.pointers.pendingActions.confirm;
+        if (!currentPendingConfirm) {
+          return;
+        }
+        if (
+          currentPendingConfirm.requestId !== pendingConfirm!.requestId ||
+          !pendingConfirmMatchesIdentity(currentPendingConfirm, attemptRef.current, confirmedMission)
+        ) {
+          setConfirmActionNow(actionForIssue(pendingActionMutationIssue("confirm", "conflict")));
+          return;
+        }
+        const clearFailure = clearPendingAction(
+          currentWorkspaceId,
+          "confirm",
+          currentPendingConfirm.requestId,
+          {
+            attemptId: confirmedMission.original_attempt_id,
+            missionId: confirmedMission.mission_id,
+            runId: null,
+            runMissionId: null,
+          },
+        );
+        if (clearFailure) {
+          setConfirmActionNow(actionForIssue(pendingActionMutationIssue("confirm", clearFailure)));
+          return;
+        }
         const nextAction: ActionState = { status: "success", issue: null };
         confirmActionRef.current = nextAction;
         setConfirmActionNow(nextAction);
         storeAttempt({ ...attemptRef.current!, status: "confirmed", mission_id: confirmedMission.mission_id });
+        preferredRunIdRef.current = null;
+        preferredRunMissionIdRef.current = null;
+        storeRunSnapshot(null);
+        replaceRunEventState(createRunEventState());
+        setRunReadbackIssue(null);
+        if (missionSnapshotRef.current?.mission.mission_id === confirmedMission.mission_id) {
+          storeMissionSnapshot({ ...missionSnapshotRef.current, latest_run: null });
+        }
       }
     } catch (error: unknown) {
       if (isOperationCurrent(token)) {
@@ -1593,9 +1746,14 @@ export function usePath2Workbench(
     const epoch = epochRef.current + 1;
     epochRef.current = epoch;
     operationGenerationsRef.current = {};
-    const pointers = workspaceId ? readPath2ObjectPointers(workspaceId) : emptyPath2ObjectPointers();
+    const pointerRead = workspaceId
+      ? readPath2ObjectPointersState(workspaceId)
+      : { pointers: emptyPath2ObjectPointers(), readable: true };
+    const pointers = pointerRead.pointers;
     const pendingActions = pointers.pendingActions;
     const pendingRunStart = pendingActions.run_start;
+    const storageIssue = workspaceId && !pointerRead.readable ? pendingActionStorageIssue() : null;
+    const storageAction = storageIssue ? actionForIssue(storageIssue) : null;
     preferredRunIdRef.current = pointers.runId;
     preferredRunMissionIdRef.current = pointers.runMissionId;
     setLoadedWorkspaceId(workspaceId);
@@ -1612,21 +1770,21 @@ export function usePath2Workbench(
     setSourceState(workspaceId ? loadingCollection() : emptyCollection());
     setSourceArtifacts({});
     setSelectedSourceIds([]);
-    setUploadStateNow(
-      pendingActions.upload
+    setUploadStateNow(storageIssue
+      ? { ...actionForIssue(storageIssue), result: null }
+      : pendingActions.upload
         ? { ...actionForIssue(pendingActionIssue("upload")), result: null }
-        : { ...emptyAction(), result: null },
-    );
+        : { ...emptyAction(), result: null });
     setMissionState(workspaceId ? loadingCollection() : emptyCollection());
     setSelectedMissionId(null);
     setMissionSnapshot(null);
     setMissionSnapshotState(workspaceId ? loadingCollection() : emptyCollection());
     setAttempt(null);
-    setAttemptActionNow(pendingActions.attempt ? actionForIssue(pendingActionIssue("attempt")) : emptyAction());
-    setConfirmActionNow(pendingActions.confirm ? actionForIssue(pendingActionIssue("confirm")) : emptyAction());
+    setAttemptActionNow(storageAction ?? (pendingActions.attempt ? actionForIssue(pendingActionIssue("attempt")) : emptyAction()));
+    setConfirmActionNow(storageAction ?? (pendingActions.confirm ? actionForIssue(pendingActionIssue("confirm")) : emptyAction()));
     setRunSnapshot(null);
-    setRunActionNow(pendingRunStart ? actionForIssue(pendingActionIssue("run_start")) : emptyAction());
-    setCancelActionNow(pendingActions.cancel ? actionForIssue(pendingActionIssue("cancel")) : emptyAction());
+    setRunActionNow(storageAction ?? (pendingRunStart ? actionForIssue(pendingActionIssue("run_start")) : emptyAction()));
+    setCancelActionNow(storageAction ?? (pendingActions.cancel ? actionForIssue(pendingActionIssue("cancel")) : emptyAction()));
     setRunReadbackIssue(null);
     setRunEventIssue(null);
     setRunEventState(createRunEventState());
@@ -1655,9 +1813,15 @@ export function usePath2Workbench(
   }, [beginOperation, readAttempt, refreshMissions, refreshSources, workspaceId]);
 
   useEffect(() => {
-    const pendingRunStart = workspaceId
-      ? readPath2ObjectPointers(workspaceId).pendingActions.run_start
-      : null;
+    const pointerRead = workspaceId
+      ? readPath2ObjectPointersState(workspaceId)
+      : { pointers: emptyPath2ObjectPointers(), readable: true };
+    if (!pointerRead.readable) {
+      clientRequestIdRef.current = null;
+      startRequestKeyRef.current = null;
+      return;
+    }
+    const pendingRunStart = pointerRead.pointers.pendingActions.run_start;
     if (pendingRunStart && (!selectedMissionId || pendingRunStart.missionId === selectedMissionId)) {
       clientRequestIdRef.current = pendingRunStart.clientRequestId;
       startRequestKeyRef.current = pendingRunStart.intentKey;
@@ -1817,8 +1981,9 @@ export function usePath2Workbench(
       }
       const currentWorkspaceId = workspaceId;
       const pending = createPendingAction("upload", currentWorkspaceId);
-      if (!writePendingAction(currentWorkspaceId, pending)) {
-        setUploadStateNow({ ...actionForIssue(pendingActionStorageIssue()), result: null });
+      const writeFailure = writePendingAction(currentWorkspaceId, pending);
+      if (writeFailure) {
+        setUploadStateNow({ ...actionForIssue(pendingActionMutationIssue("upload", writeFailure)), result: null });
         return null;
       }
       const token = beginOperation("upload", { workspaceId: currentWorkspaceId });
@@ -1830,11 +1995,14 @@ export function usePath2Workbench(
         }
         const accepted = result.items.flatMap((item) => (item.revision ? [item.revision] : []));
         if (!accepted.every((item) => sourceRevisionMatchesWorkspace(item, currentWorkspaceId))) {
-          const issue = scopeIssue();
-          setUploadStateNow({ status: issue.kind, issue, result: null });
+          setUploadStateNow({ ...actionForIssue(pendingActionMutationIssue("upload", "conflict")), result: null });
           return null;
         }
-        clearPendingAction(currentWorkspaceId, "upload");
+        const clearFailure = clearPendingAction(currentWorkspaceId, "upload", pending.requestId);
+        if (clearFailure) {
+          setUploadStateNow({ ...actionForIssue(pendingActionMutationIssue("upload", clearFailure)), result: null });
+          return null;
+        }
         setUploadStateNow({ status: "success", issue: null, result });
         if (accepted.length > 0) {
           setSourceState((current) => {
@@ -1849,7 +2017,11 @@ export function usePath2Workbench(
         if (isOperationCurrent(token)) {
           const issue = issueFromError(error);
           if (issue.kind !== "unknown") {
-            clearPendingAction(currentWorkspaceId, "upload");
+            const clearFailure = clearPendingAction(currentWorkspaceId, "upload", pending.requestId);
+            if (clearFailure) {
+              setUploadStateNow({ ...actionForIssue(pendingActionMutationIssue("upload", clearFailure)), result: null });
+              return null;
+            }
           }
           setUploadStateNow({ ...actionForIssue(issue), result: null });
         }
@@ -1860,9 +2032,12 @@ export function usePath2Workbench(
 
   const acknowledgeUploadUnknown = useCallback(() => {
     if (uploadStateRef.current.status === "unknown") {
-      if (workspaceId && !clearPendingAction(workspaceId, "upload")) {
-        setUploadStateNow({ ...actionForIssue(pendingActionStorageIssue()), result: null });
-        return;
+      if (workspaceId) {
+        const clearFailure = clearCurrentPendingAction(workspaceId, "upload");
+        if (clearFailure) {
+          setUploadStateNow({ ...actionForIssue(pendingActionMutationIssue("upload", clearFailure)), result: null });
+          return;
+        }
       }
       setUploadStateNow({ ...emptyAction(), result: null });
     }
@@ -1887,11 +2062,18 @@ export function usePath2Workbench(
         return null;
       }
       const currentWorkspaceId = workspaceId;
+      const pointerReadBeforeWrite = readPath2ObjectPointersState(currentWorkspaceId);
+      if (!pointerReadBeforeWrite.readable) {
+        setAttemptActionNow(actionForIssue(pendingActionStorageIssue()));
+        return null;
+      }
+      const hasPendingConfirm = Boolean(pointerReadBeforeWrite.pointers.pendingActions.confirm);
       const pending = createPendingAction("attempt", currentWorkspaceId, {
         intentKey: "attempt-create",
       });
-      if (!writePendingAction(currentWorkspaceId, pending, { attemptId: null })) {
-        setAttemptActionNow(actionForIssue(pendingActionStorageIssue()));
+      const writeFailure = writePendingAction(currentWorkspaceId, pending, { attemptId: null });
+      if (writeFailure) {
+        setAttemptActionNow(actionForIssue(pendingActionMutationIssue("attempt", writeFailure)));
         return null;
       }
       const token = beginOperation("attempt", { workspaceId: currentWorkspaceId });
@@ -1899,7 +2081,11 @@ export function usePath2Workbench(
       invalidateOperation("run_start");
       storeAttempt(null);
       pendingAttemptIdRef.current = null;
-      setConfirmActionNow(emptyAction());
+      if (hasPendingConfirm) {
+        setConfirmActionNow(actionForIssue(pendingActionIssue("confirm")));
+      } else {
+        setConfirmActionNow(emptyAction());
+      }
       setAttemptActionNow({ status: "submitting", issue: null });
       try {
         const result = await executeExplicitRequest(() =>
@@ -1916,13 +2102,21 @@ export function usePath2Workbench(
             request.original_input,
           )
         ) {
-          setAttemptActionNow(actionForIssue(scopeIssue()));
+          setAttemptActionNow(actionForIssue(pendingActionMutationIssue("attempt", "conflict")));
           return null;
         }
-        clearPendingAction(currentWorkspaceId, "attempt");
+        const clearFailure = clearPendingAction(
+          currentWorkspaceId,
+          "attempt",
+          pending.requestId,
+          { attemptId: result.attempt_id },
+        );
+        if (clearFailure) {
+          setAttemptActionNow(actionForIssue(pendingActionMutationIssue("attempt", clearFailure)));
+          return null;
+        }
         storeAttempt(result);
         pendingAttemptIdRef.current = null;
-        writePath2ObjectPointers(currentWorkspaceId, { attemptId: result.attempt_id });
         setAttemptActionNow(attemptActionForResult(result));
         if (result.status === "queued" || result.status === "running") {
           const finalResult = await readAttempt(
@@ -1938,7 +2132,11 @@ export function usePath2Workbench(
         if (isOperationCurrent(token)) {
           const issue = issueFromError(error);
           if (issue.kind !== "unknown") {
-            clearPendingAction(currentWorkspaceId, "attempt");
+            const clearFailure = clearPendingAction(currentWorkspaceId, "attempt", pending.requestId);
+            if (clearFailure) {
+              setAttemptActionNow(actionForIssue(pendingActionMutationIssue("attempt", clearFailure)));
+              return null;
+            }
           }
           setAttemptActionNow(actionForIssue(issue));
         }
@@ -1968,9 +2166,12 @@ export function usePath2Workbench(
 
   const acknowledgeAttemptUnknown = useCallback(() => {
     if (attemptActionRef.current.status === "unknown") {
-      if (workspaceId && !clearPendingAction(workspaceId, "attempt")) {
-        setAttemptActionNow(actionForIssue(pendingActionStorageIssue()));
-        return;
+      if (workspaceId) {
+        const clearFailure = clearCurrentPendingAction(workspaceId, "attempt");
+        if (clearFailure) {
+          setAttemptActionNow(actionForIssue(pendingActionMutationIssue("attempt", clearFailure)));
+          return;
+        }
       }
       setAttemptActionNow(emptyAction());
     }
@@ -2010,8 +2211,9 @@ export function usePath2Workbench(
         sourceRefs: currentSourceRefs,
       }),
     });
-    if (!writePendingAction(currentWorkspaceId, pending)) {
-      setConfirmActionNow(actionForIssue(pendingActionStorageIssue()));
+    const writeFailure = writePendingAction(currentWorkspaceId, pending);
+    if (writeFailure) {
+      setConfirmActionNow(actionForIssue(pendingActionMutationIssue("confirm", writeFailure)));
       return null;
     }
     invalidateOperation("missions");
@@ -2032,7 +2234,7 @@ export function usePath2Workbench(
         attemptRef.current?.attempt_id !== attemptId ||
         !sourceIdentityListEquals(selectedSourceRefsRef.current, currentSourceRefs)
       ) {
-        setConfirmActionNow(actionForIssue(selectionChangedIssue("Attempt")));
+        setConfirmActionNow(actionForIssue(pendingActionMutationIssue("confirm", "conflict")));
         return null;
       }
       if (
@@ -2040,10 +2242,19 @@ export function usePath2Workbench(
         result.original_attempt_id !== attemptId ||
         !sourceIdentityListEquals(result.source_refs, currentSourceRefs)
       ) {
-        setConfirmActionNow(actionForIssue(scopeIssue()));
+        setConfirmActionNow(actionForIssue(pendingActionMutationIssue("confirm", "conflict")));
         return null;
       }
-      clearPendingAction(currentWorkspaceId, "confirm");
+      const clearFailure = clearPendingAction(
+        currentWorkspaceId,
+        "confirm",
+        pending.requestId,
+        { missionId: result.mission_id, runId: null, runMissionId: null },
+      );
+      if (clearFailure) {
+        setConfirmActionNow(actionForIssue(pendingActionMutationIssue("confirm", clearFailure)));
+        return null;
+      }
       storeAttempt({ ...currentAttempt, status: "confirmed", mission_id: result.mission_id });
       setMissionState((current) => ({
         status: "ready",
@@ -2054,11 +2265,6 @@ export function usePath2Workbench(
         issue: null,
       }));
       setConfirmActionNow({ status: "success", issue: null });
-      writePath2ObjectPointers(currentWorkspaceId, {
-        missionId: result.mission_id,
-        runId: null,
-        runMissionId: null,
-      });
       preferredRunIdRef.current = null;
       preferredRunMissionIdRef.current = null;
       selectedMissionIdRef.current = result.mission_id;
@@ -2074,7 +2280,11 @@ export function usePath2Workbench(
       if (isOperationCurrent(token)) {
         const issue = issueFromError(error);
         if (issue.kind !== "unknown") {
-          clearPendingAction(currentWorkspaceId, "confirm");
+          const clearFailure = clearPendingAction(currentWorkspaceId, "confirm", pending.requestId);
+          if (clearFailure) {
+            setConfirmActionNow(actionForIssue(pendingActionMutationIssue("confirm", clearFailure)));
+            return null;
+          }
         }
         setConfirmActionNow(actionForIssue(issue));
       }
@@ -2095,9 +2305,12 @@ export function usePath2Workbench(
 
   const acknowledgeConfirmUnknown = useCallback(() => {
     if (confirmActionRef.current.status === "unknown") {
-      if (workspaceId && !clearPendingAction(workspaceId, "confirm")) {
-        setConfirmActionNow(actionForIssue(pendingActionStorageIssue()));
-        return;
+      if (workspaceId) {
+        const clearFailure = clearCurrentPendingAction(workspaceId, "confirm");
+        if (clearFailure) {
+          setConfirmActionNow(actionForIssue(pendingActionMutationIssue("confirm", clearFailure)));
+          return;
+        }
       }
       setConfirmActionNow(emptyAction());
     }
@@ -2124,6 +2337,13 @@ export function usePath2Workbench(
         });
         return null;
       }
+      const currentWorkspaceId = workspaceId;
+      const pointerReadBeforeWrite = readPath2ObjectPointersState(currentWorkspaceId);
+      if (!pointerReadBeforeWrite.readable) {
+        setRunActionNow(actionForIssue(pendingActionStorageIssue()));
+        return null;
+      }
+      const pendingCancelBeforeStart = pointerReadBeforeWrite.pointers.pendingActions.cancel;
       const requestKey = JSON.stringify({
         workspaceId,
         missionId: currentMission.mission_id,
@@ -2142,7 +2362,6 @@ export function usePath2Workbench(
         providerSendConfirmed,
         clientRequestId,
       );
-      const currentWorkspaceId = workspaceId;
       const missionId = currentMission.mission_id;
       invalidateOperation("run_snapshot");
       invalidateOperation("missions");
@@ -2154,10 +2373,11 @@ export function usePath2Workbench(
         stateVersion: currentMission.state_version,
         sourceRefs: currentSourceRefs,
       });
-      if (!writePendingAction(currentWorkspaceId, pending, { runId: null, runMissionId: null })) {
+      const writeFailure = writePendingAction(currentWorkspaceId, pending, { runId: null, runMissionId: null });
+      if (writeFailure) {
         clientRequestIdRef.current = null;
         startRequestKeyRef.current = null;
-        setRunActionNow(actionForIssue(pendingActionStorageIssue()));
+        setRunActionNow(actionForIssue(pendingActionMutationIssue("run_start", writeFailure)));
         return null;
       }
       const token = beginOperation("run_start", {
@@ -2173,7 +2393,7 @@ export function usePath2Workbench(
       preferredRunMissionIdRef.current = null;
       pendingRunIdRef.current = null;
       setRunActionNow({ status: "submitting", issue: null });
-      setCancelActionNow(emptyAction());
+      setCancelActionNow(pendingCancelBeforeStart ? actionForIssue(pendingActionIssue("cancel")) : emptyAction());
       const recoverMissionSnapshot = async (): Promise<void> => {
         if (isOperationCurrent(token)) {
           await loadMissionSnapshot(currentWorkspaceId, missionId);
@@ -2190,7 +2410,7 @@ export function usePath2Workbench(
           selectedMissionIdRef.current !== missionId ||
           !sourceIdentityListEquals(selectedSourceRefsRef.current, currentSourceRefs)
         ) {
-          setRunActionNow(actionForIssue(selectionChangedIssue("Mission")));
+          setRunActionNow(actionForIssue(pendingActionMutationIssue("run_start", "conflict")));
           await recoverMissionSnapshot();
           return null;
         }
@@ -2202,23 +2422,33 @@ export function usePath2Workbench(
           }) ||
           !sourceIdentityListEquals(result.source_refs, currentSourceRefs)
         ) {
-          const issue = scopeIssue();
-          setRunActionNow(actionForIssue(issue));
+          setRunActionNow(actionForIssue(pendingActionMutationIssue("run_start", "conflict")));
           await recoverMissionSnapshot();
           return null;
         }
-        clearPendingAction(currentWorkspaceId, "run_start");
+        const clearFailure = clearPendingAction(
+          currentWorkspaceId,
+          "run_start",
+          pending.requestId,
+          { missionId, runId: result.run_id, runMissionId: missionId },
+        );
+        if (clearFailure) {
+          setRunActionNow(actionForIssue(pendingActionMutationIssue("run_start", clearFailure)));
+          await recoverMissionSnapshot();
+          return null;
+        }
         storeRunSnapshot(result);
         replaceRunEventState(createRunEventState(result.last_sequence));
         setRunReadbackIssue(null);
         setRunEventIssue(null);
         setRunActionNow({ status: "success", issue: null });
-        setCancelActionNow(emptyAction());
-        writePath2ObjectPointers(currentWorkspaceId, {
-          missionId,
-          runId: result.run_id,
-          runMissionId: missionId,
-        });
+        const pointerReadAfterStart = readPath2ObjectPointersState(currentWorkspaceId);
+        if (!pointerReadAfterStart.readable) {
+          setCancelActionNow(actionForIssue(pendingActionStorageIssue()));
+        } else {
+          const pendingCancelAfterStart = pointerReadAfterStart.pointers.pendingActions.cancel;
+          setCancelActionNow(pendingCancelAfterStart ? actionForIssue(pendingActionIssue("cancel")) : emptyAction());
+        }
         preferredRunIdRef.current = result.run_id;
         preferredRunMissionIdRef.current = missionId;
         clientRequestIdRef.current = null;
@@ -2228,12 +2458,17 @@ export function usePath2Workbench(
       } catch (error: unknown) {
         if (isOperationCurrent(token)) {
           const issue = issueFromError(error);
-          setRunActionNow(actionForIssue(issue));
           if (issue.kind !== "unknown") {
-            clearPendingAction(currentWorkspaceId, "run_start");
+            const clearFailure = clearPendingAction(currentWorkspaceId, "run_start", pending.requestId);
+            if (clearFailure) {
+              setRunActionNow(actionForIssue(pendingActionMutationIssue("run_start", clearFailure)));
+              await recoverMissionSnapshot();
+              return null;
+            }
             clientRequestIdRef.current = null;
             startRequestKeyRef.current = null;
           }
+          setRunActionNow(actionForIssue(issue));
           await recoverMissionSnapshot();
         }
         return null;
@@ -2255,9 +2490,12 @@ export function usePath2Workbench(
 
   const acknowledgeRunUnknown = useCallback(() => {
     if (runActionRef.current.status === "unknown") {
-      if (workspaceId && !clearPendingAction(workspaceId, "run_start")) {
-        setRunActionNow(actionForIssue(pendingActionStorageIssue()));
-        return;
+      if (workspaceId) {
+        const clearFailure = clearCurrentPendingAction(workspaceId, "run_start");
+        if (clearFailure) {
+          setRunActionNow(actionForIssue(pendingActionMutationIssue("run_start", clearFailure)));
+          return;
+        }
       }
       setRunActionNow(emptyAction());
       clientRequestIdRef.current = null;
@@ -2289,8 +2527,9 @@ export function usePath2Workbench(
       missionId: identity.missionId,
       runId: identity.runId,
     });
-    if (!writePendingAction(identity.workspaceId, pending)) {
-      setCancelActionNow(actionForIssue(pendingActionStorageIssue()));
+    const writeFailure = writePendingAction(identity.workspaceId, pending);
+    if (writeFailure) {
+      setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", writeFailure)));
       return null;
     }
     const token = beginOperation("cancel", identity);
@@ -2303,21 +2542,29 @@ export function usePath2Workbench(
         return null;
       }
       if (!runSnapshotMatchesIdentity(result, identity)) {
-        const issue = scopeIssue();
-        setCancelActionNow(actionForIssue(issue));
+        setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", "conflict")));
         return null;
       }
       if (!applyRunSnapshot(result, identity)) {
+        setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", "conflict")));
         return null;
       }
-      clearPendingAction(identity.workspaceId, "cancel");
+      const clearFailure = clearPendingAction(identity.workspaceId, "cancel", pending.requestId);
+      if (clearFailure) {
+        setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", clearFailure)));
+        return null;
+      }
       setCancelActionNow({ status: "success", issue: null });
       return result;
     } catch (error: unknown) {
       if (isOperationCurrent(token)) {
         const issue = issueFromError(error);
         if (issue.kind !== "unknown") {
-          clearPendingAction(identity.workspaceId, "cancel");
+          const clearFailure = clearPendingAction(identity.workspaceId, "cancel", pending.requestId);
+          if (clearFailure) {
+            setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", clearFailure)));
+            return null;
+          }
         }
         setCancelActionNow(actionForIssue(issue));
       }
@@ -2330,22 +2577,70 @@ export function usePath2Workbench(
     if (!currentRun || !workspaceId || cancelActionRef.current.status === "submitting") {
       return;
     }
-    const next = await readRunSnapshot({
+    const identity: RunIdentity = {
       workspaceId,
       missionId: currentRun.mission_id,
       runId: currentRun.run_id,
-    });
-    if (next?.status === "cancelled" && cancelActionRef.current.status === "unknown") {
-      clearPendingAction(workspaceId, "cancel");
+    };
+    const stored = readPath2ObjectPointersState(workspaceId);
+    if (!stored.readable) {
+      setCancelActionNow(actionForIssue(pendingActionStorageIssue()));
+      return;
+    }
+    const pendingCancel = stored.pointers.pendingActions.cancel;
+    if (
+      !pendingCancel ||
+      pendingCancel.workspaceId !== identity.workspaceId ||
+      pendingCancel.missionId !== identity.missionId ||
+      pendingCancel.runId !== identity.runId
+    ) {
+      setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", "conflict")));
+      return;
+    }
+    const token = beginOperation("run_snapshot", identity);
+    const next = await readRunSnapshot(identity, token);
+    if (!isOperationCurrent(token)) {
+      return;
+    }
+    const currentStored = readPath2ObjectPointersState(workspaceId);
+    const currentPendingCancel = currentStored.readable
+      ? currentStored.pointers.pendingActions.cancel
+      : null;
+    if (
+      !currentStored.readable ||
+      !currentPendingCancel ||
+      currentPendingCancel.requestId !== pendingCancel.requestId ||
+      currentPendingCancel.workspaceId !== identity.workspaceId ||
+      currentPendingCancel.missionId !== identity.missionId ||
+      currentPendingCancel.runId !== identity.runId
+    ) {
+      setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", currentStored.readable ? "conflict" : "storage")));
+      return;
+    }
+    if (
+      next?.workspace_id === identity.workspaceId &&
+      next.mission_id === identity.missionId &&
+      next.run_id === identity.runId &&
+      next.status === "cancelled" &&
+      cancelActionRef.current.status === "unknown"
+    ) {
+      const clearFailure = clearPendingAction(workspaceId, "cancel", pendingCancel.requestId);
+      if (clearFailure) {
+        setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", clearFailure)));
+        return;
+      }
       setCancelActionNow({ status: "success", issue: null });
     }
-  }, [readRunSnapshot, workspaceId]);
+  }, [beginOperation, isOperationCurrent, readRunSnapshot, workspaceId]);
 
   const acknowledgeCancelUnknown = useCallback(() => {
     if (cancelActionRef.current.status === "unknown") {
-      if (workspaceId && !clearPendingAction(workspaceId, "cancel")) {
-        setCancelActionNow(actionForIssue(pendingActionStorageIssue()));
-        return;
+      if (workspaceId) {
+        const clearFailure = clearCurrentPendingAction(workspaceId, "cancel");
+        if (clearFailure) {
+          setCancelActionNow(actionForIssue(pendingActionMutationIssue("cancel", clearFailure)));
+          return;
+        }
       }
       setCancelActionNow(emptyAction());
     }
