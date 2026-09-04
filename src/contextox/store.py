@@ -26,16 +26,14 @@ from contextox.models import (
     RunEventInput,
     RunSnapshot,
     RunToolResult,
-    SourceArtifact,
-    SourceExcerpt,
-    SourceRevision,
     TerminalReceipt,
     Workspace,
 )
 
 
 DB_FILENAME = "contextox.sqlite3"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+V1_SCHEMA_VERSION = 1
 BUSY_TIMEOUT_MS = 1000
 
 
@@ -103,7 +101,7 @@ class StoreDiagnostic:
     expected: str | None = None
 
 
-_EXPECTED_COLUMNS = (
+_EXPECTED_V1_COLUMNS = (
     ("workspace_id", "TEXT", 0, 1),
     ("display_name", "TEXT", 1, 0),
     ("created_at", "TEXT", 1, 0),
@@ -218,13 +216,354 @@ def _objects(connection: sqlite3.Connection) -> list[tuple[str, str, str, str | 
     ).fetchall()
 
 
-_EXPECTED_WORKSPACES_SQL = """
+_EXPECTED_V1_WORKSPACES_SQL = """
 CREATE TABLE workspaces (
     workspace_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
     created_at TEXT NOT NULL
 )
 """
+
+
+_EXPECTED_SOURCE_REVISIONS_SQL = """
+CREATE TABLE source_revisions (
+    workspace_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    revision_id TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    effective_time TEXT,
+    permission_status TEXT NOT NULL,
+    parse_status TEXT NOT NULL,
+    parser_version TEXT NOT NULL,
+    artifact_json TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, source_id, revision_id),
+    UNIQUE (workspace_id, revision_id),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id)
+)
+"""
+
+
+_EXPECTED_MISSIONS_SQL = """
+CREATE TABLE missions (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    state_version INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    completion_criteria_json TEXT NOT NULL,
+    scope_notes_json TEXT NOT NULL,
+    original_attempt_id TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, mission_id),
+    FOREIGN KEY (workspace_id, original_attempt_id)
+        REFERENCES mission_draft_attempts(workspace_id, attempt_id)
+)
+"""
+
+
+_EXPECTED_MISSION_SOURCES_SQL = """
+CREATE TABLE mission_sources (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    revision_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, mission_id, source_id, revision_id),
+    FOREIGN KEY (workspace_id, mission_id)
+        REFERENCES missions(workspace_id, mission_id),
+    FOREIGN KEY (workspace_id, source_id, revision_id)
+        REFERENCES source_revisions(workspace_id, source_id, revision_id)
+)
+"""
+
+
+_EXPECTED_MISSION_DRAFT_ATTEMPTS_SQL = """
+CREATE TABLE mission_draft_attempts (
+    workspace_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    original_input TEXT NOT NULL,
+    status TEXT NOT NULL,
+    candidate_json TEXT,
+    candidate_version INTEGER,
+    candidate_sha256 TEXT,
+    provider_receipt_id TEXT,
+    mission_id TEXT,
+    error_code TEXT,
+    PRIMARY KEY (workspace_id, attempt_id),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id),
+    FOREIGN KEY (workspace_id, provider_receipt_id)
+        REFERENCES provider_receipts(workspace_id, receipt_id),
+    FOREIGN KEY (workspace_id, mission_id)
+        REFERENCES missions(workspace_id, mission_id)
+)
+"""
+
+
+_EXPECTED_RUNS_SQL = """
+CREATE TABLE runs (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    client_request_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    budget_json TEXT NOT NULL,
+    last_sequence INTEGER NOT NULL,
+    final_output TEXT,
+    error_code TEXT,
+    PRIMARY KEY (workspace_id, mission_id, run_id),
+    UNIQUE (workspace_id, mission_id, client_request_id),
+    FOREIGN KEY (workspace_id, mission_id)
+        REFERENCES missions(workspace_id, mission_id)
+)
+"""
+
+
+_EXPECTED_RUN_SOURCES_SQL = """
+CREATE TABLE run_sources (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    revision_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, mission_id, run_id, source_id, revision_id),
+    FOREIGN KEY (workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id),
+    FOREIGN KEY (workspace_id, source_id, revision_id)
+        REFERENCES source_revisions(workspace_id, source_id, revision_id)
+)
+"""
+
+
+_EXPECTED_MISSION_MESSAGES_SQL = """
+CREATE TABLE mission_messages (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    original_attempt_id TEXT,
+    run_id TEXT,
+    PRIMARY KEY (workspace_id, mission_id, message_id),
+    FOREIGN KEY (workspace_id, mission_id)
+        REFERENCES missions(workspace_id, mission_id),
+    FOREIGN KEY (workspace_id, original_attempt_id)
+        REFERENCES mission_draft_attempts(workspace_id, attempt_id),
+    FOREIGN KEY (workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id)
+)
+"""
+
+
+_EXPECTED_RUN_EVENTS_SQL = """
+CREATE TABLE run_events (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    public_payload_json TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, mission_id, run_id, sequence),
+    UNIQUE (workspace_id, mission_id, run_id, event_id),
+    FOREIGN KEY (workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id)
+)
+"""
+
+
+_EXPECTED_CONTEXT_MANIFESTS_SQL = """
+CREATE TABLE context_manifests (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    manifest_id TEXT NOT NULL,
+    mission_state_version INTEGER NOT NULL,
+    turn_index INTEGER NOT NULL,
+    draft_id TEXT,
+    draft_version INTEGER,
+    draft_sha256 TEXT,
+    source_refs_json TEXT NOT NULL,
+    clarification_ids_json TEXT NOT NULL,
+    tool_receipt_ids_json TEXT NOT NULL,
+    budget_json TEXT NOT NULL,
+    excluded_reasons_json TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, mission_id, run_id, manifest_id),
+    UNIQUE (workspace_id, mission_id, run_id, turn_index),
+    UNIQUE (workspace_id, mission_id, run_id, sha256),
+    FOREIGN KEY (workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id),
+    FOREIGN KEY (workspace_id, mission_id, draft_id)
+        REFERENCES definition_drafts(workspace_id, mission_id, draft_id)
+)
+"""
+
+
+_EXPECTED_CLARIFICATION_REQUESTS_SQL = """
+CREATE TABLE clarification_requests (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    clarification_id TEXT NOT NULL,
+    draft_version INTEGER NOT NULL,
+    draft_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL,
+    questions_json TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, mission_id, run_id, clarification_id),
+    FOREIGN KEY (workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id)
+)
+"""
+
+
+_EXPECTED_DEFINITION_DRAFTS_SQL = """
+CREATE TABLE definition_drafts (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    draft_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    status TEXT NOT NULL,
+    semantic_approval TEXT NOT NULL,
+    fields_json TEXT NOT NULL,
+    relationships_json TEXT NOT NULL,
+    unresolved_items_json TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, mission_id, draft_id),
+    UNIQUE (workspace_id, mission_id, version),
+    UNIQUE (workspace_id, mission_id, sha256),
+    FOREIGN KEY (workspace_id, mission_id)
+        REFERENCES missions(workspace_id, mission_id)
+)
+"""
+
+
+_EXPECTED_PROVIDER_RECEIPTS_SQL = """
+CREATE TABLE provider_receipts (
+    workspace_id TEXT NOT NULL,
+    receipt_id TEXT NOT NULL,
+    attempt_id TEXT,
+    mission_id TEXT,
+    run_id TEXT,
+    turn_index INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    p0_sha256 TEXT NOT NULL,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cache_hit_tokens INTEGER,
+    cache_miss_tokens INTEGER,
+    context_manifest_id TEXT,
+    context_manifest_sha256 TEXT,
+    tool_schema_sha256 TEXT,
+    error_code TEXT,
+    PRIMARY KEY (workspace_id, receipt_id),
+    UNIQUE (workspace_id, attempt_id),
+    UNIQUE (workspace_id, mission_id, run_id, turn_index),
+    FOREIGN KEY (workspace_id, attempt_id)
+        REFERENCES mission_draft_attempts(workspace_id, attempt_id),
+    FOREIGN KEY (workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id),
+    FOREIGN KEY (workspace_id, mission_id, run_id, context_manifest_id)
+        REFERENCES context_manifests(workspace_id, mission_id, run_id, manifest_id)
+)
+"""
+
+
+_EXPECTED_TOOL_RECEIPTS_SQL = """
+CREATE TABLE tool_receipts (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    receipt_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    call_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    arguments_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,
+    error_code TEXT,
+    PRIMARY KEY (workspace_id, receipt_id),
+    UNIQUE (workspace_id, mission_id, run_id, ordinal),
+    UNIQUE (workspace_id, mission_id, run_id, call_id),
+    FOREIGN KEY (workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id)
+)
+"""
+
+
+_EXPECTED_TERMINAL_RECEIPTS_SQL = """
+CREATE TABLE terminal_receipts (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    receipt_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    terminal_tool TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    draft_id TEXT,
+    draft_version INTEGER,
+    draft_sha256 TEXT,
+    clarification_ids_json TEXT NOT NULL,
+    provider_receipt_ids_json TEXT NOT NULL,
+    tool_receipt_ids_json TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, receipt_id),
+    UNIQUE (workspace_id, mission_id, run_id),
+    FOREIGN KEY (workspace_id, mission_id, run_id)
+        REFERENCES runs(workspace_id, mission_id, run_id),
+    FOREIGN KEY (workspace_id, mission_id, draft_id)
+        REFERENCES definition_drafts(workspace_id, mission_id, draft_id)
+)
+"""
+
+
+# The complete v2 table set is deliberately frozen here.  Source issues and
+# the parsed artifact live in source_revisions.artifact_json; separate source
+# binding/artifact/issue tables are not part of this checkpoint.
+_EXPECTED_V2_TABLES: tuple[tuple[str, str], ...] = (
+    ("workspaces", _EXPECTED_V1_WORKSPACES_SQL),
+    ("source_revisions", _EXPECTED_SOURCE_REVISIONS_SQL),
+    ("mission_draft_attempts", _EXPECTED_MISSION_DRAFT_ATTEMPTS_SQL),
+    ("missions", _EXPECTED_MISSIONS_SQL),
+    ("mission_sources", _EXPECTED_MISSION_SOURCES_SQL),
+    ("mission_messages", _EXPECTED_MISSION_MESSAGES_SQL),
+    ("runs", _EXPECTED_RUNS_SQL),
+    ("run_sources", _EXPECTED_RUN_SOURCES_SQL),
+    ("provider_receipts", _EXPECTED_PROVIDER_RECEIPTS_SQL),
+    ("context_manifests", _EXPECTED_CONTEXT_MANIFESTS_SQL),
+    ("definition_drafts", _EXPECTED_DEFINITION_DRAFTS_SQL),
+    ("clarification_requests", _EXPECTED_CLARIFICATION_REQUESTS_SQL),
+    ("tool_receipts", _EXPECTED_TOOL_RECEIPTS_SQL),
+    ("terminal_receipts", _EXPECTED_TERMINAL_RECEIPTS_SQL),
+    ("run_events", _EXPECTED_RUN_EVENTS_SQL),
+)
+
+
+_EXPECTED_V2_INDEXES: tuple[tuple[str, str, str], ...] = (
+    (
+        "runs_one_active_per_mission",
+        "runs",
+        """
+        CREATE UNIQUE INDEX runs_one_active_per_mission
+        ON runs (workspace_id, mission_id)
+        WHERE status IN ('queued', 'running')
+        """,
+    ),
+)
 
 
 def _normalize_schema_sql(sql: object) -> str:
@@ -235,9 +574,9 @@ def _normalize_schema_sql(sql: object) -> str:
     return " ".join(sql.split()).casefold()
 
 
-def _schema_is_exact(connection: sqlite3.Connection) -> bool:
+def _schema_is_exact_v1(connection: sqlite3.Connection) -> bool:
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version != SCHEMA_VERSION:
+    if version != V1_SCHEMA_VERSION:
         return False
     objects = _objects(connection)
     if len(objects) != 1:
@@ -254,9 +593,32 @@ def _schema_is_exact(connection: sqlite3.Connection) -> bool:
         )
         for row in connection.execute("PRAGMA table_info(workspaces)").fetchall()
     )
-    return columns == _EXPECTED_COLUMNS and _normalize_schema_sql(sql) == _normalize_schema_sql(
-        _EXPECTED_WORKSPACES_SQL
+    return columns == _EXPECTED_V1_COLUMNS and _normalize_schema_sql(sql) == _normalize_schema_sql(
+        _EXPECTED_V1_WORKSPACES_SQL
     )
+
+
+def _schema_is_exact(connection: sqlite3.Connection) -> bool:
+    """Return whether a database is exactly the frozen v2 schema."""
+
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    if version != SCHEMA_VERSION:
+        return False
+    expected = {
+        ("table", name, name): _normalize_schema_sql(sql)
+        for name, sql in _EXPECTED_V2_TABLES
+    }
+    expected.update(
+        {
+            ("index", name, table_name): _normalize_schema_sql(sql)
+            for name, table_name, sql in _EXPECTED_V2_INDEXES
+        }
+    )
+    actual = {
+        (object_type, name, table_name): _normalize_schema_sql(sql)
+        for object_type, name, table_name, sql in _objects(connection)
+    }
+    return actual == expected
 
 
 def _configure_connection(connection: sqlite3.Connection) -> None:
@@ -284,13 +646,43 @@ def _validate_connection_schema(connection: sqlite3.Connection) -> None:
         raise WorkspaceStoreUnavailableError()
 
 
+def _create_v2_tables(
+    connection: sqlite3.Connection,
+    *,
+    include_workspaces: bool,
+) -> None:
+    tables = _EXPECTED_V2_TABLES if include_workspaces else _EXPECTED_V2_TABLES[1:]
+    for _, sql in tables:
+        connection.execute(sql)
+    for _, _, sql in _EXPECTED_V2_INDEXES:
+        connection.execute(sql)
+
+
 def _create_schema(connection: sqlite3.Connection) -> None:
-    connection.execute(_EXPECTED_WORKSPACES_SQL)
-    connection.execute("PRAGMA user_version=1")
+    """Create a new empty database using the complete frozen v2 schema."""
+
+    _create_v2_tables(connection, include_workspaces=True)
+    connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+
+def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+    """Add only the v2 tables to an exact v1 database in one transaction."""
+
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        _create_v2_tables(connection, include_workspaces=False)
+        connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        connection.commit()
+    except BaseException:
+        try:
+            connection.rollback()
+        except sqlite3.DatabaseError:
+            pass
+        raise
 
 
 class WorkspaceStore:
-    """A short-connection, single-table SQLite Store for Workspaces."""
+    """A short-connection, fail-closed SQLite Store for local Path 2 data."""
 
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
@@ -338,6 +730,15 @@ class WorkspaceStore:
                         connection.rollback()
                     except sqlite3.DatabaseError:
                         pass
+                    raise _store_error(exc) from exc
+            elif version == V1_SCHEMA_VERSION and _schema_is_exact_v1(connection):
+                try:
+                    _migrate_v1_to_v2(connection)
+                except WorkspaceStoreError:
+                    raise
+                except sqlite3.OperationalError as exc:
+                    raise _store_error(exc) from exc
+                except sqlite3.DatabaseError as exc:
                     raise _store_error(exc) from exc
             elif version != SCHEMA_VERSION or not _schema_is_exact(connection):
                 raise WorkspaceSchemaUnsupportedError()
@@ -751,7 +1152,7 @@ class WorkspaceStore:
                     status="blocked",
                     detail="The Workspace database schema is unsupported.",
                     actual=f"user_version={version}; objects={len(objects)}",
-                    expected="user_version=1; workspaces only",
+                    expected=f"user_version={SCHEMA_VERSION}; exact v2 table set",
                 )
                 readwrite_check = StoreDiagnostic(
                     key="workspace_store_readwrite",
@@ -765,9 +1166,9 @@ class WorkspaceStore:
                 schema_check = StoreDiagnostic(
                     key="workspace_store_schema",
                     status="ready",
-                    detail="The Workspace database uses schema version 1.",
-                    actual="user_version=1",
-                    expected="user_version=1",
+                    detail="The Workspace database uses schema version 2.",
+                    actual=f"user_version={SCHEMA_VERSION}",
+                    expected=f"user_version={SCHEMA_VERSION}; exact v2 table set",
                 )
         except WorkspaceSchemaUnsupportedError:
             schema_check = StoreDiagnostic(
@@ -775,7 +1176,7 @@ class WorkspaceStore:
                 status="blocked",
                 detail="The Workspace database schema is unsupported.",
                 actual="unsupported",
-                expected="user_version=1; workspaces only",
+                expected=f"user_version={SCHEMA_VERSION}; exact v2 table set",
             )
             readwrite_check = StoreDiagnostic(
                 key="workspace_store_readwrite",
