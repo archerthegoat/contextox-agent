@@ -367,6 +367,41 @@ def _child_send_oversized(send_conn, packet_bytes: bytes) -> None:
     time.sleep(10.0)
 
 
+def _child_send_malformed_error_usage(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    _synthetic_send(send_conn, call_id, 2, "request_started")
+    _synthetic_send(
+        send_conn,
+        call_id,
+        3,
+        "error",
+        code="provider_protocol_error",
+        usage={
+            "input_tokens": "not-an-integer",
+            "output_tokens": 1,
+            "cache_hit_tokens": None,
+            "cache_miss_tokens": None,
+        },
+    )
+    send_conn.close()
+
+
+def _child_send_malformed_result_usage(send_conn, packet_bytes: bytes) -> None:
+    call_id = _synthetic_call_id(packet_bytes)
+    completion = _synthetic_completion()
+    completion["usage"] = {
+        "input_tokens": -1,
+        "output_tokens": 1,
+        "cache_hit_tokens": None,
+        "cache_miss_tokens": None,
+    }
+    _synthetic_send(send_conn, call_id, 1, "connected")
+    _synthetic_send(send_conn, call_id, 2, "request_started")
+    _synthetic_send(send_conn, call_id, 3, "result", completion=completion)
+    send_conn.close()
+
+
 def _child_run_stalled_transport(send_conn, packet_bytes: bytes, stall: str) -> None:
     ipc = None
     try:
@@ -752,6 +787,7 @@ class ProviderTests(unittest.TestCase):
         server = _BlockingSocketServer()
         before_children = self._active_child_pids()
         server.start()
+        started_at = time.monotonic()
         try:
             with patch.object(
                 provider_module,
@@ -772,6 +808,7 @@ class ProviderTests(unittest.TestCase):
                         ),
                     )
             self.assertTrue(server.accepted.wait(0.2))
+            self.assertLess(time.monotonic() - started_at, 1.5)
         finally:
             server.close()
         self.assertFalse(server.thread.is_alive())
@@ -872,6 +909,29 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(completion.reasoning_content, "must-stay-transient")
         self.assertEqual(completion.usage, ProviderUsage(7, 4, 2, 5))
         self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_malformed_ipc_usage_is_protocol_error_and_child_is_reaped(self) -> None:
+        cases = (_child_send_malformed_error_usage, _child_send_malformed_result_usage)
+        for target in cases:
+            with self.subTest(target=target.__name__):
+                before_children = self._active_child_pids()
+                with patch.object(provider_module, "_provider_child_main", target), patch.dict(
+                    os.environ, {"DEEPSEEK_API_KEY": "test-secret"}, clear=False
+                ):
+                    with self.assertRaises(ProviderProtocolError):
+                        DeepSeekProvider().complete(
+                            [{"role": "user", "content": "synthetic"}],
+                            stream=True,
+                            tools=[],
+                            user_id="ws-opaque",
+                            timeouts=ProviderTimeouts(
+                                connect_ms=1000,
+                                first_event_ms=1000,
+                                idle_ms=1000,
+                                total_ms=1500,
+                            ),
+                        )
+                self.assertEqual(self._active_child_pids(), before_children)
 
     def test_child_startup_failure_is_unreachable_and_releases_slot(self) -> None:
         before_children = self._active_child_pids()

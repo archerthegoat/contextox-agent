@@ -235,14 +235,17 @@ def _usage_from_ipc(value: object) -> ProviderUsage | None:
         raise _ProviderIpcProtocolError("IPC usage must be an object or null")
     if set(value) != {"input_tokens", "output_tokens", "cache_hit_tokens", "cache_miss_tokens"}:
         raise _ProviderIpcProtocolError("IPC usage fields are not exact")
-    input_tokens = _strict_nonnegative_int(value["input_tokens"])
-    output_tokens = _strict_nonnegative_int(value["output_tokens"])
-    cache_hit = value["cache_hit_tokens"]
-    cache_miss = value["cache_miss_tokens"]
-    if cache_hit is not None:
-        cache_hit = _strict_nonnegative_int(cache_hit)
-    if cache_miss is not None:
-        cache_miss = _strict_nonnegative_int(cache_miss)
+    try:
+        input_tokens = _strict_nonnegative_int(value["input_tokens"])
+        output_tokens = _strict_nonnegative_int(value["output_tokens"])
+        cache_hit = value["cache_hit_tokens"]
+        cache_miss = value["cache_miss_tokens"]
+        if cache_hit is not None:
+            cache_hit = _strict_nonnegative_int(cache_hit)
+        if cache_miss is not None:
+            cache_miss = _strict_nonnegative_int(cache_miss)
+    except (TypeError, ValueError) as exc:
+        raise _ProviderIpcProtocolError("IPC usage values are not valid") from exc
     return ProviderUsage(input_tokens, output_tokens, cache_hit, cache_miss)
 
 
