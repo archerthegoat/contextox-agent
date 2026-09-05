@@ -52,8 +52,9 @@ from contextox.sources import (
 
 
 DB_FILENAME = "contextox.sqlite3"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 V1_SCHEMA_VERSION = 1
+V2_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 1000
 
 
@@ -570,6 +571,28 @@ CREATE TABLE mission_draft_attempts (
 """
 
 
+_EXPECTED_V2_RUNS_SQL = """
+CREATE TABLE runs (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    client_request_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    budget_json TEXT NOT NULL,
+    last_sequence INTEGER NOT NULL,
+    final_output TEXT,
+    error_code TEXT,
+    PRIMARY KEY (workspace_id, mission_id, run_id),
+    UNIQUE (workspace_id, mission_id, client_request_id),
+    FOREIGN KEY (workspace_id, mission_id)
+        REFERENCES missions(workspace_id, mission_id)
+)
+"""
+
+
 _EXPECTED_RUNS_SQL = """
 CREATE TABLE runs (
     workspace_id TEXT NOT NULL,
@@ -584,6 +607,7 @@ CREATE TABLE runs (
     last_sequence INTEGER NOT NULL,
     final_output TEXT,
     error_code TEXT,
+    start_request_sha256 TEXT NOT NULL,
     PRIMARY KEY (workspace_id, mission_id, run_id),
     UNIQUE (workspace_id, mission_id, client_request_id),
     FOREIGN KEY (workspace_id, mission_id)
@@ -710,7 +734,7 @@ CREATE TABLE clarification_requests (
 """
 
 
-_EXPECTED_DEFINITION_DRAFTS_SQL = """
+_EXPECTED_V2_DEFINITION_DRAFTS_SQL = """
 CREATE TABLE definition_drafts (
     workspace_id TEXT NOT NULL,
     mission_id TEXT NOT NULL,
@@ -725,6 +749,29 @@ CREATE TABLE definition_drafts (
     PRIMARY KEY (workspace_id, mission_id, draft_id, version),
     UNIQUE (workspace_id, mission_id, version),
     UNIQUE (workspace_id, mission_id, sha256),
+    UNIQUE (workspace_id, mission_id, draft_id, version, sha256),
+    UNIQUE (workspace_id, mission_id, version, sha256),
+    CHECK (version > 0),
+    FOREIGN KEY (workspace_id, mission_id)
+        REFERENCES missions(workspace_id, mission_id)
+)
+"""
+
+
+_EXPECTED_DEFINITION_DRAFTS_SQL = """
+CREATE TABLE definition_drafts (
+    workspace_id TEXT NOT NULL,
+    mission_id TEXT NOT NULL,
+    draft_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    status TEXT NOT NULL,
+    semantic_approval TEXT NOT NULL,
+    fields_json TEXT NOT NULL,
+    relationships_json TEXT NOT NULL,
+    unresolved_items_json TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, mission_id, draft_id, version),
+    UNIQUE (workspace_id, mission_id, version),
     UNIQUE (workspace_id, mission_id, draft_id, version, sha256),
     UNIQUE (workspace_id, mission_id, version, sha256),
     CHECK (version > 0),
@@ -851,10 +898,10 @@ CREATE TABLE terminal_receipts (
 """
 
 
-# The complete v2 table set is deliberately frozen here.  Source issues and
+# The complete v3 table set is deliberately frozen here.  Source issues and
 # the parsed artifact live in source_revisions.artifact_json; separate source
 # binding/artifact/issue tables are not part of this checkpoint.
-_EXPECTED_V2_TABLES: tuple[tuple[str, str], ...] = (
+_EXPECTED_V3_TABLES: tuple[tuple[str, str], ...] = (
     ("workspaces", _EXPECTED_V1_WORKSPACES_SQL),
     ("source_revisions", _EXPECTED_SOURCE_REVISIONS_SQL),
     ("mission_draft_attempts", _EXPECTED_MISSION_DRAFT_ATTEMPTS_SQL),
@@ -873,7 +920,7 @@ _EXPECTED_V2_TABLES: tuple[tuple[str, str], ...] = (
 )
 
 
-_EXPECTED_V2_INDEXES: tuple[tuple[str, str, str], ...] = (
+_EXPECTED_V3_INDEXES: tuple[tuple[str, str, str], ...] = (
     (
         "runs_one_active_per_mission",
         "runs",
@@ -884,6 +931,20 @@ _EXPECTED_V2_INDEXES: tuple[tuple[str, str, str], ...] = (
         """,
     ),
 )
+
+
+_EXPECTED_V2_TABLES: tuple[tuple[str, str], ...] = tuple(
+    (
+        name,
+        _EXPECTED_V2_RUNS_SQL
+        if name == "runs"
+        else _EXPECTED_V2_DEFINITION_DRAFTS_SQL
+        if name == "definition_drafts"
+        else sql,
+    )
+    for name, sql in _EXPECTED_V3_TABLES
+)
+_EXPECTED_V2_INDEXES = _EXPECTED_V3_INDEXES
 
 
 def _normalize_schema_sql(sql: object) -> str:
@@ -918,20 +979,22 @@ def _schema_is_exact_v1(connection: sqlite3.Connection) -> bool:
     )
 
 
-def _schema_is_exact(connection: sqlite3.Connection) -> bool:
-    """Return whether a database is exactly the frozen v2 schema."""
-
-    version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version != SCHEMA_VERSION:
+def _schema_matches(
+    connection: sqlite3.Connection,
+    version: int,
+    tables: tuple[tuple[str, str], ...],
+    indexes: tuple[tuple[str, str, str], ...],
+) -> bool:
+    if connection.execute("PRAGMA user_version").fetchone()[0] != version:
         return False
     expected = {
         ("table", name, name): _normalize_schema_sql(sql)
-        for name, sql in _EXPECTED_V2_TABLES
+        for name, sql in tables
     }
     expected.update(
         {
             ("index", name, table_name): _normalize_schema_sql(sql)
-            for name, table_name, sql in _EXPECTED_V2_INDEXES
+            for name, table_name, sql in indexes
         }
     )
     actual = {
@@ -939,6 +1002,20 @@ def _schema_is_exact(connection: sqlite3.Connection) -> bool:
         for object_type, name, table_name, sql in _objects(connection)
     }
     return actual == expected
+
+
+def _schema_is_exact_v2(connection: sqlite3.Connection) -> bool:
+    return _schema_matches(
+        connection, V2_SCHEMA_VERSION, _EXPECTED_V2_TABLES, _EXPECTED_V2_INDEXES
+    )
+
+
+def _schema_is_exact(connection: sqlite3.Connection) -> bool:
+    """Return whether a database is exactly the frozen v3 schema."""
+
+    return _schema_matches(
+        connection, SCHEMA_VERSION, _EXPECTED_V3_TABLES, _EXPECTED_V3_INDEXES
+    )
 
 
 def _configure_connection(connection: sqlite3.Connection) -> None:
@@ -967,32 +1044,81 @@ def _validate_connection_schema(connection: sqlite3.Connection) -> None:
         raise WorkspaceStoreUnavailableError()
 
 
-def _create_v2_tables(
+def _create_v3_tables(
     connection: sqlite3.Connection,
     *,
     include_workspaces: bool,
 ) -> None:
-    tables = _EXPECTED_V2_TABLES if include_workspaces else _EXPECTED_V2_TABLES[1:]
+    tables = _EXPECTED_V3_TABLES if include_workspaces else _EXPECTED_V3_TABLES[1:]
     for _, sql in tables:
         connection.execute(sql)
-    for _, _, sql in _EXPECTED_V2_INDEXES:
+    for _, _, sql in _EXPECTED_V3_INDEXES:
         connection.execute(sql)
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
-    """Create a new empty database using the complete frozen v2 schema."""
+    """Create a new empty database using the complete frozen v3 schema."""
 
-    _create_v2_tables(connection, include_workspaces=True)
+    _create_v3_tables(connection, include_workspaces=True)
     connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
-def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
-    """Add only the v2 tables to an exact v1 database in one transaction."""
+def _migrate_v1_to_v3(connection: sqlite3.Connection) -> None:
+    """Add the v3 tables to an exact v1 database in one transaction."""
 
     connection.execute("BEGIN IMMEDIATE")
     try:
-        _create_v2_tables(connection, include_workspaces=False)
+        _create_v3_tables(connection, include_workspaces=False)
         connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        connection.commit()
+    except BaseException:
+        try:
+            connection.rollback()
+        except sqlite3.DatabaseError:
+            pass
+        raise
+
+
+_V2_EMPTY_LIFECYCLE_TABLES = (
+    "runs",
+    "run_sources",
+    "context_manifests",
+    "definition_drafts",
+    "clarification_requests",
+    "tool_receipts",
+    "terminal_receipts",
+    "run_events",
+)
+
+
+def _v2_lifecycle_is_empty(connection: sqlite3.Connection) -> bool:
+    for table in _V2_EMPTY_LIFECYCLE_TABLES:
+        if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None:
+            return False
+    return connection.execute(
+        "SELECT 1 FROM provider_receipts WHERE run_id IS NOT NULL LIMIT 1"
+    ).fetchone() is None
+
+
+def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+    """Upgrade only a v2 store with no Run or definition-draft history."""
+
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        if not _v2_lifecycle_is_empty(connection):
+            raise WorkspaceSchemaUnsupportedError()
+        connection.execute("DROP INDEX runs_one_active_per_mission")
+        connection.execute("DROP TABLE definition_drafts")
+        connection.execute("DROP TABLE runs")
+        connection.execute(_EXPECTED_RUNS_SQL)
+        connection.execute(_EXPECTED_DEFINITION_DRAFTS_SQL)
+        for _, _, sql in _EXPECTED_V3_INDEXES:
+            connection.execute(sql)
+        connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        if not _schema_is_exact(connection):
+            raise WorkspaceSchemaUnsupportedError()
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise WorkspaceStoreUnavailableError()
         connection.commit()
     except BaseException:
         try:
@@ -1054,7 +1180,16 @@ class WorkspaceStore:
                     raise _store_error(exc) from exc
             elif version == V1_SCHEMA_VERSION and _schema_is_exact_v1(connection):
                 try:
-                    _migrate_v1_to_v2(connection)
+                    _migrate_v1_to_v3(connection)
+                except WorkspaceStoreError:
+                    raise
+                except sqlite3.OperationalError as exc:
+                    raise _store_error(exc) from exc
+                except sqlite3.DatabaseError as exc:
+                    raise _store_error(exc) from exc
+            elif version == V2_SCHEMA_VERSION and _schema_is_exact_v2(connection):
+                try:
+                    _migrate_v2_to_v3(connection)
                 except WorkspaceStoreError:
                     raise
                 except sqlite3.OperationalError as exc:
@@ -1998,7 +2133,7 @@ class WorkspaceStore:
                     status="blocked",
                     detail="The Workspace database schema is unsupported.",
                     actual=f"user_version={version}; objects={len(objects)}",
-                    expected=f"user_version={SCHEMA_VERSION}; exact v2 table set",
+                    expected=f"user_version={SCHEMA_VERSION}; exact v3 table set",
                 )
                 readwrite_check = StoreDiagnostic(
                     key="workspace_store_readwrite",
@@ -2029,9 +2164,9 @@ class WorkspaceStore:
                     schema_check = StoreDiagnostic(
                         key="workspace_store_schema",
                         status="ready",
-                        detail="The Workspace database uses schema version 2.",
+                        detail="The Workspace database uses schema version 3.",
                         actual=f"user_version={SCHEMA_VERSION}",
-                        expected=f"user_version={SCHEMA_VERSION}; exact v2 table set",
+                        expected=f"user_version={SCHEMA_VERSION}; exact v3 table set",
                     )
         except WorkspaceSchemaUnsupportedError:
             schema_check = StoreDiagnostic(
@@ -2039,7 +2174,7 @@ class WorkspaceStore:
                 status="blocked",
                 detail="The Workspace database schema is unsupported.",
                 actual="unsupported",
-                expected=f"user_version={SCHEMA_VERSION}; exact v2 table set",
+                expected=f"user_version={SCHEMA_VERSION}; exact v3 table set",
             )
             readwrite_check = StoreDiagnostic(
                 key="workspace_store_readwrite",

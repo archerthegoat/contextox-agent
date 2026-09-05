@@ -183,6 +183,18 @@ class PersistedAttemptTests(unittest.TestCase):
             mission = store.confirm_mission_draft_attempt(*args)
             self.assertEqual(mission.status, "active")
             self.assertEqual(store.confirm_mission_draft_attempt(*args), mission)
+            import contextox.store as store_module
+            with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                connection.execute("DROP INDEX runs_one_active_per_mission")
+                connection.execute("DROP TABLE definition_drafts")
+                connection.execute("DROP TABLE runs")
+                connection.execute(store_module._EXPECTED_V2_RUNS_SQL)
+                connection.execute(store_module._EXPECTED_V2_DEFINITION_DRAFTS_SQL)
+                for _, _, sql in store_module._EXPECTED_V2_INDEXES:
+                    connection.execute(sql)
+                connection.execute("PRAGMA user_version=2")
+                self.assertTrue(store_module._schema_is_exact_v2(connection))
             restarted = WorkspaceStore.open(store.data_dir)
             self.assertEqual(restarted.list_missions(workspace_id), [mission])
             self.assertEqual(restarted.confirm_mission_draft_attempt(*args), mission)
