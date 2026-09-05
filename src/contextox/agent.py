@@ -185,6 +185,10 @@ def _provider_json_schema(value: Any) -> Any:
 
 TOOL_DEFINITIONS = _make_tool_definitions()
 TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
+SUPPORTED_TOOL_SCHEMA_SHA256S = frozenset({
+    TOOL_SCHEMA_SHA256,
+    "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028",
+})
 _TOOL_NAMES = frozenset(_TOOL_ARGUMENT_TYPES)
 _TERMINAL_TOOL_NAMES = frozenset({"create_clarification", "submit_for_review", "finish_run"})
 

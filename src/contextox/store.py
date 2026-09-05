@@ -3852,7 +3852,7 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
                 raise WorkspaceStoreUnavailableError()
         elif run.status in {"blocked", "failed", "cancelled"} and run.error_code is None:
             raise WorkspaceStoreUnavailableError()
-        from contextox.agent import P0_RUN_SHA256, TOOL_SCHEMA_SHA256
+        from contextox.agent import P0_RUN_SHA256, SUPPORTED_TOOL_SCHEMA_SHA256S
 
         provider_rows = connection.execute(
             """
@@ -3891,7 +3891,7 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
                 or receipt.run_id != run.run_id
                 or receipt.attempt_id is not None
                 or receipt.p0_sha256 != P0_RUN_SHA256
-                or receipt.tool_schema_sha256 != TOOL_SCHEMA_SHA256
+                or receipt.tool_schema_sha256 not in SUPPORTED_TOOL_SCHEMA_SHA256S
                 or receipt.turn_index != manifest.turn_index
                 or receipt.context_manifest_sha256 != manifest.sha256
             ):

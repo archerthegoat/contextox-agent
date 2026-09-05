@@ -682,6 +682,21 @@ class PersistedRunTests(unittest.TestCase):
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
                 connection.execute(
                     """
+                    UPDATE provider_receipts SET tool_schema_sha256=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=?
+                    """,
+                    (
+                        "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028",
+                        workspace_id, mission.mission_id, run.run_id,
+                    ),
+                )
+            self.assertEqual(
+                restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),
+                snapshot,
+            )
+            with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                connection.execute(
+                    """
                     UPDATE provider_receipts SET p0_sha256=?
                     WHERE workspace_id=? AND mission_id=? AND run_id=? AND turn_index=1
                     """,
