@@ -720,9 +720,50 @@ class PersistedRunTests(unittest.TestCase):
                         ),
                     ),
                 )
+            context = store.get_context_snapshot(
+                workspace_id, mission.mission_id, run.run_id
+            )
+            manifest = store.record_context_manifest(
+                workspace_id,
+                mission.mission_id,
+                run.run_id,
+                agent._context_manifest(
+                    context, turn_index=1, tool_receipt_ids=[]
+                ),
+            )
             cancelled = store.cancel_run(workspace_id, mission.mission_id, run.run_id)
             self.assertEqual(cancelled.status, "cancelled")
             self.assertEqual(store.cancel_run(workspace_id, mission.mission_id, run.run_id), cancelled)
+            with self.assertRaises(Path2StateError) as raised:
+                store.validate_run_tool_batch(
+                    workspace_id,
+                    mission.mission_id,
+                    run.run_id,
+                    [ListSourcesCall(call_id="after-cancel", name="list_sources", arguments={})],
+                )
+            self.assertEqual(raised.exception.code, "state_conflict")
+            cancellation_receipt = agent._make_receipt(
+                provider=FakeProvider([]),
+                workspace_id=workspace_id,
+                attempt_id=None,
+                mission_id=mission.mission_id,
+                run_id=run.run_id,
+                turn_index=1,
+                status="cancelled",
+                p0_sha256=agent.P0_RUN_SHA256,
+                usage=None,
+                context_manifest=manifest,
+                error_code="provider_cancelled_outcome_unknown",
+            )
+            self.assertEqual(
+                store.record_provider_receipt(
+                    workspace_id,
+                    mission.mission_id,
+                    run.run_id,
+                    cancellation_receipt,
+                ),
+                cancellation_receipt,
+            )
             self.assertEqual(store.list_run_events(
                 workspace_id, mission.mission_id, run.run_id
             )[-1].event_type, "run_cancelled")

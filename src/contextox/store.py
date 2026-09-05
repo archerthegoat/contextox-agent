@@ -2174,9 +2174,7 @@ class WorkspaceStore:
             with self._connection() as connection:
                 connection.execute("BEGIN")
                 run = _load_run(connection, workspace_id, mission_id, run_id)
-                if run.status != "running" and not (
-                    run.status == "cancelled" and receipt.status == "cancelled"
-                ):
+                if run.status != "running":
                     raise Path2StateError("state_conflict")
                 prior = _load_tool_receipts(connection, workspace_id, mission_id, run_id)
                 if len(prior) + len(calls) > run.budget.max_tool_calls:
@@ -2636,7 +2634,9 @@ class WorkspaceStore:
         try:
             with self._write_transaction() as connection:
                 run = _load_run(connection, workspace_id, mission_id, run_id)
-                if run.status != "running":
+                if run.status != "running" and not (
+                    run.status == "cancelled" and receipt.status == "cancelled"
+                ):
                     raise Path2StateError("state_conflict")
                 manifest_row = connection.execute(
                     """
