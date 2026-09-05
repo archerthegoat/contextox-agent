@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from threading import Event
@@ -73,6 +74,9 @@ from contextox.provider import (
     ProviderUsage,
 )
 from contextox.store import Path2NotImplementedError, WorkspaceStore, WorkspaceStoreError
+
+
+logger = logging.getLogger(__name__)
 
 
 P0_DRAFT = """ContextOx Path 2 MissionDraftAttempt.
@@ -143,10 +147,17 @@ _TERMINAL_TOOL_NAMES = frozenset({"create_clarification", "submit_for_review", "
 
 
 class _AgentFailure(Exception):
-    def __init__(self, code: str, status: Literal["blocked", "failed"]) -> None:
+    def __init__(
+        self,
+        code: str,
+        status: Literal["blocked", "failed"],
+        *,
+        safe_stage: str | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.status = status
+        self.safe_stage = safe_stage
 
 
 def get_provider() -> DeepSeekProvider:
@@ -263,18 +274,33 @@ def _strict_json_loads(value: str) -> object:
 
 def _candidate_from_completion(completion: ProviderCompletion) -> MissionDraftPayload:
     if completion.tool_calls:
-        raise _AgentFailure("provider_protocol_error", "failed")
+        raise _AgentFailure(
+            "provider_protocol_error", "failed", safe_stage="tool_calls_present"
+        )
     if completion.finish_reason != "stop":
-        raise _AgentFailure("provider_protocol_error", "failed")
+        raise _AgentFailure(
+            "provider_protocol_error", "failed", safe_stage="finish_reason_not_stop"
+        )
     if not completion.content:
-        raise _AgentFailure("provider_protocol_error", "failed")
+        raise _AgentFailure(
+            "provider_protocol_error", "failed", safe_stage="content_empty"
+        )
     try:
         payload = _strict_json_loads(completion.content)
-        if not isinstance(payload, dict):
-            raise ValueError("candidate must be an object")
+    except (TypeError, ValueError) as exc:
+        raise _AgentFailure(
+            "provider_protocol_error", "failed", safe_stage="json_invalid"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise _AgentFailure(
+            "provider_protocol_error", "failed", safe_stage="payload_not_object"
+        )
+    try:
         return MissionDraftPayload.model_validate(payload)
-    except (TypeError, ValueError, ValidationError) as exc:
-        raise _AgentFailure("provider_protocol_error", "failed") from exc
+    except ValidationError as exc:
+        raise _AgentFailure(
+            "provider_protocol_error", "failed", safe_stage="candidate_schema_invalid"
+        ) from exc
 
 
 def _attempt_failure(
@@ -459,6 +485,11 @@ def generate_mission_draft(
     try:
         candidate = _candidate_from_completion(completion)
     except _AgentFailure as failure:
+        if failure.safe_stage is not None:
+            logger.warning(
+                "Mission draft candidate rejected at safe_stage=%s.",
+                failure.safe_stage,
+            )
         receipt = _make_receipt(
             provider=provider,
             workspace_id=workspace_id,

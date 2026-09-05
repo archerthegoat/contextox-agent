@@ -155,6 +155,28 @@ class FakeProvider:
 
 
 class PersistedAttemptTests(unittest.TestCase):
+    def test_invalid_candidate_logs_only_the_safe_failure_stage(self):
+        with self.store_case() as (store, workspace_id, attempt):
+            private_marker = "private-provider-content-must-not-be-logged"
+            provider = FakeProvider([ProviderCompletion(
+                completion_id="synthetic-invalid-candidate",
+                content=json.dumps({"unexpected": private_marker}),
+                reasoning_content="private-reasoning-must-not-be-logged",
+                tool_calls=[], finish_reason="stop", usage=_usage(),
+            )])
+            with self.assertLogs("contextox.agent", level="WARNING") as captured:
+                with patch.object(agent, "get_provider", return_value=provider):
+                    agent.generate_mission_draft(
+                        store, workspace_id, attempt.attempt_id, Event()
+                    )
+            rendered = "\n".join(captured.output)
+            self.assertIn("safe_stage=candidate_schema_invalid", rendered)
+            self.assertNotIn(private_marker, rendered)
+            self.assertNotIn("private-reasoning-must-not-be-logged", rendered)
+            result = store.get_mission_draft_attempt(workspace_id, attempt.attempt_id)
+            self.assertEqual((result.status, result.error_code),
+                             ("failed", "provider_protocol_error"))
+
     @contextmanager
     def store_case(self):
         with tempfile.TemporaryDirectory(prefix="contextox-attempt-", dir="/private/tmp") as directory:
