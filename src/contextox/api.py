@@ -1201,9 +1201,10 @@ def create_app(
             if invalid is not None:
                 return invalid
         try:
-            return _workspace_store(app).get_run_snapshot(workspace_id, mission_id, run_id)
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
+        raise AssertionError("unreachable")
 
     @app.post(
         "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/cancel",

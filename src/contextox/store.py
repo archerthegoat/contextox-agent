@@ -19,26 +19,35 @@ from uuid import RFC_4122, UUID, uuid4
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from contextox.models import (
+    ClarificationRequest,
     ContextManifestInput,
     ContextPacketManifest,
     ContextSnapshot,
     DefinitionDraft,
+    DomainRejection,
     DomainToolCall,
     EvidenceLocator,
+    EvidenceRef,
     Mission,
     MissionDraftAttempt,
     MissionDraftPayload,
     MissionDraftConfirmRequest,
+    MissionSnapshot,
     ProviderReceipt,
+    RelationshipProfile,
+    RunBudget,
     RunEventEnvelope,
     RunEventInput,
     RunSnapshot,
+    RunStartRequest,
     RunToolResult,
     SourceArtifact,
     SourceExcerpt,
     SourceIdentity,
     SourceRevision,
+    TableProfile,
     TerminalReceipt,
+    ToolReceipt,
     Workspace,
     canonical_sha256,
 )
@@ -46,6 +55,7 @@ from contextox.sources import (
     MAX_FILE_BYTES,
     PARSER_VERSION,
     SourceInputError,
+    inspect_relationship,
     parse_source,
     read_source_fragment,
 )
@@ -201,7 +211,18 @@ def _database_path(data_dir: Path) -> Path:
 
 
 def _canonical_json(value: BaseModel | dict[str, Any] | list[Any]) -> str:
-    payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
+    def jsonable(item: object) -> object:
+        if isinstance(item, BaseModel):
+            return item.model_dump(mode="json")
+        if isinstance(item, list):
+            return [jsonable(child) for child in item]
+        if isinstance(item, tuple):
+            return [jsonable(child) for child in item]
+        if isinstance(item, dict):
+            return {str(key): jsonable(child) for key, child in item.items()}
+        return item
+
+    payload = jsonable(value)
     return json.dumps(
         payload,
         ensure_ascii=False,
@@ -1204,6 +1225,7 @@ class WorkspaceStore:
         finally:
             if connection is not None:
                 connection.close()
+        store.recover_interrupted_runs()
         return store
 
     @contextmanager
@@ -1612,7 +1634,104 @@ class WorkspaceStore:
         run_id: str,
     ) -> RunSnapshot:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN")
+                return _load_run(connection, workspace_id, mission_id, run_id)
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def start_run(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        request: RunStartRequest,
+    ) -> RunSnapshot:
+        self._require_path2_workspace(workspace_id)
+        try:
+            request = RunStartRequest.model_validate(request.model_dump(mode="json"))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise Path2StateError("run_start_invalid") from exc
+        refs = _validated_source_identities(workspace_id, request.source_refs)
+        request_sha256 = canonical_sha256(request)
+        try:
+            with self._write_transaction() as connection:
+                replay = connection.execute(
+                    """
+                    SELECT workspace_id, mission_id, run_id, client_request_id, created_at,
+                           started_at, finished_at, status, budget_json, last_sequence,
+                           final_output, error_code, start_request_sha256
+                    FROM runs
+                    WHERE workspace_id = ? AND mission_id = ? AND client_request_id = ?
+                    """,
+                    (workspace_id, mission_id, request.client_request_id),
+                ).fetchone()
+                if replay is not None:
+                    if replay[12] != request_sha256:
+                        raise Path2StateError("state_conflict")
+                    return _run_from_row(connection, replay)
+
+                mission = _load_mission(connection, workspace_id, mission_id)
+                if (
+                    mission.status != "active"
+                    or mission.state_version != request.expected_state_version
+                ):
+                    raise Path2StateError("state_conflict")
+                allowed = {
+                    (ref.source_id, ref.revision_id, ref.sha256)
+                    for ref in mission.source_refs
+                }
+                if any(
+                    (ref.source_id, ref.revision_id, ref.sha256) not in allowed
+                    for ref in refs
+                ):
+                    raise Path2StateError("source_refs_invalid")
+                self._validate_source_identities(connection, workspace_id, refs)
+                if connection.execute(
+                    """
+                    SELECT 1 FROM runs
+                    WHERE workspace_id = ? AND mission_id = ?
+                      AND status IN ('queued', 'running')
+                    """,
+                    (workspace_id, mission_id),
+                ).fetchone() is not None:
+                    raise Path2StateError("run_already_active")
+                run_id = str(uuid4())
+                created_at = _utc_now()
+                budget = RunBudget()
+                connection.execute(
+                    """
+                    INSERT INTO runs
+                        (workspace_id, mission_id, run_id, client_request_id,
+                         created_at, started_at, finished_at, status, budget_json,
+                         last_sequence, final_output, error_code, start_request_sha256)
+                    VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, 0, NULL, NULL, ?)
+                    """,
+                    (workspace_id, mission_id, run_id, request.client_request_id,
+                     created_at.isoformat(), _canonical_json(budget), request_sha256),
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO run_sources
+                        (workspace_id, mission_id, run_id, ordinal,
+                         source_id, revision_id, sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (workspace_id, mission_id, run_id, ordinal,
+                         ref.source_id, ref.revision_id, ref.sha256)
+                        for ordinal, ref in enumerate(refs)
+                    ],
+                )
+                return _load_run(connection, workspace_id, mission_id, run_id)
+        except WorkspaceStoreError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise Path2StateError("state_conflict") from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def create_mission_draft_attempt(
         self,
@@ -1788,6 +1907,35 @@ class WorkspaceStore:
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
             raise WorkspaceStoreUnavailableError() from exc
 
+    def get_mission_snapshot(
+        self, workspace_id: str, mission_id: str,
+    ) -> MissionSnapshot:
+        self._require_path2_workspace(workspace_id)
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN")
+                mission = _load_mission(connection, workspace_id, mission_id)
+                latest = connection.execute(
+                    """
+                    SELECT workspace_id, mission_id, run_id, client_request_id,
+                           created_at, started_at, finished_at, status, budget_json,
+                           last_sequence, final_output, error_code, start_request_sha256
+                    FROM runs WHERE workspace_id = ? AND mission_id = ?
+                    ORDER BY created_at DESC, run_id DESC LIMIT 1
+                    """,
+                    (workspace_id, mission_id),
+                ).fetchone()
+                return MissionSnapshot(
+                    mission=mission,
+                    draft=_load_latest_draft(connection, workspace_id, mission_id),
+                    clarifications=_load_clarifications(connection, workspace_id, mission_id),
+                    latest_run=None if latest is None else _run_from_row(connection, latest),
+                )
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
     def get_context_snapshot(
         self,
         workspace_id: str,
@@ -1795,7 +1943,30 @@ class WorkspaceStore:
         run_id: str,
     ) -> ContextSnapshot:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN")
+                mission = _load_mission(connection, workspace_id, mission_id)
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                sources: list[SourceRevision] = []
+                for ref in run.source_refs:
+                    revision, _ = _load_source_in_connection(
+                        connection, workspace_id, ref.revision_id
+                    )
+                    if _source_identity(revision) != ref:
+                        raise Path2StateError("source_revision_mismatch")
+                    if revision.permission_status != "read_allowed":
+                        raise Path2StateError("source_permission_denied")
+                    _read_validated_source_file(_source_path(self.data_dir, revision), revision)
+                    sources.append(revision)
+                return ContextSnapshot(
+                    mission=mission, run=run, sources=sources,
+                    draft=run.draft, clarifications=run.clarifications,
+                )
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def record_context_manifest(
         self,
@@ -1805,7 +1976,109 @@ class WorkspaceStore:
         manifest: ContextManifestInput,
     ) -> ContextPacketManifest:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        try:
+            manifest = ContextManifestInput.model_validate(manifest.model_dump(mode="json"))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise Path2StateError("context_manifest_invalid") from exc
+        try:
+            with self._write_transaction() as connection:
+                mission = _load_mission(connection, workspace_id, mission_id)
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status != "running":
+                    raise Path2StateError("state_conflict")
+                latest_draft = _load_latest_draft(connection, workspace_id, mission_id)
+                draft_values = (
+                    (latest_draft.draft_id, latest_draft.version, latest_draft.sha256)
+                    if latest_draft is not None else (None, None, None)
+                )
+                tool_receipts = _load_tool_receipts(
+                    connection, workspace_id, mission_id, run_id
+                )
+                expected = (
+                    mission.state_version,
+                    draft_values,
+                    run.source_refs,
+                    [item.clarification_id for item in run.clarifications],
+                    [item.receipt_id for item in tool_receipts],
+                    run.budget,
+                    [
+                        "cross_mission_chat_not_loaded",
+                        "unapproved_memory_not_loaded",
+                        "unselected_sources_not_loaded",
+                    ],
+                )
+                actual = (
+                    manifest.mission_state_version,
+                    (manifest.draft_id, manifest.draft_version, manifest.draft_sha256),
+                    manifest.source_refs,
+                    manifest.clarification_ids,
+                    manifest.tool_receipt_ids,
+                    manifest.budget,
+                    manifest.excluded_reasons,
+                )
+                if actual != expected:
+                    raise Path2StateError("context_manifest_invalid")
+                existing = connection.execute(
+                    """
+                    SELECT workspace_id, mission_id, run_id, manifest_id,
+                           mission_state_version, turn_index, draft_id, draft_version,
+                           draft_sha256, source_refs_json, clarification_ids_json,
+                           tool_receipt_ids_json, budget_json, excluded_reasons_json, sha256
+                    FROM context_manifests
+                    WHERE workspace_id = ? AND mission_id = ? AND run_id = ? AND turn_index = ?
+                    """,
+                    (workspace_id, mission_id, run_id, manifest.turn_index),
+                ).fetchone()
+                if existing is not None:
+                    saved = _context_manifest_from_row(existing)
+                    comparable = saved.model_dump(mode="json", exclude={"workspace_id", "mission_id", "run_id", "manifest_id", "sha256"})
+                    if comparable != manifest.model_dump(mode="json"):
+                        raise Path2StateError("state_conflict")
+                    return saved
+                values = {
+                    **manifest.model_dump(mode="json"),
+                    "workspace_id": workspace_id, "mission_id": mission_id,
+                    "run_id": run_id, "manifest_id": str(uuid4()),
+                }
+                values["sha256"] = canonical_sha256(values)
+                packet = ContextPacketManifest.model_validate(values)
+                connection.execute(
+                    """
+                    INSERT INTO context_manifests
+                        (workspace_id, mission_id, run_id, manifest_id,
+                         mission_state_version, turn_index, draft_id, draft_version,
+                         draft_sha256, source_refs_json, clarification_ids_json,
+                         tool_receipt_ids_json, budget_json, excluded_reasons_json, sha256)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (workspace_id, mission_id, run_id, packet.manifest_id,
+                     packet.mission_state_version, packet.turn_index, packet.draft_id,
+                     packet.draft_version, packet.draft_sha256,
+                     _canonical_json(packet.source_refs),
+                     _canonical_json(packet.clarification_ids),
+                     _canonical_json(packet.tool_receipt_ids), _canonical_json(packet.budget),
+                     _canonical_json(packet.excluded_reasons), packet.sha256),
+                )
+                saved = connection.execute(
+                    """
+                    SELECT workspace_id, mission_id, run_id, manifest_id,
+                           mission_state_version, turn_index, draft_id, draft_version,
+                           draft_sha256, source_refs_json, clarification_ids_json,
+                           tool_receipt_ids_json, budget_json, excluded_reasons_json, sha256
+                    FROM context_manifests WHERE workspace_id=? AND mission_id=?
+                      AND run_id=? AND manifest_id=?
+                    """,
+                    (workspace_id, mission_id, run_id, packet.manifest_id),
+                ).fetchone()
+                if saved is None:
+                    raise WorkspaceStoreUnavailableError()
+                return _context_manifest_from_row(saved)
+        except WorkspaceStoreError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise Path2StateError("state_conflict") from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def mark_run_running(
         self,
@@ -1814,7 +2087,26 @@ class WorkspaceStore:
         run_id: str,
     ) -> RunSnapshot:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        try:
+            with self._write_transaction() as connection:
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status != "queued":
+                    return run
+                started_at = _utc_now().isoformat()
+                changed = connection.execute(
+                    """
+                    UPDATE runs SET status='running', started_at=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=? AND status='queued'
+                    """,
+                    (started_at, workspace_id, mission_id, run_id),
+                ).rowcount
+                if changed != 1:
+                    raise Path2StateError("state_conflict")
+                return _load_run(connection, workspace_id, mission_id, run_id)
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def validate_run_tool_batch(
         self,
@@ -1824,7 +2116,44 @@ class WorkspaceStore:
         calls: list[DomainToolCall],
     ) -> None:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        try:
+            calls = TypeAdapter(list[DomainToolCall]).validate_python(
+                [call.model_dump(mode="json") for call in calls]
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise Path2StateError("tool_arguments_invalid") from exc
+        if not calls or len(calls) > 24:
+            raise Path2StateError("tool_arguments_invalid")
+        if len({call.call_id for call in calls}) != len(calls):
+            raise Path2StateError("tool_arguments_invalid")
+        terminal_count = sum(
+            call.name in {"create_clarification", "submit_for_review", "finish_run"}
+            for call in calls
+        )
+        if terminal_count and len(calls) != 1:
+            raise Path2StateError("terminal_tool_mixed_batch")
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN")
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status != "running" and not (
+                    run.status == "cancelled" and receipt.status == "cancelled"
+                ):
+                    raise Path2StateError("state_conflict")
+                prior = _load_tool_receipts(connection, workspace_id, mission_id, run_id)
+                if len(prior) + len(calls) > run.budget.max_tool_calls:
+                    raise Path2StateError("tool_call_budget_exceeded")
+                existing_ids = {item.call_id for item in prior}
+                if any(call.call_id in existing_ids for call in calls):
+                    raise Path2StateError("state_conflict")
+                for call in calls:
+                    self._validate_run_tool_call(connection, run, call)
+        except WorkspaceStoreError:
+            raise
+        except SourceInputError as exc:
+            raise Path2StateError(exc.code) from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def execute_run_tool(
         self,
@@ -1834,7 +2163,414 @@ class WorkspaceStore:
         call: DomainToolCall,
     ) -> RunToolResult:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        try:
+            call = TypeAdapter(DomainToolCall).validate_python(call.model_dump(mode="json"))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise Path2StateError("tool_arguments_invalid") from exc
+        try:
+            with self._write_transaction() as connection:
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status != "running":
+                    raise Path2StateError("state_conflict")
+                self._validate_run_tool_call(connection, run, call)
+                receipts = _load_tool_receipts(connection, workspace_id, mission_id, run_id)
+                if any(item.call_id == call.call_id for item in receipts):
+                    raise Path2StateError("state_conflict")
+                ordinal = len(receipts) + 1
+                if ordinal > run.budget.max_tool_calls:
+                    raise Path2StateError("tool_call_budget_exceeded")
+
+                output: object
+                status: Literal["succeeded", "rejected"] = "succeeded"
+                error_code: str | None = None
+                terminal_snapshot: RunSnapshot | None = None
+                if call.name == "list_sources":
+                    output = [
+                        _load_source_in_connection(connection, workspace_id, ref.revision_id)[0]
+                        for ref in run.source_refs
+                    ]
+                elif call.name == "read_source":
+                    revision, _, content = self._run_source_material(
+                        connection, run, call.arguments.revision_id
+                    )
+                    output = read_source_fragment(revision, content, call.arguments.locator)
+                elif call.name == "inspect_dataset":
+                    if call.arguments.kind == "table":
+                        _, artifact, _ = self._run_source_material(
+                            connection, run, call.arguments.revision_id
+                        )
+                        output = next(
+                            table for table in artifact.tables
+                            if table.table_id == call.arguments.table_id
+                        )
+                    else:
+                        left_revision, _, left_content = self._run_source_material(
+                            connection, run, call.arguments.left.source_ref.revision_id
+                        )
+                        right_revision, _, right_content = self._run_source_material(
+                            connection, run, call.arguments.right.source_ref.revision_id
+                        )
+                        output = inspect_relationship(
+                            call.arguments.left, left_revision, left_content,
+                            call.arguments.right, right_revision, right_content,
+                        )
+                elif call.name == "update_definition_draft":
+                    latest = _load_latest_draft(connection, workspace_id, mission_id)
+                    if latest is not None and latest.status == "in_review":
+                        status, error_code = "rejected", "draft_in_review"
+                        output = DomainRejection(
+                            code=error_code,
+                            reason="The current definition draft is already in review.",
+                        )
+                    elif (
+                        (latest is None and call.arguments.expected_version != 0)
+                        or (latest is not None and (
+                            call.arguments.expected_version != latest.version
+                            or call.arguments.expected_sha256 != latest.sha256
+                        ))
+                    ):
+                        status, error_code = "rejected", "state_conflict"
+                        output = DomainRejection(
+                            code=error_code,
+                            reason="The definition draft version or hash is stale.",
+                        )
+                    else:
+                        payload = {
+                            "fields": [item.model_dump(mode="json") for item in call.arguments.fields],
+                            "relationships": [
+                                item.model_dump(mode="json") for item in call.arguments.relationships
+                            ],
+                            "unresolved_items": call.arguments.unresolved_items,
+                        }
+                        output = DefinitionDraft(
+                            workspace_id=workspace_id, mission_id=mission_id,
+                            draft_id=latest.draft_id if latest is not None else str(uuid4()),
+                            version=1 if latest is None else latest.version + 1,
+                            sha256=canonical_sha256(payload), status="draft",
+                            semantic_approval="pending", **payload,
+                        )
+                        connection.execute(
+                            """
+                            INSERT INTO definition_drafts
+                                (workspace_id, mission_id, draft_id, version, sha256,
+                                 status, semantic_approval, fields_json,
+                                 relationships_json, unresolved_items_json)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (workspace_id, mission_id, output.draft_id, output.version,
+                             output.sha256, output.status, output.semantic_approval,
+                             _canonical_json(output.fields),
+                             _canonical_json(output.relationships),
+                             _canonical_json(output.unresolved_items)),
+                        )
+                else:
+                    output, terminal_snapshot = self._execute_terminal_tool(
+                        connection, run, call, receipts, ordinal
+                    )
+
+                refs = _evidence_refs(output)
+                tool_receipt = ToolReceipt(
+                    workspace_id=workspace_id, mission_id=mission_id, run_id=run_id,
+                    receipt_id=str(uuid4()), ordinal=ordinal, call_id=call.call_id,
+                    name=call.name, arguments_sha256=canonical_sha256(call.arguments),
+                    status=status, created_at=_utc_now(), source_refs=refs,
+                    error_code=error_code,
+                )
+                if terminal_snapshot is None:
+                    _insert_tool_receipt(connection, tool_receipt)
+                    if isinstance(output, DefinitionDraft) and call.name == "update_definition_draft":
+                        _append_event_in_transaction(
+                            connection, run, "draft_updated",
+                            {"draft_id": output.draft_id, "version": output.version,
+                             "sha256": output.sha256},
+                        )
+                    saved_receipt = _load_tool_receipts(
+                        connection, workspace_id, mission_id, run_id
+                    )[-1]
+                    if saved_receipt != tool_receipt:
+                        raise WorkspaceStoreUnavailableError()
+                else:
+                    # The terminal transaction inserted the receipt with the same
+                    # immutable identity before its TerminalReceipt.
+                    saved_receipt = _load_tool_receipts(
+                        connection, workspace_id, mission_id, run_id
+                    )[-1]
+                    if (
+                        saved_receipt.call_id != call.call_id
+                        or saved_receipt.name != call.name
+                        or saved_receipt.arguments_sha256 != canonical_sha256(call.arguments)
+                    ):
+                        raise WorkspaceStoreUnavailableError()
+                    tool_receipt = saved_receipt
+                    terminal_snapshot = _load_run(
+                        connection, workspace_id, mission_id, run_id
+                    )
+                return RunToolResult(
+                    call_id=call.call_id, status=status, output=output,
+                    tool_receipt=tool_receipt, terminal_snapshot=terminal_snapshot,
+                )
+        except WorkspaceStoreError:
+            raise
+        except StopIteration as exc:
+            raise Path2StateError("table_not_found") from exc
+        except SourceInputError as exc:
+            raise Path2StateError(exc.code) from exc
+        except sqlite3.IntegrityError as exc:
+            raise Path2StateError("state_conflict") from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def _run_source_material(
+        self, connection: sqlite3.Connection, run: RunSnapshot, revision_id: str,
+    ) -> tuple[SourceRevision, SourceArtifact, bytes]:
+        selected = next(
+            (ref for ref in run.source_refs if ref.revision_id == revision_id), None
+        )
+        if selected is None:
+            raise Path2StateError("source_permission_denied")
+        revision, artifact = _load_source_in_connection(
+            connection, run.workspace_id, revision_id
+        )
+        if _source_identity(revision) != selected:
+            raise Path2StateError("source_revision_mismatch")
+        if revision.permission_status != "read_allowed":
+            raise Path2StateError("source_permission_denied")
+        content = _read_validated_source_file(
+            _source_path(self.data_dir, revision), revision
+        )
+        return revision, artifact, content
+
+    def _validate_run_evidence_refs(
+        self, connection: sqlite3.Connection, run: RunSnapshot,
+        refs: list[EvidenceRef],
+    ) -> None:
+        for ref in refs:
+            revision, _, content = self._run_source_material(
+                connection, run, ref.revision_id
+            )
+            if (
+                ref.workspace_id != revision.workspace_id
+                or ref.source_id != revision.source_id
+                or ref.sha256 != revision.sha256
+            ):
+                raise Path2StateError("source_revision_mismatch")
+            read_source_fragment(revision, content, ref.locator)
+
+    def _validate_run_identity_refs(
+        self, connection: sqlite3.Connection, run: RunSnapshot,
+        refs: list[SourceIdentity],
+    ) -> None:
+        for ref in refs:
+            revision, _, _ = self._run_source_material(
+                connection, run, ref.revision_id
+            )
+            if _source_identity(revision) != ref:
+                raise Path2StateError("source_revision_mismatch")
+
+    def _validate_run_tool_call(
+        self, connection: sqlite3.Connection, run: RunSnapshot,
+        call: DomainToolCall,
+    ) -> None:
+        if call.name == "list_sources":
+            for ref in run.source_refs:
+                self._run_source_material(connection, run, ref.revision_id)
+            return
+        if call.name == "read_source":
+            revision, _, content = self._run_source_material(
+                connection, run, call.arguments.revision_id
+            )
+            read_source_fragment(revision, content, call.arguments.locator)
+            return
+        if call.name == "inspect_dataset":
+            if call.arguments.kind == "table":
+                _, artifact, _ = self._run_source_material(
+                    connection, run, call.arguments.revision_id
+                )
+                if not any(table.table_id == call.arguments.table_id for table in artifact.tables):
+                    raise Path2StateError("table_not_found")
+            else:
+                self._validate_run_identity_refs(
+                    connection, run,
+                    [call.arguments.left.source_ref, call.arguments.right.source_ref],
+                )
+                left_revision, _, left_content = self._run_source_material(
+                    connection, run, call.arguments.left.source_ref.revision_id
+                )
+                right_revision, _, right_content = self._run_source_material(
+                    connection, run, call.arguments.right.source_ref.revision_id
+                )
+                inspect_relationship(
+                    call.arguments.left, left_revision, left_content,
+                    call.arguments.right, right_revision, right_content,
+                )
+            return
+        if call.name == "update_definition_draft":
+            identities = [
+                column.source_ref
+                for field in call.arguments.fields for column in field.source_columns
+            ] + [
+                table.source_ref
+                for relationship in call.arguments.relationships
+                for table in (relationship.left, relationship.right)
+            ]
+            evidence = [
+                ref for field in call.arguments.fields for ref in field.source_refs
+            ] + [
+                ref for relationship in call.arguments.relationships
+                for ref in relationship.source_refs
+            ]
+            self._validate_run_identity_refs(connection, run, identities)
+            self._validate_run_evidence_refs(connection, run, evidence)
+            return
+        if call.name in {"create_clarification", "submit_for_review"}:
+            latest = _load_latest_draft(connection, run.workspace_id, run.mission_id)
+            if (
+                latest is None
+                or latest.status != "draft"
+                or latest.version != call.arguments.draft_version
+                or latest.sha256 != call.arguments.draft_sha256
+            ):
+                raise Path2StateError("state_conflict")
+            if call.name == "create_clarification":
+                self._validate_run_evidence_refs(
+                    connection, run,
+                    [ref for question in call.arguments.questions for ref in question.source_refs],
+                )
+            return
+        if call.name == "finish_run":
+            self._validate_run_evidence_refs(
+                connection, run, call.arguments.source_refs
+            )
+            return
+        raise Path2StateError("capability_denied")
+
+    def _execute_terminal_tool(
+        self, connection: sqlite3.Connection, run: RunSnapshot,
+        call: DomainToolCall, prior_receipts: list[ToolReceipt], ordinal: int,
+    ) -> tuple[object, RunSnapshot]:
+        workspace_id, mission_id, run_id = run.workspace_id, run.mission_id, run.run_id
+        latest = _load_latest_draft(connection, workspace_id, mission_id)
+        now = _utc_now()
+        if call.name == "create_clarification":
+            if latest is None:
+                raise Path2StateError("state_conflict")
+            output: object = ClarificationRequest(
+                workspace_id=workspace_id, mission_id=mission_id, run_id=run_id,
+                clarification_id=str(uuid4()), draft_version=latest.version,
+                draft_sha256=latest.sha256, status="awaiting_answer",
+                questions=call.arguments.questions,
+            )
+            connection.execute(
+                """
+                INSERT INTO clarification_requests
+                    (workspace_id, mission_id, run_id, clarification_id,
+                     draft_version, draft_sha256, status, questions_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (workspace_id, mission_id, run_id, output.clarification_id,
+                 output.draft_version, output.draft_sha256, output.status,
+                 _canonical_json(output.questions)),
+            )
+            outcome = "waiting_for_human"
+        elif call.name == "submit_for_review":
+            if latest is None:
+                raise Path2StateError("state_conflict")
+            connection.execute(
+                """
+                UPDATE definition_drafts SET status='in_review'
+                WHERE workspace_id=? AND mission_id=? AND draft_id=?
+                  AND version=? AND sha256=? AND status='draft'
+                """,
+                (workspace_id, mission_id, latest.draft_id,
+                 latest.version, latest.sha256),
+            )
+            output = latest.model_copy(update={"status": "in_review"})
+            outcome = "waiting_for_human"
+        elif call.name == "finish_run":
+            output = None
+            outcome = "partial"
+        else:
+            raise Path2StateError("capability_denied")
+
+        output_refs = (
+            list(call.arguments.source_refs)
+            if call.name == "finish_run" else _evidence_refs(output)
+        )
+        tool_receipt = ToolReceipt(
+            workspace_id=workspace_id, mission_id=mission_id, run_id=run_id,
+            receipt_id=str(uuid4()), ordinal=ordinal, call_id=call.call_id,
+            name=call.name, arguments_sha256=canonical_sha256(call.arguments),
+            status="succeeded", created_at=now, source_refs=output_refs,
+            error_code=None,
+        )
+        _insert_tool_receipt(connection, tool_receipt)
+        clarification_ids = [
+            item.clarification_id
+            for item in _load_clarifications(connection, workspace_id, mission_id, run_id)
+        ]
+        provider_receipt_ids = [
+            row[0] for row in connection.execute(
+                """
+                SELECT receipt_id FROM provider_receipts
+                WHERE workspace_id=? AND mission_id=? AND run_id=? ORDER BY turn_index
+                """,
+                (workspace_id, mission_id, run_id),
+            ).fetchall()
+        ]
+        terminal = TerminalReceipt(
+            workspace_id=workspace_id, mission_id=mission_id, run_id=run_id,
+            receipt_id=str(uuid4()), created_at=now, terminal_tool=call.name,
+            outcome=outcome,
+            draft_id=latest.draft_id if latest is not None else None,
+            draft_version=latest.version if latest is not None else None,
+            draft_sha256=latest.sha256 if latest is not None else None,
+            clarification_ids=clarification_ids,
+            provider_receipt_ids=provider_receipt_ids,
+            tool_receipt_ids=[item.receipt_id for item in prior_receipts] + [tool_receipt.receipt_id],
+            source_refs=output_refs,
+        )
+        connection.execute(
+            """
+            INSERT INTO terminal_receipts
+                (workspace_id, mission_id, run_id, receipt_id, created_at,
+                 terminal_tool, outcome, draft_id, draft_version, draft_sha256,
+                 clarification_ids_json, provider_receipt_ids_json,
+                 tool_receipt_ids_json, source_refs_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (workspace_id, mission_id, run_id, terminal.receipt_id,
+             terminal.created_at.isoformat(), terminal.terminal_tool, terminal.outcome,
+             terminal.draft_id, terminal.draft_version, terminal.draft_sha256,
+             _canonical_json(terminal.clarification_ids),
+             _canonical_json(terminal.provider_receipt_ids),
+             _canonical_json(terminal.tool_receipt_ids),
+             _canonical_json(terminal.source_refs)),
+        )
+        connection.execute(
+            """
+            UPDATE runs SET status=?, finished_at=?, error_code=NULL
+            WHERE workspace_id=? AND mission_id=? AND run_id=? AND status='running'
+            """,
+            (outcome, now.isoformat(), workspace_id, mission_id, run_id),
+        )
+        mission_status = "waiting_for_human" if outcome == "waiting_for_human" else "blocked"
+        connection.execute(
+            """
+            UPDATE missions SET status=?, state_version=state_version+1
+            WHERE workspace_id=? AND mission_id=? AND status='active'
+            """,
+            (mission_status, workspace_id, mission_id),
+        )
+        if call.name == "create_clarification":
+            _append_event_in_transaction(
+                connection, run, "clarification_requested",
+                {"clarification_id": output.clarification_id,
+                 "draft_version": output.draft_version,
+                 "draft_sha256": output.draft_sha256},
+            )
+        if call.name == "finish_run":
+            output = terminal
+        return output, _load_run(connection, workspace_id, mission_id, run_id)
 
     def record_provider_receipt(
         self,
@@ -1844,7 +2580,66 @@ class WorkspaceStore:
         receipt: ProviderReceipt,
     ) -> ProviderReceipt:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        from contextox.agent import P0_RUN_SHA256, TOOL_SCHEMA_SHA256
+
+        try:
+            receipt = ProviderReceipt.model_validate(receipt.model_dump(mode="json"))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise Path2StateError("provider_receipt_invalid") from exc
+        if (
+            receipt.workspace_id != workspace_id
+            or receipt.attempt_id is not None
+            or receipt.mission_id != mission_id
+            or receipt.run_id != run_id
+            or receipt.p0_sha256 != P0_RUN_SHA256
+            or receipt.tool_schema_sha256 != TOOL_SCHEMA_SHA256
+        ):
+            raise Path2StateError("provider_receipt_invalid")
+        try:
+            with self._write_transaction() as connection:
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status != "running":
+                    raise Path2StateError("state_conflict")
+                manifest_row = connection.execute(
+                    """
+                    SELECT workspace_id, mission_id, run_id, manifest_id,
+                           mission_state_version, turn_index, draft_id, draft_version,
+                           draft_sha256, source_refs_json, clarification_ids_json,
+                           tool_receipt_ids_json, budget_json, excluded_reasons_json, sha256
+                    FROM context_manifests
+                    WHERE workspace_id=? AND mission_id=? AND run_id=? AND manifest_id=?
+                    """,
+                    (workspace_id, mission_id, run_id, receipt.context_manifest_id),
+                ).fetchone()
+                if manifest_row is None:
+                    raise Path2StateError("provider_receipt_invalid")
+                manifest = _context_manifest_from_row(manifest_row)
+                if (
+                    manifest.turn_index != receipt.turn_index
+                    or manifest.sha256 != receipt.context_manifest_sha256
+                ):
+                    raise Path2StateError("provider_receipt_invalid")
+                existing = connection.execute(
+                    """
+                    SELECT receipt_id FROM provider_receipts
+                    WHERE workspace_id=? AND mission_id=? AND run_id=? AND turn_index=?
+                    """,
+                    (workspace_id, mission_id, run_id, receipt.turn_index),
+                ).fetchone()
+                if existing is not None:
+                    saved = _load_provider_receipt(connection, workspace_id, existing[0])
+                    if saved != receipt:
+                        raise Path2StateError("provider_receipt_conflict")
+                    return saved
+                _insert_provider_receipt(connection, receipt)
+                saved = _load_provider_receipt(connection, workspace_id, receipt.receipt_id)
+                if saved != receipt:
+                    raise WorkspaceStoreUnavailableError()
+                return saved
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def append_run_event(
         self,
@@ -1854,7 +2649,75 @@ class WorkspaceStore:
         event: RunEventInput,
     ) -> RunEventEnvelope:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        try:
+            event = RunEventInput.model_validate(event.model_dump(mode="json"))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise Path2StateError("run_event_invalid") from exc
+        try:
+            with self._write_transaction() as connection:
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if not _run_event_allowed(run, event):
+                    raise Path2StateError("state_conflict")
+                sequence = run.last_sequence + 1
+                envelope = RunEventEnvelope.model_validate({
+                    "event_id": str(sequence), "event_type": event.event_type,
+                    "occurred_at": _utc_now(), "workspace_id": workspace_id,
+                    "mission_id": mission_id, "run_id": run_id, "sequence": sequence,
+                    "public_payload": event.public_payload.model_dump(mode="json"),
+                })
+                if event.event_type != "model_delta":
+                    connection.execute(
+                        """
+                        INSERT INTO run_events
+                            (workspace_id, mission_id, run_id, sequence, event_id,
+                             event_type, occurred_at, public_payload_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (workspace_id, mission_id, run_id, sequence, envelope.event_id,
+                         envelope.event_type, envelope.occurred_at.isoformat(),
+                         _canonical_json(envelope.public_payload)),
+                    )
+                connection.execute(
+                    """
+                    UPDATE runs SET last_sequence=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=? AND last_sequence=?
+                    """,
+                    (sequence, workspace_id, mission_id, run_id, run.last_sequence),
+                )
+                return envelope
+        except WorkspaceStoreError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise Path2StateError("state_conflict") from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def list_run_events(
+        self, workspace_id: str, mission_id: str, run_id: str,
+        after_sequence: int = 0,
+    ) -> list[RunEventEnvelope]:
+        self._require_path2_workspace(workspace_id)
+        if type(after_sequence) is not int or after_sequence < 0:
+            raise Path2StateError("run_event_cursor_invalid")
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN")
+                _load_run(connection, workspace_id, mission_id, run_id)
+                rows = connection.execute(
+                    """
+                    SELECT event_id, event_type, occurred_at, workspace_id,
+                           mission_id, run_id, sequence, public_payload_json
+                    FROM run_events
+                    WHERE workspace_id=? AND mission_id=? AND run_id=? AND sequence>?
+                    ORDER BY sequence
+                    """,
+                    (workspace_id, mission_id, run_id, after_sequence),
+                ).fetchall()
+                return [_run_event_from_row(row) for row in rows]
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def fail_run(
         self,
@@ -1865,7 +2728,41 @@ class WorkspaceStore:
         code: str,
     ) -> RunSnapshot:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        if status not in {"blocked", "failed", "partial"}:
+            raise Path2StateError("state_conflict")
+        try:
+            with self._write_transaction() as connection:
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status in {"cancelled", "waiting_for_human", "partial", "completed"}:
+                    return run
+                if run.status in {"blocked", "failed"}:
+                    if run.status != status or run.error_code != code:
+                        raise Path2StateError("state_conflict")
+                    return run
+                if status == "partial":
+                    raise Path2StateError("state_conflict")
+                now = _utc_now().isoformat()
+                connection.execute(
+                    """
+                    UPDATE runs SET status=?, finished_at=?, error_code=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=?
+                      AND status IN ('queued','running')
+                    """,
+                    (status, now, code, workspace_id, mission_id, run_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE missions SET status='blocked', state_version=state_version+1
+                    WHERE workspace_id=? AND mission_id=?
+                      AND status NOT IN ('completed','cancelled')
+                    """,
+                    (workspace_id, mission_id),
+                )
+                return _load_run(connection, workspace_id, mission_id, run_id)
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def save_run_final_output(
         self,
@@ -1875,7 +2772,139 @@ class WorkspaceStore:
         content: str,
     ) -> RunSnapshot:
         self._require_path2_workspace(workspace_id)
-        raise Path2NotImplementedError()
+        if not isinstance(content, str) or not content or len(content) > 32768:
+            raise Path2StateError("final_output_invalid")
+        try:
+            with self._write_transaction() as connection:
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status not in {"waiting_for_human", "partial"} or run.terminal_receipt is None:
+                    raise Path2StateError("state_conflict")
+                if run.final_output is not None:
+                    if run.final_output != content:
+                        raise Path2StateError("state_conflict")
+                    return run
+                now = _utc_now().isoformat()
+                connection.execute(
+                    """
+                    UPDATE runs SET final_output=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=? AND final_output IS NULL
+                    """,
+                    (content, workspace_id, mission_id, run_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO mission_messages
+                        (workspace_id, mission_id, message_id, created_at, role,
+                         content, original_attempt_id, run_id)
+                    VALUES (?, ?, ?, ?, 'assistant', ?, NULL, ?)
+                    """,
+                    (workspace_id, mission_id, str(uuid4()), now, content, run_id),
+                )
+                return _load_run(connection, workspace_id, mission_id, run_id)
+        except WorkspaceStoreError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise Path2StateError("state_conflict") from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def cancel_run(
+        self, workspace_id: str, mission_id: str, run_id: str,
+    ) -> RunSnapshot:
+        self._require_path2_workspace(workspace_id)
+        try:
+            with self._write_transaction() as connection:
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status not in {"queued", "running"}:
+                    return run
+                now = _utc_now()
+                sequence = run.last_sequence + 1
+                connection.execute(
+                    """
+                    UPDATE runs SET status='cancelled', finished_at=?, error_code='cancelled',
+                                    last_sequence=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=?
+                      AND status IN ('queued','running')
+                    """,
+                    (now.isoformat(), sequence, workspace_id, mission_id, run_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE missions SET status='cancelled', state_version=state_version+1
+                    WHERE workspace_id=? AND mission_id=? AND status!='cancelled'
+                    """,
+                    (workspace_id, mission_id),
+                )
+                payload = {"status": "cancelled", "terminal_receipt_id": None,
+                           "error_code": "cancelled"}
+                connection.execute(
+                    """
+                    INSERT INTO run_events
+                        (workspace_id, mission_id, run_id, sequence, event_id,
+                         event_type, occurred_at, public_payload_json)
+                    VALUES (?, ?, ?, ?, ?, 'run_cancelled', ?, ?)
+                    """,
+                    (workspace_id, mission_id, run_id, sequence, str(sequence),
+                     now.isoformat(), _canonical_json(payload)),
+                )
+                return _load_run(connection, workspace_id, mission_id, run_id)
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def recover_interrupted_runs(self) -> int:
+        recovered = 0
+        try:
+            with self._write_transaction() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT workspace_id, mission_id, run_id, last_sequence
+                    FROM runs WHERE status IN ('queued','running') ORDER BY rowid
+                    """
+                ).fetchall()
+                now = _utc_now()
+                for workspace_id, mission_id, run_id, last_sequence in rows:
+                    active = _load_run(connection, workspace_id, mission_id, run_id)
+                    if active.status not in {"queued", "running"}:
+                        raise WorkspaceStoreUnavailableError()
+                    last_sequence = active.last_sequence
+                    sequence = last_sequence + 1
+                    connection.execute(
+                        """
+                        UPDATE runs SET status='failed', finished_at=?,
+                                        error_code='interrupted_without_receipt', last_sequence=?
+                        WHERE workspace_id=? AND mission_id=? AND run_id=?
+                          AND status IN ('queued','running')
+                        """,
+                        (now.isoformat(), sequence, workspace_id, mission_id, run_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE missions SET status='blocked', state_version=state_version+1
+                        WHERE workspace_id=? AND mission_id=?
+                          AND status NOT IN ('completed','cancelled','blocked')
+                        """,
+                        (workspace_id, mission_id),
+                    )
+                    payload = {"status": "failed", "terminal_receipt_id": None,
+                               "error_code": "interrupted_without_receipt"}
+                    connection.execute(
+                        """
+                        INSERT INTO run_events
+                            (workspace_id, mission_id, run_id, sequence, event_id,
+                             event_type, occurred_at, public_payload_json)
+                        VALUES (?, ?, ?, ?, ?, 'run_failed', ?, ?)
+                        """,
+                        (workspace_id, mission_id, run_id, sequence, str(sequence),
+                         now.isoformat(), _canonical_json(payload)),
+                    )
+                    recovered += 1
+            return recovered
+        except WorkspaceStoreError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
 
     def get_mission_draft_attempt(
         self,
@@ -2545,3 +3574,512 @@ def _load_mission(
     if row is None:
         raise MissionNotFoundError()
     return _mission_from_row(connection, row)
+
+
+def _source_identity(revision: SourceRevision) -> SourceIdentity:
+    return SourceIdentity.model_validate(
+        revision.model_dump(include=set(SourceIdentity.model_fields))
+    )
+
+
+def _load_source_in_connection(
+    connection: sqlite3.Connection, workspace_id: str, revision_id: str,
+) -> tuple[SourceRevision, SourceArtifact]:
+    row = connection.execute(
+        """
+        SELECT workspace_id, source_id, revision_id, original_name,
+               media_type, byte_size, sha256, observed_at, effective_time,
+               permission_status, parse_status, parser_version, artifact_json
+        FROM source_revisions WHERE workspace_id = ? AND revision_id = ?
+        """,
+        (workspace_id, revision_id),
+    ).fetchone()
+    if row is None:
+        raise SourceNotFoundError()
+    revision, artifact, _ = _row_to_source(row)
+    return revision, artifact
+
+
+def _run_source_refs(
+    connection: sqlite3.Connection, workspace_id: str, mission_id: str, run_id: str,
+) -> list[SourceIdentity]:
+    rows = connection.execute(
+        """
+        SELECT workspace_id, source_id, revision_id, sha256, ordinal
+        FROM run_sources
+        WHERE workspace_id = ? AND mission_id = ? AND run_id = ?
+        ORDER BY ordinal
+        """,
+        (workspace_id, mission_id, run_id),
+    ).fetchall()
+    if [row[4] for row in rows] != list(range(len(rows))):
+        raise WorkspaceStoreUnavailableError()
+    return [
+        SourceIdentity(
+            workspace_id=row[0], source_id=row[1], revision_id=row[2], sha256=row[3]
+        )
+        for row in rows
+    ]
+
+
+def _draft_from_row(row: tuple[object, ...]) -> DefinitionDraft:
+    try:
+        draft = DefinitionDraft(
+            workspace_id=row[0], mission_id=row[1], draft_id=row[2], version=row[3],
+            sha256=row[4], status=row[5], semantic_approval=row[6],
+            fields=_json_value(row[7]), relationships=_json_value(row[8]),
+            unresolved_items=_json_value(row[9]),
+        )
+        if _canonical_json(draft.fields) != row[7]:
+            raise WorkspaceStoreUnavailableError()
+        if _canonical_json(draft.relationships) != row[8]:
+            raise WorkspaceStoreUnavailableError()
+        if _canonical_json(draft.unresolved_items) != row[9]:
+            raise WorkspaceStoreUnavailableError()
+        return draft
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceStoreUnavailableError() from exc
+
+
+def _load_latest_draft(
+    connection: sqlite3.Connection, workspace_id: str, mission_id: str,
+) -> DefinitionDraft | None:
+    row = connection.execute(
+        """
+        SELECT workspace_id, mission_id, draft_id, version, sha256, status,
+               semantic_approval, fields_json, relationships_json, unresolved_items_json
+        FROM definition_drafts
+        WHERE workspace_id = ? AND mission_id = ?
+        ORDER BY version DESC LIMIT 1
+        """,
+        (workspace_id, mission_id),
+    ).fetchone()
+    return None if row is None else _draft_from_row(row)
+
+
+def _clarification_from_row(row: tuple[object, ...]) -> ClarificationRequest:
+    try:
+        clarification = ClarificationRequest(
+            workspace_id=row[0], mission_id=row[1], run_id=row[2],
+            clarification_id=row[3], draft_version=row[4], draft_sha256=row[5],
+            status=row[6], questions=_json_value(row[7]),
+        )
+        if _canonical_json(clarification.questions) != row[7]:
+            raise WorkspaceStoreUnavailableError()
+        return clarification
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceStoreUnavailableError() from exc
+
+
+def _load_clarifications(
+    connection: sqlite3.Connection, workspace_id: str, mission_id: str,
+    run_id: str | None = None,
+) -> list[ClarificationRequest]:
+    sql = """
+        SELECT workspace_id, mission_id, run_id, clarification_id,
+               draft_version, draft_sha256, status, questions_json
+        FROM clarification_requests
+        WHERE workspace_id = ? AND mission_id = ?
+    """
+    params: tuple[str, ...] = (workspace_id, mission_id)
+    if run_id is not None:
+        sql += " AND run_id = ?"
+        params = (workspace_id, mission_id, run_id)
+    sql += " ORDER BY rowid"
+    return [_clarification_from_row(row) for row in connection.execute(sql, params).fetchall()]
+
+
+def _terminal_from_row(row: tuple[object, ...]) -> TerminalReceipt:
+    try:
+        receipt = TerminalReceipt(
+            workspace_id=row[0], mission_id=row[1], run_id=row[2], receipt_id=row[3],
+            created_at=_parse_created_at(row[4]), terminal_tool=row[5], outcome=row[6],
+            draft_id=row[7], draft_version=row[8], draft_sha256=row[9],
+            clarification_ids=_json_value(row[10]),
+            provider_receipt_ids=_json_value(row[11]),
+            tool_receipt_ids=_json_value(row[12]), source_refs=_json_value(row[13]),
+        )
+        if any(
+            _canonical_json(value) != raw
+            for value, raw in (
+                (receipt.clarification_ids, row[10]),
+                (receipt.provider_receipt_ids, row[11]),
+                (receipt.tool_receipt_ids, row[12]),
+                (receipt.source_refs, row[13]),
+            )
+        ):
+            raise WorkspaceStoreUnavailableError()
+        return receipt
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceStoreUnavailableError() from exc
+
+
+def _load_terminal_receipt(
+    connection: sqlite3.Connection, workspace_id: str, mission_id: str, run_id: str,
+) -> TerminalReceipt | None:
+    row = connection.execute(
+        """
+        SELECT workspace_id, mission_id, run_id, receipt_id, created_at,
+               terminal_tool, outcome, draft_id, draft_version, draft_sha256,
+               clarification_ids_json, provider_receipt_ids_json,
+               tool_receipt_ids_json, source_refs_json
+        FROM terminal_receipts
+        WHERE workspace_id = ? AND mission_id = ? AND run_id = ?
+        """,
+        (workspace_id, mission_id, run_id),
+    ).fetchone()
+    return None if row is None else _terminal_from_row(row)
+
+
+def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> RunSnapshot:
+    try:
+        run = RunSnapshot(
+            workspace_id=row[0], mission_id=row[1], run_id=row[2],
+            created_at=_parse_created_at(row[4]),
+            started_at=_parse_created_at(row[5]) if row[5] is not None else None,
+            finished_at=_parse_created_at(row[6]) if row[6] is not None else None,
+            status=row[7], budget=_json_value(row[8]),
+            source_refs=_run_source_refs(connection, row[0], row[1], row[2]),
+            draft=_load_latest_draft(connection, row[0], row[1]),
+            clarifications=_load_clarifications(connection, row[0], row[1], row[2]),
+            last_sequence=row[9], terminal_receipt=_load_terminal_receipt(
+                connection, row[0], row[1], row[2]
+            ), final_output=row[10], error_code=row[11],
+        )
+        if _canonical_json(run.budget) != row[8]:
+            raise WorkspaceStoreUnavailableError()
+        active = run.status in {"queued", "running"}
+        terminal = run.status in {
+            "waiting_for_human", "partial", "completed", "blocked", "failed", "cancelled"
+        }
+        if run.status == "queued" and run.started_at is not None:
+            raise WorkspaceStoreUnavailableError()
+        if run.status == "running" and run.started_at is None:
+            raise WorkspaceStoreUnavailableError()
+        if active and run.finished_at is not None:
+            raise WorkspaceStoreUnavailableError()
+        if terminal and run.finished_at is None:
+            raise WorkspaceStoreUnavailableError()
+        if run.status in {"waiting_for_human", "partial"} and run.terminal_receipt is None:
+            raise WorkspaceStoreUnavailableError()
+        if run.status not in {"waiting_for_human", "partial"} and run.terminal_receipt is not None:
+            raise WorkspaceStoreUnavailableError()
+        if run.final_output is not None and run.terminal_receipt is None:
+            raise WorkspaceStoreUnavailableError()
+        if run.status in {"queued", "running", "waiting_for_human", "partial"}:
+            if run.error_code is not None:
+                raise WorkspaceStoreUnavailableError()
+        elif run.status in {"blocked", "failed", "cancelled"} and run.error_code is None:
+            raise WorkspaceStoreUnavailableError()
+        from contextox.agent import P0_RUN_SHA256, TOOL_SCHEMA_SHA256
+
+        provider_rows = connection.execute(
+            """
+            SELECT receipt_id FROM provider_receipts
+            WHERE workspace_id=? AND mission_id=? AND run_id=? ORDER BY turn_index
+            """,
+            (run.workspace_id, run.mission_id, run.run_id),
+        ).fetchall()
+        provider_receipts = [
+            _load_provider_receipt(connection, run.workspace_id, item[0])
+            for item in provider_rows
+        ]
+        if [item.turn_index for item in provider_receipts] != list(
+            range(1, len(provider_receipts) + 1)
+        ):
+            raise WorkspaceStoreUnavailableError()
+        for receipt in provider_receipts:
+            manifest_row = connection.execute(
+                """
+                SELECT workspace_id, mission_id, run_id, manifest_id,
+                       mission_state_version, turn_index, draft_id, draft_version,
+                       draft_sha256, source_refs_json, clarification_ids_json,
+                       tool_receipt_ids_json, budget_json, excluded_reasons_json, sha256
+                FROM context_manifests
+                WHERE workspace_id=? AND mission_id=? AND run_id=? AND manifest_id=?
+                """,
+                (run.workspace_id, run.mission_id, run.run_id,
+                 receipt.context_manifest_id),
+            ).fetchone()
+            if manifest_row is None:
+                raise WorkspaceStoreUnavailableError()
+            manifest = _context_manifest_from_row(manifest_row)
+            if (
+                receipt.workspace_id != run.workspace_id
+                or receipt.mission_id != run.mission_id
+                or receipt.run_id != run.run_id
+                or receipt.attempt_id is not None
+                or receipt.p0_sha256 != P0_RUN_SHA256
+                or receipt.tool_schema_sha256 != TOOL_SCHEMA_SHA256
+                or receipt.turn_index != manifest.turn_index
+                or receipt.context_manifest_sha256 != manifest.sha256
+            ):
+                raise WorkspaceStoreUnavailableError()
+        selected = {
+            (ref.workspace_id, ref.source_id, ref.revision_id, ref.sha256)
+            for ref in run.source_refs
+        }
+        tool_receipts = _load_tool_receipts(
+            connection, run.workspace_id, run.mission_id, run.run_id
+        )
+        if any(
+            (ref.workspace_id, ref.source_id, ref.revision_id, ref.sha256) not in selected
+            for receipt in tool_receipts for ref in receipt.source_refs
+        ):
+            raise WorkspaceStoreUnavailableError()
+        if run.terminal_receipt is not None:
+            terminal = run.terminal_receipt
+            if terminal.outcome != run.status:
+                raise WorkspaceStoreUnavailableError()
+            provider_ids = [
+                item[0] for item in connection.execute(
+                    """
+                    SELECT receipt_id FROM provider_receipts
+                    WHERE workspace_id=? AND mission_id=? AND run_id=? ORDER BY turn_index
+                    """,
+                    (run.workspace_id, run.mission_id, run.run_id),
+                ).fetchall()
+            ]
+            clarification_ids = [item.clarification_id for item in run.clarifications]
+            if (
+                terminal.provider_receipt_ids != provider_ids
+                or terminal.tool_receipt_ids != [item.receipt_id for item in tool_receipts]
+                or terminal.clarification_ids != clarification_ids
+                or any(
+                    (ref.workspace_id, ref.source_id, ref.revision_id, ref.sha256)
+                    not in selected for ref in terminal.source_refs
+                )
+                or not tool_receipts
+                or tool_receipts[-1].name != terminal.terminal_tool
+            ):
+                raise WorkspaceStoreUnavailableError()
+            if terminal.draft_id is not None:
+                draft_row = connection.execute(
+                    """
+                    SELECT 1 FROM definition_drafts
+                    WHERE workspace_id=? AND mission_id=? AND draft_id=?
+                      AND version=? AND sha256=?
+                    """,
+                    (run.workspace_id, run.mission_id, terminal.draft_id,
+                     terminal.draft_version, terminal.draft_sha256),
+                ).fetchone()
+                if draft_row is None:
+                    raise WorkspaceStoreUnavailableError()
+        assistant_rows = connection.execute(
+            """
+            SELECT content FROM mission_messages
+            WHERE workspace_id=? AND mission_id=? AND run_id=? AND role='assistant'
+            """,
+            (run.workspace_id, run.mission_id, run.run_id),
+        ).fetchall()
+        if run.final_output is None and assistant_rows:
+            raise WorkspaceStoreUnavailableError()
+        if run.final_output is not None and assistant_rows != [(run.final_output,)]:
+            raise WorkspaceStoreUnavailableError()
+        if (
+            not isinstance(row[3], str)
+            or not isinstance(row[12], str)
+            or len(row[12]) != 64
+            or any(character not in "0123456789abcdef" for character in row[12])
+        ):
+            raise WorkspaceStoreUnavailableError()
+        return run
+    except WorkspaceStoreError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceStoreUnavailableError() from exc
+
+
+def _load_run(
+    connection: sqlite3.Connection, workspace_id: str, mission_id: str, run_id: str,
+) -> RunSnapshot:
+    row = connection.execute(
+        """
+        SELECT workspace_id, mission_id, run_id, client_request_id, created_at,
+               started_at, finished_at, status, budget_json, last_sequence,
+               final_output, error_code, start_request_sha256
+        FROM runs WHERE workspace_id = ? AND mission_id = ? AND run_id = ?
+        """,
+        (workspace_id, mission_id, run_id),
+    ).fetchone()
+    if row is None:
+        raise Path2StateError("run_not_found")
+    return _run_from_row(connection, row)
+
+
+def _tool_receipt_from_row(row: tuple[object, ...]) -> ToolReceipt:
+    try:
+        receipt = ToolReceipt(
+            workspace_id=row[0], mission_id=row[1], run_id=row[2], receipt_id=row[3],
+            ordinal=row[4], call_id=row[5], name=row[6], arguments_sha256=row[7],
+            status=row[8], created_at=_parse_created_at(row[9]),
+            source_refs=_json_value(row[10]), error_code=row[11],
+        )
+        if _canonical_json(receipt.source_refs) != row[10]:
+            raise WorkspaceStoreUnavailableError()
+        return receipt
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceStoreUnavailableError() from exc
+
+
+def _load_tool_receipts(
+    connection: sqlite3.Connection, workspace_id: str, mission_id: str, run_id: str,
+) -> list[ToolReceipt]:
+    rows = connection.execute(
+        """
+        SELECT workspace_id, mission_id, run_id, receipt_id, ordinal, call_id,
+               name, arguments_sha256, status, created_at, source_refs_json, error_code
+        FROM tool_receipts
+        WHERE workspace_id = ? AND mission_id = ? AND run_id = ?
+        ORDER BY ordinal
+        """,
+        (workspace_id, mission_id, run_id),
+    ).fetchall()
+    receipts = [_tool_receipt_from_row(row) for row in rows]
+    if [receipt.ordinal for receipt in receipts] != list(range(1, len(receipts) + 1)):
+        raise WorkspaceStoreUnavailableError()
+    return receipts
+
+
+def _insert_tool_receipt(
+    connection: sqlite3.Connection, receipt: ToolReceipt,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO tool_receipts
+            (workspace_id, mission_id, run_id, receipt_id, ordinal, call_id,
+             name, arguments_sha256, status, created_at, source_refs_json, error_code)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (receipt.workspace_id, receipt.mission_id, receipt.run_id, receipt.receipt_id,
+         receipt.ordinal, receipt.call_id, receipt.name, receipt.arguments_sha256,
+         receipt.status, receipt.created_at.isoformat(),
+         _canonical_json(receipt.source_refs), receipt.error_code),
+    )
+
+
+def _append_event_in_transaction(
+    connection: sqlite3.Connection, run: RunSnapshot, event_type: str,
+    public_payload: dict[str, object],
+) -> RunEventEnvelope:
+    current = connection.execute(
+        """
+        SELECT last_sequence FROM runs
+        WHERE workspace_id=? AND mission_id=? AND run_id=?
+        """,
+        (run.workspace_id, run.mission_id, run.run_id),
+    ).fetchone()
+    if current is None:
+        raise Path2StateError("run_not_found")
+    sequence = current[0] + 1
+    occurred_at = _utc_now()
+    envelope = RunEventEnvelope.model_validate({
+        "event_id": str(sequence), "event_type": event_type,
+        "occurred_at": occurred_at, "workspace_id": run.workspace_id,
+        "mission_id": run.mission_id, "run_id": run.run_id,
+        "sequence": sequence, "public_payload": public_payload,
+    })
+    connection.execute(
+        """
+        INSERT INTO run_events
+            (workspace_id, mission_id, run_id, sequence, event_id,
+             event_type, occurred_at, public_payload_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (run.workspace_id, run.mission_id, run.run_id, sequence,
+         envelope.event_id, envelope.event_type, occurred_at.isoformat(),
+         _canonical_json(envelope.public_payload)),
+    )
+    connection.execute(
+        """
+        UPDATE runs SET last_sequence=?
+        WHERE workspace_id=? AND mission_id=? AND run_id=? AND last_sequence=?
+        """,
+        (sequence, run.workspace_id, run.mission_id, run.run_id, current[0]),
+    )
+    return envelope
+
+
+def _context_manifest_from_row(row: tuple[object, ...]) -> ContextPacketManifest:
+    try:
+        packet = ContextPacketManifest(
+            workspace_id=row[0], mission_id=row[1], run_id=row[2], manifest_id=row[3],
+            mission_state_version=row[4], turn_index=row[5], draft_id=row[6],
+            draft_version=row[7], draft_sha256=row[8], source_refs=_json_value(row[9]),
+            clarification_ids=_json_value(row[10]), tool_receipt_ids=_json_value(row[11]),
+            budget=_json_value(row[12]), excluded_reasons=_json_value(row[13]), sha256=row[14],
+        )
+        for value, raw in (
+            (packet.source_refs, row[9]), (packet.clarification_ids, row[10]),
+            (packet.tool_receipt_ids, row[11]), (packet.budget, row[12]),
+            (packet.excluded_reasons, row[13]),
+        ):
+            if _canonical_json(value) != raw:
+                raise WorkspaceStoreUnavailableError()
+        return packet
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceStoreUnavailableError() from exc
+
+
+def _run_event_from_row(row: tuple[object, ...]) -> RunEventEnvelope:
+    try:
+        envelope = RunEventEnvelope.model_validate({
+            "event_id": row[0], "event_type": row[1],
+            "occurred_at": _parse_created_at(row[2]), "workspace_id": row[3],
+            "mission_id": row[4], "run_id": row[5], "sequence": row[6],
+            "public_payload": _json_value(row[7]),
+        })
+        if envelope.event_id != str(envelope.root.sequence):
+            raise WorkspaceStoreUnavailableError()
+        if _canonical_json(envelope.public_payload) != row[7]:
+            raise WorkspaceStoreUnavailableError()
+        return envelope
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceStoreUnavailableError() from exc
+
+
+def _run_event_allowed(run: RunSnapshot, event: RunEventInput) -> bool:
+    event_type = event.event_type
+    if event_type == "run_completed":
+        return False
+    required_status = {
+        "run_started": "running",
+        "clarification_requested": "waiting_for_human",
+        "run_partial": "partial",
+        "run_blocked": "blocked",
+        "run_failed": "failed",
+        "run_cancelled": "cancelled",
+    }.get(event_type)
+    if required_status is not None:
+        return run.status == required_status
+    if event_type == "tool_completed":
+        return run.status in {"running", "waiting_for_human", "partial"}
+    if event_type == "message_created":
+        return run.status != "completed"
+    return run.status == "running"
+
+
+def _evidence_refs(value: object) -> list[EvidenceRef]:
+    refs: list[EvidenceRef] = []
+    if isinstance(value, SourceExcerpt):
+        refs.append(value.source_ref)
+    elif isinstance(value, TableProfile):
+        refs.extend(value.source_refs)
+        refs.extend(ref for row in value.sample_rows for ref in row.source_refs)
+    elif isinstance(value, RelationshipProfile):
+        refs.extend(value.source_refs)
+    elif isinstance(value, DefinitionDraft):
+        refs.extend(ref for field in value.fields for ref in field.source_refs)
+        refs.extend(ref for relationship in value.relationships for ref in relationship.source_refs)
+    elif isinstance(value, ClarificationRequest):
+        refs.extend(ref for question in value.questions for ref in question.source_refs)
+    elif isinstance(value, TerminalReceipt):
+        refs.extend(value.source_refs)
+    unique: list[EvidenceRef] = []
+    seen: set[str] = set()
+    for ref in refs:
+        key = _canonical_json(ref)
+        if key not in seen:
+            seen.add(key)
+            unique.append(ref)
+    return unique

@@ -13,16 +13,25 @@ from contextox.models import (
     ClarificationRequest,
     ContextPacketManifest,
     ContextSnapshot,
+    CreateClarificationCall,
     DomainRejection,
+    InspectDatasetCall,
+    ListSourcesCall,
     Mission,
     MissionDraftAttempt,
     ProviderConfigSnapshot,
     ProviderReceipt,
+    ReadSourceCall,
+    RunCompletedEventInput,
+    RunCompletedPayload,
+    RunStartRequest,
     RunSnapshot,
     RunToolResult,
     SourceIdentity,
+    SubmitForReviewCall,
     TerminalReceipt,
     ToolReceipt,
+    UpdateDefinitionDraftCall,
     canonical_sha256,
 )
 from contextox.provider import (
@@ -428,6 +437,389 @@ class PersistedAttemptTests(unittest.TestCase):
                 store.get_mission_draft_attempt(workspace_id, attempt.attempt_id)
 
 
+def _persisted_mission(store: WorkspaceStore, *, with_sources: bool = False):
+    workspace_id = store.create_workspace("Synthetic Path 2 lifecycle").workspace_id
+    attempt = store.create_mission_draft_attempt(workspace_id, "Define the authorized data.")
+    store.mark_mission_draft_running(workspace_id, attempt.attempt_id)
+    candidate = agent.MissionDraftPayload(
+        title="Authorized definition", goal="Build a candidate definition",
+        completion_criteria=["Return a reviewable candidate"], scope_notes=[],
+    )
+    receipt = agent._make_receipt(
+        provider=FakeProvider([]), workspace_id=workspace_id,
+        attempt_id=attempt.attempt_id, mission_id=None, run_id=None,
+        turn_index=1, status="succeeded", p0_sha256=agent.P0_DRAFT_SHA256,
+        usage=_usage(),
+    )
+    ready = store.save_mission_draft_result(
+        workspace_id, attempt.attempt_id, candidate, receipt
+    )
+    refs = []
+    if with_sources:
+        for name, content in (
+            ("left.csv", b"id,value\n1,a\n2,b\n"),
+            ("right.csv", b"id,label\n1,x\n3,y\n"),
+        ):
+            revision, _ = store.import_source_revision(
+                workspace_id, name, "text/csv", content
+            )
+            refs.append(_source_identity_for_test(revision))
+    mission = store.confirm_mission_draft_attempt(
+        workspace_id, attempt.attempt_id, 1, ready.candidate_sha256, refs
+    )
+    return workspace_id, mission, refs
+
+
+def _source_identity_for_test(revision):
+    return SourceIdentity.model_validate(
+        revision.model_dump(include=set(SourceIdentity.model_fields))
+    )
+
+
+def _start_request(mission: Mission, refs: list[SourceIdentity], client: int = 900):
+    return RunStartRequest(
+        expected_state_version=mission.state_version,
+        source_refs=refs,
+        provider_send_confirmed=True,
+        client_request_id=_id(client),
+    )
+
+
+class PersistedRunTests(unittest.TestCase):
+    @contextmanager
+    def store_case(self, *, with_sources: bool = False):
+        with tempfile.TemporaryDirectory(prefix="contextox-run-", dir="/private/tmp") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id, mission, refs = _persisted_mission(
+                store, with_sources=with_sources
+            )
+            yield store, workspace_id, mission, refs
+
+    def test_start_is_exactly_idempotent_and_rejects_conflicts_before_creation(self):
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            request = _start_request(mission, refs)
+            run = store.start_run(workspace_id, mission.mission_id, request)
+            self.assertEqual(run.status, "queued")
+            self.assertEqual(store.start_run(workspace_id, mission.mission_id, request), run)
+            with self.assertRaises(Path2StateError):
+                store.start_run(
+                    workspace_id, mission.mission_id,
+                    request.model_copy(update={"source_refs": list(reversed(refs))}),
+                )
+            with self.assertRaises(Path2StateError):
+                store.start_run(
+                    workspace_id, mission.mission_id,
+                    request.model_copy(update={"client_request_id": _id(901)}),
+                )
+            other = store.create_workspace("Other Workspace").workspace_id
+            with self.assertRaises(WorkspaceStoreError):
+                store.start_run(
+                    other, mission.mission_id,
+                    request.model_copy(update={
+                        "client_request_id": _id(902),
+                        "source_refs": [ref.model_copy(update={"workspace_id": other}) for ref in refs],
+                    }),
+                )
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                self.assertEqual(connection.execute("SELECT count(*) FROM runs").fetchone()[0], 1)
+
+    def test_real_store_fake_provider_persists_partial_run_without_delta_or_reasoning(self):
+        with self.store_case() as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs)
+            )
+            update = ProviderToolCall(
+                "call-update", "update_definition_draft",
+                '{"expected_version":0,"expected_sha256":null,"fields":[],"relationships":[],"unresolved_items":["Need a business owner"]}',
+            )
+            finish = ProviderToolCall(
+                "call-finish", "finish_run",
+                '{"outcome":"partial","reason":"Business meaning is unresolved.","source_refs":[]}',
+            )
+            provider = FakeProvider([
+                _completion("Candidate work.", (update,)),
+                _completion("Public partial summary.", (finish,)),
+            ])
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
+
+            snapshot = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+            self.assertEqual(snapshot.status, "partial")
+            self.assertEqual(snapshot.final_output, "Candidate work.Public partial summary.")
+            self.assertEqual(
+                store.save_run_final_output(
+                    workspace_id, mission.mission_id, run.run_id, snapshot.final_output
+                ),
+                snapshot,
+            )
+            with self.assertRaises(Path2StateError):
+                store.save_run_final_output(
+                    workspace_id, mission.mission_id, run.run_id, "Different summary"
+                )
+            self.assertEqual(snapshot.draft.version, 1)
+            self.assertEqual(snapshot.terminal_receipt.terminal_tool, "finish_run")
+            self.assertEqual(len(snapshot.terminal_receipt.provider_receipt_ids), 2)
+            self.assertEqual(len(snapshot.terminal_receipt.tool_receipt_ids), 2)
+            events = store.list_run_events(workspace_id, mission.mission_id, run.run_id)
+            self.assertNotIn("model_delta", [event.event_type for event in events])
+            self.assertTrue(any(event.event_type == "run_partial" for event in events))
+            self.assertGreater(snapshot.last_sequence, len(events))
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                dump = "\n".join(connection.iterdump())
+                self.assertNotIn("hidden reasoning", dump)
+                self.assertNotIn("completion-1", dump)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT count(*) FROM mission_messages WHERE role='assistant'"
+                    ).fetchone()[0], 1,
+                )
+            restarted = WorkspaceStore.open(store.data_dir)
+            self.assertEqual(
+                restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),
+                snapshot,
+            )
+            self.assertEqual(
+                restarted.get_mission_snapshot(workspace_id, mission.mission_id).mission.status,
+                "blocked",
+            )
+            with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                connection.execute(
+                    """
+                    UPDATE provider_receipts SET p0_sha256=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=? AND turn_index=1
+                    """,
+                    ("0" * 64, workspace_id, mission.mission_id, run.run_id),
+                )
+            with self.assertRaises(WorkspaceStoreUnavailableError):
+                restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+
+    def test_all_seven_tools_use_selected_sources_and_terminal_receipts(self):
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs)
+            )
+            store.mark_run_running(workspace_id, mission.mission_id, run.run_id)
+            artifacts = [store.get_source_artifact(workspace_id, ref.revision_id) for ref in refs]
+            calls = [
+                ListSourcesCall(call_id="list", name="list_sources", arguments={}),
+                ReadSourceCall(call_id="read", name="read_source", arguments={
+                    "revision_id": refs[0].revision_id,
+                    "locator": {"kind": "csv_rows", "row_start": 1, "row_end": 1,
+                                "column": "id"},
+                }),
+                InspectDatasetCall(call_id="table", name="inspect_dataset", arguments={
+                    "kind": "table", "revision_id": refs[0].revision_id,
+                    "table_id": artifacts[0].tables[0].table_id,
+                }),
+                InspectDatasetCall(call_id="relationship", name="inspect_dataset", arguments={
+                    "kind": "relationship",
+                    "left": {"source_ref": refs[0], "table_id": artifacts[0].tables[0].table_id,
+                             "columns": ["id"]},
+                    "right": {"source_ref": refs[1], "table_id": artifacts[1].tables[0].table_id,
+                              "columns": ["id"]},
+                }),
+                UpdateDefinitionDraftCall(
+                    call_id="update", name="update_definition_draft", arguments={
+                        "expected_version": 0, "expected_sha256": None,
+                        "fields": [], "relationships": [], "unresolved_items": ["Confirm grain"],
+                    },
+                ),
+            ]
+            store.validate_run_tool_batch(workspace_id, mission.mission_id, run.run_id, calls)
+            results = [
+                store.execute_run_tool(workspace_id, mission.mission_id, run.run_id, call)
+                for call in calls
+            ]
+            self.assertTrue(all(result.status == "succeeded" for result in results))
+            draft = results[-1].output
+            for call_id, unresolved in (("update-b", ["Different candidate"]),
+                                        ("update-a", ["Confirm grain"])):
+                update = UpdateDefinitionDraftCall(
+                    call_id=call_id, name="update_definition_draft", arguments={
+                        "expected_version": draft.version,
+                        "expected_sha256": draft.sha256,
+                        "fields": [], "relationships": [],
+                        "unresolved_items": unresolved,
+                    },
+                )
+                result = store.execute_run_tool(
+                    workspace_id, mission.mission_id, run.run_id, update
+                )
+                results.append(result)
+                draft = result.output
+            self.assertEqual(
+                (results[-3].output.version, results[-2].output.version,
+                 results[-1].output.version),
+                (1, 2, 3),
+            )
+            self.assertEqual(results[-3].output.sha256, results[-1].output.sha256)
+            clarification_call = CreateClarificationCall(
+                call_id="clarify", name="create_clarification", arguments={
+                    "draft_version": draft.version, "draft_sha256": draft.sha256,
+                    "questions": [{
+                        "question": "What grain should this use?",
+                        "why_needed": "The sources do not define business grain.",
+                        "expected_answer_type": "text", "suggested_owner_role": None,
+                        "related_definition_paths": [], "evidence_requested": [],
+                        "examples_or_options": [], "blocking_impact": "blocking",
+                        "source_refs": [],
+                    }],
+                },
+            )
+            store.validate_run_tool_batch(
+                workspace_id, mission.mission_id, run.run_id, [clarification_call]
+            )
+            clarification = store.execute_run_tool(
+                workspace_id, mission.mission_id, run.run_id, clarification_call
+            )
+            self.assertIsInstance(clarification.output, ClarificationRequest)
+            self.assertEqual(clarification.terminal_snapshot.status, "waiting_for_human")
+            self.assertEqual(
+                clarification.terminal_snapshot.terminal_receipt.tool_receipt_ids,
+                [result.tool_receipt.receipt_id for result in results]
+                + [clarification.tool_receipt.receipt_id],
+            )
+
+        with self.store_case() as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs, 903)
+            )
+            store.mark_run_running(workspace_id, mission.mission_id, run.run_id)
+            update = UpdateDefinitionDraftCall(
+                call_id="update", name="update_definition_draft", arguments={
+                    "expected_version": 0, "expected_sha256": None,
+                    "fields": [], "relationships": [], "unresolved_items": [],
+                },
+            )
+            draft = store.execute_run_tool(
+                workspace_id, mission.mission_id, run.run_id, update
+            ).output
+            submit = SubmitForReviewCall(
+                call_id="submit", name="submit_for_review",
+                arguments={"draft_version": draft.version, "draft_sha256": draft.sha256},
+            )
+            result = store.execute_run_tool(
+                workspace_id, mission.mission_id, run.run_id, submit
+            )
+            self.assertEqual((result.output.status, result.terminal_snapshot.status),
+                             ("in_review", "waiting_for_human"))
+
+    def test_cancel_and_restart_recovery_are_terminal_and_do_not_call_provider(self):
+        with self.store_case() as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs, 904)
+            )
+            store.mark_run_running(workspace_id, mission.mission_id, run.run_id)
+            with self.assertRaises(Path2StateError):
+                store.append_run_event(
+                    workspace_id, mission.mission_id, run.run_id,
+                    RunCompletedEventInput(
+                        event_type="run_completed",
+                        public_payload=RunCompletedPayload(
+                            status="completed", terminal_receipt_id=None, error_code=None
+                        ),
+                    ),
+                )
+            cancelled = store.cancel_run(workspace_id, mission.mission_id, run.run_id)
+            self.assertEqual(cancelled.status, "cancelled")
+            self.assertEqual(store.cancel_run(workspace_id, mission.mission_id, run.run_id), cancelled)
+            self.assertEqual(store.list_run_events(
+                workspace_id, mission.mission_id, run.run_id
+            )[-1].event_type, "run_cancelled")
+
+        with self.store_case() as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs, 905)
+            )
+            provider = FakeProvider([])
+            with patch.object(agent, "get_provider", return_value=provider):
+                restarted = WorkspaceStore.open(store.data_dir)
+            recovered = restarted.get_run_snapshot(
+                workspace_id, mission.mission_id, run.run_id
+            )
+            self.assertEqual((recovered.status, recovered.error_code),
+                             ("failed", "interrupted_without_receipt"))
+            self.assertEqual(provider.calls, [])
+            self.assertEqual(restarted.get_mission_snapshot(
+                workspace_id, mission.mission_id
+            ).mission.status, "blocked")
+            self.assertEqual(restarted.list_run_events(
+                workspace_id, mission.mission_id, run.run_id
+            )[-1].event_type, "run_failed")
+
+        with self.store_case() as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs, 906)
+            )
+            event = Event()
+            provider = FakeProvider([], cancel_event=event)
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, event)
+            cancelled = store.get_run_snapshot(
+                workspace_id, mission.mission_id, run.run_id
+            )
+            self.assertEqual(cancelled.status, "cancelled")
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT status FROM provider_receipts WHERE run_id=?",
+                        (run.run_id,),
+                    ).fetchall(),
+                    [("cancelled",)],
+                )
+
+    def test_batch_validation_and_receipt_failure_leave_no_partial_draft(self):
+        import contextox.store as store_module
+
+        with self.store_case() as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs, 907)
+            )
+            store.mark_run_running(workspace_id, mission.mission_id, run.run_id)
+            update = UpdateDefinitionDraftCall(
+                call_id="update", name="update_definition_draft", arguments={
+                    "expected_version": 0, "expected_sha256": None,
+                    "fields": [], "relationships": [], "unresolved_items": [],
+                },
+            )
+            invalid_read = ReadSourceCall(
+                call_id="read", name="read_source", arguments={
+                    "revision_id": _id(999),
+                    "locator": {"kind": "csv_rows", "row_start": 1,
+                                "row_end": 1, "column": None},
+                },
+            )
+            with self.assertRaises(Path2StateError):
+                store.validate_run_tool_batch(
+                    workspace_id, mission.mission_id, run.run_id,
+                    [update, invalid_read],
+                )
+            self.assertIsNone(store.get_run_snapshot(
+                workspace_id, mission.mission_id, run.run_id
+            ).draft)
+
+            with patch.object(
+                store_module, "_insert_tool_receipt",
+                side_effect=sqlite3.OperationalError("synthetic receipt failure"),
+            ):
+                with self.assertRaises(WorkspaceStoreUnavailableError):
+                    store.execute_run_tool(
+                        workspace_id, mission.mission_id, run.run_id, update
+                    )
+            snapshot = store.get_run_snapshot(
+                workspace_id, mission.mission_id, run.run_id
+            )
+            self.assertIsNone(snapshot.draft)
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT count(*) FROM tool_receipts WHERE run_id=?",
+                        (run.run_id,),
+                    ).fetchone()[0],
+                    0,
+                )
+
+
 class FakeStore:
     def __init__(
         self,
@@ -447,6 +839,7 @@ class FakeStore:
         self.validated_batches = []
         self.executed_calls = []
         self.failures = []
+        self.cancel_calls = 0
         self.saved_outputs = []
         self.saved_attempts = []
         self.tool_results: dict[str, RunToolResult] = {}
@@ -513,6 +906,14 @@ class FakeStore:
         self.failures.append(("run", status, code))
         run_data = self.context.run.model_dump(mode="python")
         run_data.update({"status": status, "error_code": code})
+        stopped = RunSnapshot(**run_data)
+        self.context = self.context.model_copy(update={"run": stopped})
+        return stopped
+
+    def cancel_run(self, workspace_id, mission_id, run_id):
+        self.cancel_calls += 1
+        run_data = self.context.run.model_dump(mode="python")
+        run_data.update({"status": "cancelled", "error_code": "cancelled"})
         stopped = RunSnapshot(**run_data)
         self.context = self.context.model_copy(update={"run": stopped})
         return stopped
@@ -1099,6 +1500,7 @@ class AgentTests(unittest.TestCase):
             agent.run_agent(queued_store, _id(1), _id(3), _id(4), event)
         self.assertEqual(queued_provider.calls, [])
         self.assertEqual(queued_store.mark_calls, 0)
+        self.assertEqual(queued_store.cancel_calls, 1)
 
     def test_provider_cancel_during_stream_records_cancelled_receipt_and_stops(self) -> None:
         event = Event()
@@ -1110,6 +1512,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(store.receipts[0].status, "cancelled")
         self.assertEqual(store.receipts[0].error_code, "cancelled")
         self.assertEqual(store.failures, [])
+        self.assertEqual(store.cancel_calls, 1)
         self.assertEqual(store.executed_calls, [])
 
     def test_nonrunning_mark_readback_prevents_starting_a_provider(self) -> None:

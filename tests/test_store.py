@@ -13,7 +13,6 @@ from contextox.models import CsvRowsLocator, JsonPointerLocator, TextLinesLocato
 from contextox.sources import SourceInputError
 from contextox.store import (
     InvalidWorkspaceNameError,
-    Path2NotImplementedError,
     Path2StateError,
     SourceImportOutcomeUnknownError,
     SourceNotFoundError,
@@ -1777,13 +1776,12 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(store.list_source_revisions(workspace_id), [])
             self.assertEqual(len(list((Path(directory) / "sources").rglob("*.bin"))), 1)
 
-    def test_path2_store_seams_check_workspace_before_not_implemented(self) -> None:
+    def test_path2_store_seams_check_workspace_before_object_state(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-path2-") as directory:
             store = WorkspaceStore.open(directory)
             workspace_id = store.create_workspace("Path 2").workspace_id
             mission_id = "00000000-0000-4000-8000-000000000002"
             run_id = "00000000-0000-4000-8000-000000000003"
-            attempt_id = "00000000-0000-4000-8000-000000000004"
             calls = (
                 lambda: store.get_run_snapshot(workspace_id, mission_id, run_id),
                 lambda: store.get_context_snapshot(workspace_id, mission_id, run_id),
@@ -1798,7 +1796,7 @@ class StoreTests(unittest.TestCase):
             )
             for call in calls:
                 with self.subTest(call=call):
-                    with self.assertRaises(Path2NotImplementedError):
+                    with self.assertRaises(Path2StateError):
                         call()
 
             with self.assertRaises(WorkspaceNotFoundError):

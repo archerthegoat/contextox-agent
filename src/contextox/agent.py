@@ -836,6 +836,21 @@ def _stop_run(
     )
 
 
+def _cancel_run(
+    store: WorkspaceStoreLike,
+    workspace_id: str,
+    mission_id: str,
+    run_id: str,
+) -> None:
+    stopped = store.cancel_run(workspace_id, mission_id, run_id)
+    if not _run_snapshot_matches_identity(stopped, workspace_id, mission_id, run_id):
+        raise WorkspaceStoreError("cancel_run returned an invalid RunSnapshot.")
+    if stopped.status not in {
+        "cancelled", "waiting_for_human", "partial", "completed", "blocked", "failed"
+    }:
+        raise WorkspaceStoreError("cancel_run did not return a terminal RunSnapshot.")
+
+
 def _run_snapshot_matches_identity(
     snapshot: object,
     workspace_id: str,
@@ -1053,8 +1068,8 @@ def run_agent(
     if snapshot.run.status != "queued":
         return
     budget = snapshot.run.budget
-    provider = get_provider()
     if cancel_event.is_set():
+        _cancel_run(store, workspace_id, mission_id, run_id)
         return
 
     running_snapshot = store.mark_run_running(workspace_id, mission_id, run_id)
@@ -1064,6 +1079,7 @@ def run_agent(
         return
     snapshot = snapshot.model_copy(update={"run": running_snapshot})
     _append_run_started(store, workspace_id, mission_id, run_id)
+    provider = get_provider()
 
     tool_receipt_ids: list[str] = []
     tool_count = 0
@@ -1085,6 +1101,7 @@ def run_agent(
             _stop_run(store, workspace_id, mission_id, run_id, "blocked", failure_code)
             return
         if cancel_event.is_set():
+            _cancel_run(store, workspace_id, mission_id, run_id)
             return
 
         if turn_index > 1:
@@ -1132,6 +1149,7 @@ def run_agent(
             return
 
         if cancel_event.is_set():
+            _cancel_run(store, workspace_id, mission_id, run_id)
             return
         failure_code = _check_turn_budget(
             budget=budget,
@@ -1185,6 +1203,7 @@ def run_agent(
                 error_code=exc.code,
             )
             _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
+            _cancel_run(store, workspace_id, mission_id, run_id)
             return
         except ProviderError as exc:
             receipt = _make_receipt(
@@ -1202,6 +1221,7 @@ def run_agent(
             )
             _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
             if exc.run_status == "cancelled":
+                _cancel_run(store, workspace_id, mission_id, run_id)
                 return
             _stop_run(store, workspace_id, mission_id, run_id, exc.run_status, exc.code)
             return
@@ -1239,6 +1259,7 @@ def run_agent(
                 error_code="cancelled",
             )
             _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
+            _cancel_run(store, workspace_id, mission_id, run_id)
             return
 
         if completion.usage is None:
@@ -1314,6 +1335,7 @@ def run_agent(
         batch_terminal = False
         for call in calls:
             if cancel_event.is_set():
+                _cancel_run(store, workspace_id, mission_id, run_id)
                 return
             if _remaining_run_ms(budget=budget, started_at=started_at) <= 0:
                 _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
