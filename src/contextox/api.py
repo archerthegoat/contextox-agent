@@ -1067,7 +1067,7 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            return _workspace_store(app).get_mission_draft_attempt(workspace_id, attempt_id)
+            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
 

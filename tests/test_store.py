@@ -14,6 +14,7 @@ from contextox.sources import SourceInputError
 from contextox.store import (
     InvalidWorkspaceNameError,
     Path2NotImplementedError,
+    Path2StateError,
     SourceImportOutcomeUnknownError,
     SourceNotFoundError,
     WorkspaceSchemaUnsupportedError,
@@ -1535,7 +1536,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(len(store.list_source_revisions(workspace_id)), before)
 
     def test_source_reads_fail_closed_for_tampered_missing_and_unsafe_entries(self) -> None:
-        mutations = ("hash", "size", "missing", "directory", "symlink")
+        mutations = ("hash", "size", "missing", "directory", "symlink", "parent_symlink", "denied")
         for mutation in mutations:
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory(
                 prefix="contextox-store-source-entry-"
@@ -1555,15 +1556,23 @@ class StoreTests(unittest.TestCase):
                 elif mutation == "directory":
                     raw_path.unlink()
                     raw_path.mkdir()
-                else:
+                elif mutation == "symlink":
                     target = Path(directory) / "outside-source.bin"
                     target.write_bytes(b"alpha\nbeta")
                     raw_path.unlink()
                     os.symlink(target, raw_path)
+                elif mutation == "parent_symlink":
+                    target = Path(directory) / "displaced-source"
+                    raw_path.parent.rename(target)
+                    raw_path.parent.symlink_to(target, target_is_directory=True)
+                else:
+                    with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                        connection.execute("UPDATE source_revisions SET permission_status='denied'")
                 restarted = WorkspaceStore.open(directory)
-                with self.assertRaises(WorkspaceStoreUnavailableError):
+                expected_error = Path2StateError if mutation == "denied" else WorkspaceStoreUnavailableError
+                with self.assertRaises(expected_error):
                     restarted.get_source_artifact(workspace_id, revision.revision_id)
-                with self.assertRaises(WorkspaceStoreUnavailableError):
+                with self.assertRaises(expected_error):
                     restarted.read_source_excerpt(
                         workspace_id,
                         revision.revision_id,
@@ -1655,9 +1664,6 @@ class StoreTests(unittest.TestCase):
                 lambda: store.append_run_event(workspace_id, mission_id, run_id, None),
                 lambda: store.fail_run(workspace_id, mission_id, run_id, "failed", "failure"),
                 lambda: store.save_run_final_output(workspace_id, mission_id, run_id, "partial"),
-                lambda: store.get_mission_draft_attempt(workspace_id, attempt_id),
-                lambda: store.save_mission_draft_result(workspace_id, attempt_id, None, None),
-                lambda: store.fail_mission_draft_attempt(workspace_id, attempt_id, "failed", "failure", None),
             )
             for call in calls:
                 with self.subTest(call=call):

@@ -310,6 +310,15 @@ def generate_mission_draft(
     if attempt.status != "queued":
         return
 
+    # Claim the persisted attempt before any Provider I/O. Replayed workers
+    # cannot send a second request for the same original input.
+    attempt = store.mark_mission_draft_running(workspace_id, attempt_id)
+    if (
+        attempt.workspace_id != workspace_id or attempt.attempt_id != attempt_id
+        or attempt.status != "running"
+    ):
+        raise WorkspaceStoreError("Mission draft claim readback is invalid.")
+
     provider = get_provider()
     budget = RunBudget()
     if cancel_event.is_set():
