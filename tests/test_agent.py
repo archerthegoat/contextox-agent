@@ -547,6 +547,79 @@ class PersistedRunTests(unittest.TestCase):
             with closing(sqlite3.connect(store.db_path)) as connection:
                 self.assertEqual(connection.execute("SELECT count(*) FROM runs").fetchone()[0], 1)
 
+    def test_explicit_new_run_reactivates_only_after_latest_failed_run(self):
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            first_request = _start_request(mission, refs)
+            first = store.start_run(workspace_id, mission.mission_id, first_request)
+            store.mark_run_running(workspace_id, mission.mission_id, first.run_id)
+            store.fail_run(
+                workspace_id, mission.mission_id, first.run_id,
+                "failed", "provider_request_invalid",
+            )
+            blocked = store.get_mission_snapshot(
+                workspace_id, mission.mission_id
+            ).mission
+            self.assertEqual((blocked.status, blocked.state_version), ("blocked", 2))
+
+            stale = _start_request(mission, refs, 901)
+            with self.assertRaises(Path2StateError) as raised:
+                store.start_run(workspace_id, mission.mission_id, stale)
+            self.assertEqual(raised.exception.code, "state_conflict")
+
+            retry_request = RunStartRequest(
+                expected_state_version=blocked.state_version,
+                source_refs=refs,
+                provider_send_confirmed=True,
+                client_request_id=_id(902),
+            )
+            retry = store.start_run(
+                workspace_id, mission.mission_id, retry_request
+            )
+            self.assertEqual(retry.status, "queued")
+            self.assertNotEqual(retry.run_id, first.run_id)
+            reactivated = store.get_mission_snapshot(
+                workspace_id, mission.mission_id
+            ).mission
+            self.assertEqual((reactivated.status, reactivated.state_version), ("active", 3))
+            self.assertEqual(
+                store.start_run(workspace_id, mission.mission_id, retry_request),
+                retry,
+            )
+            self.assertEqual(
+                store.get_mission_snapshot(
+                    workspace_id, mission.mission_id
+                ).mission.state_version,
+                3,
+            )
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT status FROM runs ORDER BY rowid"
+                    ).fetchall(),
+                    [("failed",), ("queued",)],
+                )
+
+        with self.store_case() as (store, workspace_id, mission, refs):
+            blocked_run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs, 903)
+            )
+            store.mark_run_running(
+                workspace_id, mission.mission_id, blocked_run.run_id
+            )
+            store.fail_run(
+                workspace_id, mission.mission_id, blocked_run.run_id,
+                "blocked", "provider_rate_limited",
+            )
+            request = RunStartRequest(
+                expected_state_version=2,
+                source_refs=refs,
+                provider_send_confirmed=True,
+                client_request_id=_id(904),
+            )
+            with self.assertRaises(Path2StateError) as raised:
+                store.start_run(workspace_id, mission.mission_id, request)
+            self.assertEqual(raised.exception.code, "state_conflict")
+
     def test_real_store_fake_provider_persists_partial_run_without_delta_or_reasoning(self):
         with self.store_case() as (store, workspace_id, mission, refs):
             run = store.start_run(
@@ -1112,6 +1185,39 @@ def _clarification_result(call) -> RunToolResult:
 
 
 class AgentTests(unittest.TestCase):
+    def test_provider_tool_schemas_use_compatible_object_roots(self) -> None:
+        forbidden = {
+            "discriminator", "maxItems", "maxLength", "minItems", "minLength",
+            "oneOf", "title", "const",
+        }
+
+        def keys(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    yield key
+                    yield from keys(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from keys(item)
+
+        self.assertEqual(len(agent.TOOL_DEFINITIONS), 7)
+        for definition in agent.TOOL_DEFINITIONS:
+            parameters = definition["function"]["parameters"]
+            self.assertEqual(parameters["type"], "object")
+            self.assertTrue(forbidden.isdisjoint(keys(parameters)))
+
+        invalid = ProviderCompletion(
+            completion_id="completion-invalid-tool",
+            content="",
+            reasoning_content="hidden",
+            tool_calls=(ProviderToolCall("call-invalid", "inspect_dataset", "{\"kind\":\"table\"}"),),
+            finish_reason="tool_calls",
+            usage=_usage(),
+        )
+        with self.assertRaises(agent._AgentFailure) as raised:
+            agent._normalize_tool_calls(invalid)
+        self.assertEqual(raised.exception.code, "tool_arguments_invalid")
+
     def test_draft_sends_only_p0_and_original_input_and_saves_candidate(self) -> None:
         store = FakeStore(attempt=_attempt())
         provider = FakeProvider(

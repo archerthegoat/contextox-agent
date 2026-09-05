@@ -131,17 +131,56 @@ _TOOL_DESCRIPTIONS = {
 def _make_tool_definitions() -> tuple[dict[str, Any], ...]:
     definitions: list[dict[str, Any]] = []
     for name, argument_type in _TOOL_ARGUMENT_TYPES.items():
+        parameters = _provider_json_schema(
+            TypeAdapter(argument_type).json_schema()
+        )
+        if parameters.get("type") != "object":
+            parameters = {"type": "object", **parameters}
         definitions.append(
             {
                 "type": "function",
                 "function": {
                     "name": name,
                     "description": _TOOL_DESCRIPTIONS[name],
-                    "parameters": TypeAdapter(argument_type).json_schema(),
+                    "parameters": parameters,
                 },
             }
         )
     return tuple(definitions)
+
+
+_PROVIDER_SCHEMA_OMIT = frozenset(
+    {"discriminator", "maxItems", "maxLength", "minItems", "minLength", "title"}
+)
+
+
+def _provider_json_schema(value: Any) -> Any:
+    """Project local Pydantic schemas onto the Provider's supported subset.
+
+    Local Pydantic models remain authoritative when tool arguments return.
+    The Provider receives only structural guidance that its Chat Completions
+    tool boundary accepts.
+    """
+
+    if isinstance(value, list):
+        return [_provider_json_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    projected: dict[str, Any] = {}
+    for key, item in value.items():
+        if key in _PROVIDER_SCHEMA_OMIT:
+            continue
+        if key == "oneOf":
+            key = "anyOf"
+        if key == "const":
+            projected["enum"] = [_provider_json_schema(item)]
+            continue
+        converted = _provider_json_schema(item)
+        if key == "anyOf" and key in projected:
+            projected[key] = [*projected[key], *converted]
+        else:
+            projected[key] = converted
+    return projected
 
 
 TOOL_DEFINITIONS = _make_tool_definitions()

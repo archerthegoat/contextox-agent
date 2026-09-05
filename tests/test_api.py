@@ -1290,6 +1290,89 @@ class ApiTests(unittest.TestCase):
             error = WorkspaceError.model_validate_json(response_body)
             self.assertEqual((response_status, error.code), (404, "workspace_not_found"))
 
+    def test_run_route_retries_latest_failed_run_with_exact_state_version(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="contextox-api-run-retry-") as directory:
+            app = create_app(static_dir=Path(directory), data_dir=Path(directory))
+            store = app.state.workspace_store
+            runtime = app.state.path2_runtime
+            workspace_id = store.create_workspace("Retry Workspace").workspace_id
+            attempt = store.create_mission_draft_attempt(
+                workspace_id, "Prepare a retryable Mission"
+            )
+            store.mark_mission_draft_running(workspace_id, attempt.attempt_id)
+            candidate = MissionDraftPayload(
+                title="Retry Mission",
+                goal="Verify explicit failed Run retry",
+                completion_criteria=["Create a new Run"],
+                scope_notes=[],
+            )
+
+            class Provider:
+                config = {
+                    "endpoint_id": "deepseek_chat_completions",
+                    "model": "deepseek-v4-flash",
+                    "thinking": "enabled",
+                    "reasoning_effort": "high",
+                }
+
+            receipt = agent_module._make_receipt(
+                provider=Provider(), workspace_id=workspace_id,
+                attempt_id=attempt.attempt_id, mission_id=None, run_id=None,
+                turn_index=1, status="succeeded",
+                p0_sha256=agent_module.P0_DRAFT_SHA256,
+                usage=ProviderUsage(input_tokens=1, output_tokens=1,
+                                    cache_hit_tokens=0, cache_miss_tokens=1),
+            )
+            ready = store.save_mission_draft_result(
+                workspace_id, attempt.attempt_id, candidate, receipt
+            )
+            mission = store.confirm_mission_draft_attempt(
+                workspace_id, attempt.attempt_id, 1,
+                ready.candidate_sha256, [],
+            )
+            path = (
+                f"/api/workspaces/{workspace_id}/missions/{mission.mission_id}/runs"
+            )
+            first_body = json.dumps({
+                "expected_state_version": 1,
+                "source_refs": [],
+                "provider_send_confirmed": True,
+                "client_request_id": _id(100),
+            }).encode()
+            with patch.object(runtime, "start_run", side_effect=store.start_run):
+                first_status, first_response = asyncio.run(
+                    _asgi_request(app, "POST", path, first_body)
+                )
+            self.assertEqual(first_status, 202)
+            first = RunSnapshot.model_validate_json(first_response)
+            store.mark_run_running(workspace_id, mission.mission_id, first.run_id)
+            store.fail_run(
+                workspace_id, mission.mission_id, first.run_id,
+                "failed", "provider_request_invalid",
+            )
+
+            retry_body = json.dumps({
+                "expected_state_version": 2,
+                "source_refs": [],
+                "provider_send_confirmed": True,
+                "client_request_id": _id(101),
+            }).encode()
+            with patch.object(runtime, "start_run", side_effect=store.start_run):
+                retry_status, retry_response = asyncio.run(
+                    _asgi_request(app, "POST", path, retry_body)
+                )
+                replay_status, replay_response = asyncio.run(
+                    _asgi_request(app, "POST", path, retry_body)
+                )
+            retry = RunSnapshot.model_validate_json(retry_response)
+            replay = RunSnapshot.model_validate_json(replay_response)
+            self.assertEqual((retry_status, replay_status), (202, 202))
+            self.assertEqual((retry.status, retry.run_id), ("queued", replay.run_id))
+            current = store.get_mission_snapshot(
+                workspace_id, mission.mission_id
+            ).mission
+            self.assertEqual((current.status, current.state_version), ("active", 3))
+
     def test_path2_body_limit_is_enforced_at_real_asgi_boundary(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-api-body-limit-") as directory:
             app = create_app(static_dir=Path(directory), data_dir=Path(directory))
