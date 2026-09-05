@@ -1682,7 +1682,7 @@ class WorkspaceStore:
                 mission = _load_mission(connection, workspace_id, mission_id)
                 if mission.state_version != request.expected_state_version:
                     raise Path2StateError("state_conflict")
-                retrying_failed_run = False
+                retrying_terminal_run = False
                 if mission.status == "blocked":
                     latest = connection.execute(
                         """
@@ -1692,10 +1692,12 @@ class WorkspaceStore:
                         """,
                         (workspace_id, mission_id),
                     ).fetchone()
-                    retrying_failed_run = latest is not None and latest[0] == "failed"
+                    retrying_terminal_run = (
+                        latest is not None and latest[0] in {"failed", "blocked"}
+                    )
                 elif mission.status != "active":
                     raise Path2StateError("state_conflict")
-                if mission.status == "blocked" and not retrying_failed_run:
+                if mission.status == "blocked" and not retrying_terminal_run:
                     raise Path2StateError("state_conflict")
                 allowed = {
                     (ref.source_id, ref.revision_id, ref.sha256)
@@ -1716,7 +1718,7 @@ class WorkspaceStore:
                     (workspace_id, mission_id),
                 ).fetchone() is not None:
                     raise Path2StateError("run_already_active")
-                if retrying_failed_run:
+                if retrying_terminal_run:
                     changed = connection.execute(
                         """
                         UPDATE missions SET status='active', state_version=state_version+1
@@ -2252,7 +2254,35 @@ class WorkspaceStore:
                     revision, _, content = self._run_source_material(
                         connection, run, call.arguments.revision_id
                     )
-                    output = read_source_fragment(revision, content, call.arguments.locator)
+                    try:
+                        output = read_source_fragment(
+                            revision, content, call.arguments.locator
+                        )
+                    except SourceInputError as exc:
+                        reasons = {
+                            "json_pointer_out_of_bounds": (
+                                "The JSON pointer does not exist. Start with the empty "
+                                "pointer to inspect the root."
+                            ),
+                            "locator_column_not_found": (
+                                "The requested CSV column does not exist. Read all "
+                                "columns or inspect the table profile first."
+                            ),
+                            "locator_media_type_mismatch": (
+                                "Use text_lines for text or Markdown, csv_rows for CSV, "
+                                "and json_pointer for JSON."
+                            ),
+                            "locator_out_of_bounds": (
+                                "The locator exceeds the selected source. Retry with a "
+                                "smaller range beginning at 1."
+                            ),
+                        }
+                        if exc.code not in reasons:
+                            raise
+                        status, error_code = "rejected", exc.code
+                        output = DomainRejection(
+                            code=exc.code, reason=reasons[exc.code]
+                        )
                 elif call.name == "inspect_dataset":
                     if call.arguments.kind == "table":
                         _, artifact, _ = self._run_source_material(
@@ -2435,10 +2465,9 @@ class WorkspaceStore:
                 self._run_source_material(connection, run, ref.revision_id)
             return
         if call.name == "read_source":
-            revision, _, content = self._run_source_material(
+            self._run_source_material(
                 connection, run, call.arguments.revision_id
             )
-            read_source_fragment(revision, content, call.arguments.locator)
             return
         if call.name == "inspect_dataset":
             if call.arguments.kind == "table":

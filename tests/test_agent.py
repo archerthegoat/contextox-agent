@@ -40,6 +40,7 @@ from contextox.provider import (
     ProviderToolCall,
     ProviderUsage,
 )
+from contextox.sources import SourceInputError
 from contextox.store import (
     MissionDraftAttemptNotFoundError, Path2StateError, WorkspaceStore,
     WorkspaceStoreError, WorkspaceStoreUnavailableError,
@@ -547,7 +548,7 @@ class PersistedRunTests(unittest.TestCase):
             with closing(sqlite3.connect(store.db_path)) as connection:
                 self.assertEqual(connection.execute("SELECT count(*) FROM runs").fetchone()[0], 1)
 
-    def test_explicit_new_run_reactivates_only_after_latest_failed_run(self):
+    def test_explicit_new_run_reactivates_after_latest_failed_or_blocked_run(self):
         with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
             first_request = _start_request(mission, refs)
             first = store.start_run(workspace_id, mission.mission_id, first_request)
@@ -616,9 +617,16 @@ class PersistedRunTests(unittest.TestCase):
                 provider_send_confirmed=True,
                 client_request_id=_id(904),
             )
-            with self.assertRaises(Path2StateError) as raised:
-                store.start_run(workspace_id, mission.mission_id, request)
-            self.assertEqual(raised.exception.code, "state_conflict")
+            retry = store.start_run(workspace_id, mission.mission_id, request)
+            self.assertEqual(retry.status, "queued")
+            self.assertNotEqual(retry.run_id, blocked_run.run_id)
+            reactivated = store.get_mission_snapshot(
+                workspace_id, mission.mission_id
+            ).mission
+            self.assertEqual((reactivated.status, reactivated.state_version), ("active", 3))
+            self.assertEqual(
+                store.start_run(workspace_id, mission.mission_id, request), retry
+            )
 
     def test_real_store_fake_provider_persists_partial_run_without_delta_or_reasoning(self):
         with self.store_case() as (store, workspace_id, mission, refs):
@@ -679,6 +687,32 @@ class PersistedRunTests(unittest.TestCase):
                 restarted.get_mission_snapshot(workspace_id, mission.mission_id).mission.status,
                 "blocked",
             )
+            retry_request = RunStartRequest(
+                expected_state_version=2,
+                source_refs=refs,
+                provider_send_confirmed=True,
+                client_request_id=_id(990),
+            )
+            with self.assertRaises(Path2StateError) as raised:
+                restarted.start_run(
+                    workspace_id, mission.mission_id, retry_request
+                )
+            self.assertEqual(raised.exception.code, "state_conflict")
+            with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                connection.execute(
+                    """
+                    UPDATE provider_receipts SET tool_schema_sha256=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=?
+                    """,
+                    (
+                        "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9",
+                        workspace_id, mission.mission_id, run.run_id,
+                    ),
+                )
+            self.assertEqual(
+                restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),
+                snapshot,
+            )
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
                 connection.execute(
                     """
@@ -704,6 +738,133 @@ class PersistedRunTests(unittest.TestCase):
                 )
             with self.assertRaises(WorkspaceStoreUnavailableError):
                 restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+
+    def test_read_source_locator_rejection_is_receipted_and_non_locator_error_fails(self):
+        import contextox.store as store_module
+
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs)
+            )
+            store.mark_run_running(workspace_id, mission.mission_id, run.run_id)
+            call = ReadSourceCall(
+                call_id="read-out-of-bounds", name="read_source", arguments={
+                    "revision_id": refs[0].revision_id,
+                    "locator": {
+                        "kind": "csv_rows", "row_start": 1,
+                        "row_end": 999, "column": None,
+                    },
+                },
+            )
+
+            store.validate_run_tool_batch(
+                workspace_id, mission.mission_id, run.run_id, [call]
+            )
+            result = store.execute_run_tool(
+                workspace_id, mission.mission_id, run.run_id, call
+            )
+            self.assertEqual((result.status, result.tool_receipt.status),
+                             ("rejected", "rejected"))
+            self.assertEqual(
+                (result.output.code, result.tool_receipt.error_code),
+                ("locator_out_of_bounds", "locator_out_of_bounds"),
+            )
+            self.assertEqual(result.tool_receipt.source_refs, [])
+            self.assertIsNone(result.terminal_snapshot)
+
+            for index, code in enumerate((
+                "json_pointer_out_of_bounds",
+                "locator_column_not_found",
+                "locator_media_type_mismatch",
+            ), start=1):
+                with self.subTest(code=code):
+                    recoverable = call.model_copy(
+                        update={"call_id": f"read-recoverable-{index}"}
+                    )
+                    with patch.object(
+                        store_module, "read_source_fragment",
+                        side_effect=SourceInputError(code),
+                    ):
+                        mapped = store.execute_run_tool(
+                            workspace_id, mission.mission_id, run.run_id,
+                            recoverable,
+                        )
+                    self.assertEqual(
+                        (mapped.status, mapped.output.code,
+                         mapped.tool_receipt.error_code),
+                        ("rejected", code, code),
+                    )
+
+            unsafe = call.model_copy(update={"call_id": "read-parse-failure"})
+            with patch.object(
+                store_module, "read_source_fragment",
+                side_effect=SourceInputError("source_parse_failed"),
+            ):
+                with self.assertRaises(Path2StateError) as raised:
+                    store.execute_run_tool(
+                        workspace_id, mission.mission_id, run.run_id, unsafe
+                    )
+            self.assertEqual(raised.exception.code, "source_parse_failed")
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT status, error_code FROM tool_receipts WHERE run_id=?",
+                        (run.run_id,),
+                    ).fetchall(),
+                    [
+                        ("rejected", "locator_out_of_bounds"),
+                        ("rejected", "json_pointer_out_of_bounds"),
+                        ("rejected", "locator_column_not_found"),
+                        ("rejected", "locator_media_type_mismatch"),
+                    ],
+                )
+
+    def test_real_store_agent_continues_after_locator_rejection(self):
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            run = store.start_run(
+                workspace_id, mission.mission_id, _start_request(mission, refs)
+            )
+            rejected = ProviderToolCall(
+                "read-out-of-bounds", "read_source", json.dumps({
+                    "revision_id": refs[0].revision_id,
+                    "locator": {
+                        "kind": "csv_rows", "row_start": 1,
+                        "row_end": 999, "column": None,
+                    },
+                }),
+            )
+            finish = ProviderToolCall(
+                "finish-after-rejection", "finish_run",
+                '{"outcome":"partial","reason":"Source range must be narrowed.","source_refs":[]}',
+            )
+            provider = FakeProvider([
+                _completion("Trying the selected source.", (rejected,)),
+                _completion("Stopping after the bounded rejection.", (finish,)),
+            ])
+
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(
+                    store, workspace_id, mission.mission_id, run.run_id, Event()
+                )
+
+            snapshot = store.get_run_snapshot(
+                workspace_id, mission.mission_id, run.run_id
+            )
+            self.assertEqual(snapshot.status, "partial")
+            self.assertEqual(len(provider.calls), 2)
+            self.assertEqual(len(snapshot.terminal_receipt.provider_receipt_ids), 2)
+            self.assertEqual(len(snapshot.terminal_receipt.tool_receipt_ids), 2)
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                receipts = connection.execute(
+                    "SELECT status, error_code FROM tool_receipts "
+                    "WHERE run_id=? ORDER BY ordinal",
+                    (run.run_id,),
+                ).fetchall()
+            self.assertEqual(receipts[0], ("rejected", "locator_out_of_bounds"))
+            second_messages = provider.calls[1]["messages"]
+            tool_messages = [item for item in second_messages if item["role"] == "tool"]
+            self.assertEqual(len(tool_messages), 1)
+            self.assertIn("locator_out_of_bounds", tool_messages[0]["content"])
 
     def test_all_seven_tools_use_selected_sources_and_terminal_receipts(self):
         with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):

@@ -119,7 +119,12 @@ _TOOL_ARGUMENT_TYPES: dict[str, type[BaseModel]] = {
 
 _TOOL_DESCRIPTIONS = {
     "list_sources": "List only the authorized source revisions in the current Workspace.",
-    "read_source": "Read one bounded, authorized source fragment by revision and locator.",
+    "read_source": (
+        "Read one bounded, authorized source fragment by revision and locator. "
+        "For first inspection use text lines 1-20, CSV rows 1-10, or the empty "
+        "JSON pointer; after a locator rejection, retry with a smaller range or "
+        "a corrected locator."
+    ),
     "inspect_dataset": "Inspect deterministic profiling or an explicit relationship.",
     "update_definition_draft": "Update the candidate definition draft using CAS fields and evidence.",
     "create_clarification": "Create structured questions for unresolved business or data decisions.",
@@ -187,6 +192,7 @@ TOOL_DEFINITIONS = _make_tool_definitions()
 TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 SUPPORTED_TOOL_SCHEMA_SHA256S = frozenset({
     TOOL_SCHEMA_SHA256,
+    "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9",
     "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028",
 })
 _TOOL_NAMES = frozenset(_TOOL_ARGUMENT_TYPES)

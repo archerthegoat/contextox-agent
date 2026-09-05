@@ -1290,7 +1290,7 @@ class ApiTests(unittest.TestCase):
             error = WorkspaceError.model_validate_json(response_body)
             self.assertEqual((response_status, error.code), (404, "workspace_not_found"))
 
-    def test_run_route_retries_latest_failed_run_with_exact_state_version(self) -> None:
+    def test_run_route_retries_latest_blocked_run_with_exact_state_version(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-api-run-retry-") as directory:
             app = create_app(static_dir=Path(directory), data_dir=Path(directory))
             store = app.state.workspace_store
@@ -1302,7 +1302,7 @@ class ApiTests(unittest.TestCase):
             store.mark_mission_draft_running(workspace_id, attempt.attempt_id)
             candidate = MissionDraftPayload(
                 title="Retry Mission",
-                goal="Verify explicit failed Run retry",
+                goal="Verify explicit blocked Run retry",
                 completion_criteria=["Create a new Run"],
                 scope_notes=[],
             )
@@ -1348,7 +1348,7 @@ class ApiTests(unittest.TestCase):
             store.mark_run_running(workspace_id, mission.mission_id, first.run_id)
             store.fail_run(
                 workspace_id, mission.mission_id, first.run_id,
-                "failed", "provider_request_invalid",
+                "blocked", "locator_out_of_bounds",
             )
 
             retry_body = json.dumps({
