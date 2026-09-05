@@ -78,6 +78,10 @@ from contextox.store import Path2NotImplementedError, WorkspaceStore, WorkspaceS
 
 logger = logging.getLogger(__name__)
 
+_MISSION_DRAFT_FIELDS = frozenset({
+    "title", "goal", "completion_criteria", "scope_notes",
+})
+
 
 P0_DRAFT = """ContextOx Path 2 MissionDraftAttempt.
 Return exactly one JSON object with only title, goal, completion_criteria, and
@@ -298,8 +302,24 @@ def _candidate_from_completion(completion: ProviderCompletion) -> MissionDraftPa
     try:
         return MissionDraftPayload.model_validate(payload)
     except ValidationError as exc:
+        safe_errors: list[str] = []
+        for error in exc.errors(include_url=False, include_context=False, include_input=False):
+            location = error.get("loc", ())
+            field = location[0] if location else "candidate"
+            if field not in _MISSION_DRAFT_FIELDS:
+                field = "unexpected_field"
+            error_type = error.get("type", "validation_error")
+            if not isinstance(error_type, str) or not error_type.replace("_", "").isalnum():
+                error_type = "validation_error"
+            safe_errors.append(f"{field}:{error_type}")
         raise _AgentFailure(
-            "provider_protocol_error", "failed", safe_stage="candidate_schema_invalid"
+            "provider_protocol_error",
+            "failed",
+            safe_stage=(
+                "candidate_schema_invalid["
+                + ",".join(sorted(set(safe_errors)))
+                + "]"
+            ),
         ) from exc
 
 
