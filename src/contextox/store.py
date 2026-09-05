@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Callable, Iterator, Literal
 from uuid import RFC_4122, UUID, uuid4
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -1155,6 +1155,12 @@ class WorkspaceStore:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
         self.db_path = _database_path(data_dir)
+        self._event_sink: Callable[[RunEventEnvelope], None] | None = None
+
+    def set_event_sink(
+        self, sink: Callable[[RunEventEnvelope], None] | None,
+    ) -> None:
+        self._event_sink = sink
 
     @classmethod
     def open(cls, data_dir: Path | str) -> "WorkspaceStore":
@@ -1730,6 +1736,38 @@ class WorkspaceStore:
             raise
         except sqlite3.IntegrityError as exc:
             raise Path2StateError("state_conflict") from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def find_run_start(
+        self, workspace_id: str, mission_id: str, request: RunStartRequest,
+    ) -> RunSnapshot | None:
+        self._require_path2_workspace(workspace_id)
+        try:
+            request = RunStartRequest.model_validate(request.model_dump(mode="json"))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise Path2StateError("run_start_invalid") from exc
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN")
+                _load_mission(connection, workspace_id, mission_id)
+                row = connection.execute(
+                    """
+                    SELECT workspace_id, mission_id, run_id, client_request_id, created_at,
+                           started_at, finished_at, status, budget_json, last_sequence,
+                           final_output, error_code, start_request_sha256
+                    FROM runs
+                    WHERE workspace_id=? AND mission_id=? AND client_request_id=?
+                    """,
+                    (workspace_id, mission_id, request.client_request_id),
+                ).fetchone()
+                if row is None:
+                    return None
+                if row[12] != canonical_sha256(request):
+                    raise Path2StateError("state_conflict")
+                return _run_from_row(connection, row)
+        except WorkspaceStoreError:
+            raise
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
             raise WorkspaceStoreUnavailableError() from exc
 
@@ -2684,13 +2722,19 @@ class WorkspaceStore:
                     """,
                     (sequence, workspace_id, mission_id, run_id, run.last_sequence),
                 )
-                return envelope
         except WorkspaceStoreError:
             raise
         except sqlite3.IntegrityError as exc:
             raise Path2StateError("state_conflict") from exc
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
             raise WorkspaceStoreUnavailableError() from exc
+        sink = self._event_sink
+        if sink is not None:
+            try:
+                sink(envelope)
+            except Exception:
+                pass
+        return envelope
 
     def list_run_events(
         self, workspace_id: str, mission_id: str, run_id: str,
@@ -2812,46 +2856,60 @@ class WorkspaceStore:
         self, workspace_id: str, mission_id: str, run_id: str,
     ) -> RunSnapshot:
         self._require_path2_workspace(workspace_id)
+        published: RunEventEnvelope | None = None
         try:
             with self._write_transaction() as connection:
                 run = _load_run(connection, workspace_id, mission_id, run_id)
                 if run.status not in {"queued", "running"}:
-                    return run
-                now = _utc_now()
-                sequence = run.last_sequence + 1
-                connection.execute(
-                    """
-                    UPDATE runs SET status='cancelled', finished_at=?, error_code='cancelled',
-                                    last_sequence=?
-                    WHERE workspace_id=? AND mission_id=? AND run_id=?
-                      AND status IN ('queued','running')
-                    """,
-                    (now.isoformat(), sequence, workspace_id, mission_id, run_id),
-                )
-                connection.execute(
-                    """
-                    UPDATE missions SET status='cancelled', state_version=state_version+1
-                    WHERE workspace_id=? AND mission_id=? AND status!='cancelled'
-                    """,
-                    (workspace_id, mission_id),
-                )
-                payload = {"status": "cancelled", "terminal_receipt_id": None,
-                           "error_code": "cancelled"}
-                connection.execute(
-                    """
-                    INSERT INTO run_events
-                        (workspace_id, mission_id, run_id, sequence, event_id,
-                         event_type, occurred_at, public_payload_json)
-                    VALUES (?, ?, ?, ?, ?, 'run_cancelled', ?, ?)
-                    """,
-                    (workspace_id, mission_id, run_id, sequence, str(sequence),
-                     now.isoformat(), _canonical_json(payload)),
-                )
-                return _load_run(connection, workspace_id, mission_id, run_id)
+                    stopped = run
+                else:
+                    now = _utc_now()
+                    sequence = run.last_sequence + 1
+                    connection.execute(
+                        """
+                        UPDATE runs SET status='cancelled', finished_at=?, error_code='cancelled',
+                                        last_sequence=?
+                        WHERE workspace_id=? AND mission_id=? AND run_id=?
+                          AND status IN ('queued','running')
+                        """,
+                        (now.isoformat(), sequence, workspace_id, mission_id, run_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE missions SET status='cancelled', state_version=state_version+1
+                        WHERE workspace_id=? AND mission_id=? AND status!='cancelled'
+                        """,
+                        (workspace_id, mission_id),
+                    )
+                    payload = {"status": "cancelled", "terminal_receipt_id": None,
+                               "error_code": "cancelled"}
+                    published = RunEventEnvelope.model_validate({
+                        "event_id": str(sequence), "event_type": "run_cancelled",
+                        "occurred_at": now, "workspace_id": workspace_id,
+                        "mission_id": mission_id, "run_id": run_id,
+                        "sequence": sequence, "public_payload": payload,
+                    })
+                    connection.execute(
+                        """
+                        INSERT INTO run_events
+                            (workspace_id, mission_id, run_id, sequence, event_id,
+                             event_type, occurred_at, public_payload_json)
+                        VALUES (?, ?, ?, ?, ?, 'run_cancelled', ?, ?)
+                        """,
+                        (workspace_id, mission_id, run_id, sequence, str(sequence),
+                         now.isoformat(), _canonical_json(payload)),
+                    )
+                    stopped = _load_run(connection, workspace_id, mission_id, run_id)
         except WorkspaceStoreError:
             raise
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
             raise WorkspaceStoreUnavailableError() from exc
+        if published is not None and self._event_sink is not None:
+            try:
+                self._event_sink(published)
+            except Exception:
+                pass
+        return stopped
 
     def recover_interrupted_runs(self) -> int:
         recovered = 0

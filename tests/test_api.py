@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 from pydantic import TypeAdapter, ValidationError
 
+from contextox import agent as agent_module
 from contextox.api import create_app
+from contextox.provider import ProviderUsage
 from contextox.store import WorkspaceStoreUnavailableError
 from contextox.models import (
     ClarificationRequest,
@@ -22,6 +24,9 @@ from contextox.models import (
     FinishRunArguments,
     HealthResponse,
     Mission,
+    MissionDraftPayload,
+    ModelDeltaEventInput,
+    ModelDeltaPayload,
     ProviderConfigSnapshot,
     ProviderReceipt,
     RelationshipCandidate,
@@ -87,6 +92,43 @@ async def _asgi_request(app, method: str, path: str, body: bytes = b"") -> tuple
     await app(scope, receive, send)
     start = next(message for message in messages if message["type"] == "http.response.start")
     chunks = [message.get("body", b"") for message in messages if message["type"] == "http.response.body"]
+    return start["status"], b"".join(chunks)
+
+
+async def _asgi_finite_stream(
+    app, path: str, headers: list[tuple[bytes, bytes]] | None = None,
+) -> tuple[int, bytes]:
+    messages: list[dict] = []
+    received = False
+    disconnected = asyncio.Event()
+
+    async def receive() -> dict:
+        nonlocal received
+        if not received:
+            received = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        messages.append(message)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": "GET", "scheme": "http", "path": path,
+        "raw_path": path.encode(), "query_string": b"", "headers": headers or [],
+        "client": ("testclient", 1234), "server": ("testserver", 80),
+        "root_path": "", "state": {},
+    }
+    try:
+        await app(scope, receive, send)
+    finally:
+        disconnected.set()
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    chunks = [
+        message.get("body", b"") for message in messages
+        if message["type"] == "http.response.body"
+    ]
     return start["status"], b"".join(chunks)
 
 
@@ -1083,7 +1125,7 @@ class ApiTests(unittest.TestCase):
                 (422, "invalid_request"),
             )
 
-    def test_mission_and_run_routes_are_not_implemented_only_for_known_workspace(self) -> None:
+    def test_mission_and_run_routes_wire_real_store_without_provider_network(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-api-path2-") as directory:
             app = create_app(static_dir=Path(directory), data_dir=Path(directory))
             status, body = asyncio.run(
@@ -1097,41 +1139,150 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(status, 201)
             workspace_id = json.loads(body)["workspace_id"]
             object_id = "00000000-0000-4000-8000-000000000010"
+            store = app.state.workspace_store
+            runtime = app.state.path2_runtime
             draft_body = json.dumps(
                 {"original_input": "梳理数据关系", "provider_send_confirmed": True},
                 ensure_ascii=False,
             ).encode()
-            confirm_body = json.dumps(
-                {"candidate_version": 1, "candidate_sha256": "0" * 64, "source_refs": []}
-            ).encode()
-            run_body = json.dumps(
-                {
-                    "expected_state_version": 1,
-                    "source_refs": [],
-                    "provider_send_confirmed": True,
-                    "client_request_id": object_id,
-                }
-            ).encode()
-            requests = (
-                ("POST", f"/api/workspaces/{workspace_id}/mission-draft-attempts", draft_body),
-                ("GET", f"/api/workspaces/{workspace_id}/mission-draft-attempts/{object_id}", b""),
-                ("POST", f"/api/workspaces/{workspace_id}/mission-draft-attempts/{object_id}/confirm", confirm_body),
-                ("GET", f"/api/workspaces/{workspace_id}/missions", b""),
-                ("GET", f"/api/workspaces/{workspace_id}/missions/{object_id}", b""),
-                ("POST", f"/api/workspaces/{workspace_id}/missions/{object_id}/runs", run_body),
-                ("GET", f"/api/workspaces/{workspace_id}/missions/{object_id}/runs/{object_id}", b""),
-                ("POST", f"/api/workspaces/{workspace_id}/missions/{object_id}/runs/{object_id}/cancel", b"{}"),
-                ("GET", f"/api/workspaces/{workspace_id}/missions/{object_id}/runs/{object_id}/events", b""),
+
+            with patch.object(
+                runtime, "start_mission_draft",
+                side_effect=lambda ws, original: store.create_mission_draft_attempt(ws, original),
+            ):
+                attempt_status, attempt_body = asyncio.run(_asgi_request(
+                    app, "POST",
+                    f"/api/workspaces/{workspace_id}/mission-draft-attempts",
+                    draft_body,
+                ))
+            self.assertEqual(attempt_status, 202)
+            attempt = json.loads(attempt_body)
+            self.assertEqual(attempt["status"], "queued")
+            attempt_id = attempt["attempt_id"]
+            fetched_status, fetched_body = asyncio.run(_asgi_request(
+                app, "GET",
+                f"/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}",
+            ))
+            self.assertEqual((fetched_status, json.loads(fetched_body)["attempt_id"]),
+                             (200, attempt_id))
+
+            store.mark_mission_draft_running(workspace_id, attempt_id)
+            candidate = MissionDraftPayload(
+                title="数据关系", goal="梳理授权数据关系",
+                completion_criteria=["形成候选定义"], scope_notes=[],
             )
-            for method, path, request_body in requests:
-                with self.subTest(method=method, path=path):
-                    response_status, response_body = asyncio.run(
-                        _asgi_request(app, method, path, request_body)
-                    )
-                    error = WorkspaceError.model_validate_json(response_body)
-                    self.assertEqual(response_status, 501)
-                    self.assertEqual(error.code, "path2_not_implemented")
-                    self.assertNotIn("梳理数据关系", response_body.decode())
+
+            class Provider:
+                config = {
+                    "endpoint_id": "deepseek_chat_completions",
+                    "model": "deepseek-v4-flash",
+                    "thinking": "enabled",
+                    "reasoning_effort": "high",
+                }
+
+            receipt = agent_module._make_receipt(
+                provider=Provider(), workspace_id=workspace_id,
+                attempt_id=attempt_id, mission_id=None, run_id=None,
+                turn_index=1, status="succeeded",
+                p0_sha256=agent_module.P0_DRAFT_SHA256,
+                usage=ProviderUsage(input_tokens=1, output_tokens=1,
+                                    cache_hit_tokens=0, cache_miss_tokens=1),
+            )
+            ready = store.save_mission_draft_result(
+                workspace_id, attempt_id, candidate, receipt
+            )
+            confirm_body = json.dumps({
+                "candidate_version": 1,
+                "candidate_sha256": ready.candidate_sha256,
+                "source_refs": [],
+            }).encode()
+            confirmed_status, confirmed_body = asyncio.run(_asgi_request(
+                app, "POST",
+                f"/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}/confirm",
+                confirm_body,
+            ))
+            self.assertEqual(confirmed_status, 200)
+            mission = Mission.model_validate_json(confirmed_body)
+
+            list_status, list_body = asyncio.run(_asgi_request(
+                app, "GET", f"/api/workspaces/{workspace_id}/missions"
+            ))
+            self.assertEqual((list_status, len(json.loads(list_body))), (200, 1))
+            snapshot_status, _ = asyncio.run(_asgi_request(
+                app, "GET",
+                f"/api/workspaces/{workspace_id}/missions/{mission.mission_id}",
+            ))
+            self.assertEqual(snapshot_status, 200)
+
+            run_body = json.dumps({
+                "expected_state_version": 1, "source_refs": [],
+                "provider_send_confirmed": True, "client_request_id": object_id,
+            }).encode()
+            with patch.object(
+                runtime, "start_run", side_effect=store.start_run,
+            ):
+                run_status, run_body_response = asyncio.run(_asgi_request(
+                    app, "POST",
+                    f"/api/workspaces/{workspace_id}/missions/{mission.mission_id}/runs",
+                    run_body,
+                ))
+            self.assertEqual(run_status, 202)
+            run = RunSnapshot.model_validate_json(run_body_response)
+            store.mark_run_running(workspace_id, mission.mission_id, run.run_id)
+            store.append_run_event(
+                workspace_id, mission.mission_id, run.run_id,
+                ModelDeltaEventInput(
+                    event_type="model_delta",
+                    public_payload=ModelDeltaPayload(
+                        turn_index=1, content="bounded live delta"
+                    ),
+                ),
+            )
+            fetched_run_status, _ = asyncio.run(_asgi_request(
+                app, "GET",
+                f"/api/workspaces/{workspace_id}/missions/{mission.mission_id}/runs/{run.run_id}",
+            ))
+            self.assertEqual(fetched_run_status, 200)
+            cancelled_status, cancelled_body = asyncio.run(_asgi_request(
+                app, "POST",
+                f"/api/workspaces/{workspace_id}/missions/{mission.mission_id}/runs/{run.run_id}/cancel",
+                b"{}",
+            ))
+            self.assertEqual(cancelled_status, 200)
+            self.assertEqual(json.loads(cancelled_body)["status"], "cancelled")
+            events_path = (
+                f"/api/workspaces/{workspace_id}/missions/{mission.mission_id}"
+                f"/runs/{run.run_id}/events"
+            )
+            event_status, event_body = asyncio.run(
+                _asgi_finite_stream(app, events_path)
+            )
+            self.assertEqual(event_status, 200)
+            self.assertIn(b"event: model_delta", event_body)
+            self.assertIn(b"event: run_cancelled", event_body)
+            self.assertNotIn("梳理数据关系", event_body.decode())
+            resumed_status, resumed_body = asyncio.run(_asgi_finite_stream(
+                app, events_path, [(b"last-event-id", b"2")]
+            ))
+            self.assertEqual((resumed_status, resumed_body), (200, b""))
+            invalid_status, invalid_body, _ = asyncio.run(_asgi_chunked_request(
+                app, "GET", events_path, [b""],
+                [(b"last-event-id", b"02")],
+            ))
+            self.assertEqual(
+                (invalid_status, WorkspaceError.model_validate_json(invalid_body).code),
+                (422, "run_event_cursor_invalid"),
+            )
+            restarted_app = create_app(
+                static_dir=Path(directory), data_dir=Path(directory)
+            )
+            replay_status, replay_body = asyncio.run(
+                _asgi_finite_stream(restarted_app, events_path)
+            )
+            self.assertEqual(replay_status, 200)
+            self.assertIn(b"contextox-snapshot-required missing=1-1", replay_body)
+            self.assertNotIn(b"event: model_delta", replay_body)
+            self.assertIn(b"event: run_cancelled", replay_body)
 
             response_status, response_body = asyncio.run(
                 _asgi_request(app, "GET", "/api/workspaces/not-a-workspace/missions")

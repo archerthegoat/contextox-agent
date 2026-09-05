@@ -2,6 +2,7 @@ import asyncio
 import base64
 import sqlite3
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -104,7 +105,7 @@ from contextox.models import (
 )
 from contextox.store import (
     InvalidWorkspaceNameError,
-    Path2NotImplementedError,
+    Path2StateError,
     SourceImportOutcomeUnknownError,
     SourceNotFoundError,
     WorkspaceCreateOutcomeUnknownError,
@@ -116,6 +117,7 @@ from contextox.store import (
     WorkspaceStoreUnavailableError,
 )
 from contextox.sources import SourceInputError
+from contextox.runtime import Path2Runtime
 
 
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -272,8 +274,11 @@ def _readiness_checks(app: FastAPI) -> list[HealthCheck]:
         ),
         HealthCheck(
             key="provider",
-            status="not_implemented",
-            detail="N2a does not configure or call a model provider.",
+            status="not_run",
+            detail=(
+                "Provider readiness is checked only by an explicitly confirmed "
+                "Mission draft attempt or Run."
+            ),
         ),
     ]
 
@@ -284,9 +289,9 @@ def _readiness(app: FastAPI) -> ReadinessResponse:
     return ReadinessResponse(
         status="blocked" if store_check.status == "blocked" else "partial",
         label=(
-            "Path 2 Workspace and Source persistence are ready; Mission and Provider remain partial."
+            "Path 2 persistence and bounded Mission runtime are available; Provider evidence is not run."
             if store_check.status == "ready"
-            else "Path 2 Workspace persistence is unavailable; Source, Mission, and Provider remain partial."
+            else "Path 2 Workspace persistence is unavailable; Source, Mission, and Provider are blocked."
         ),
         checks=checks,
     )
@@ -319,6 +324,68 @@ async def _event_stream() -> AsyncIterator[str]:
         while True:
             await asyncio.sleep(15)
             yield ": contextox-sse-heartbeat\n\n"
+    except asyncio.CancelledError:
+        return
+
+
+async def _run_event_stream(
+    store: WorkspaceStore,
+    runtime: Path2Runtime,
+    workspace_id: str,
+    mission_id: str,
+    run_id: str,
+    after_sequence: int,
+) -> AsyncIterator[str]:
+    sequence = after_sequence
+    terminal_statuses = {
+        "waiting_for_human", "partial", "blocked", "failed", "cancelled", "completed"
+    }
+    try:
+        while True:
+            persisted, buffered, snapshot = await asyncio.gather(
+                asyncio.to_thread(
+                    store.list_run_events,
+                    workspace_id, mission_id, run_id, sequence,
+                ),
+                asyncio.to_thread(
+                    runtime.buffered_events,
+                    workspace_id, mission_id, run_id, sequence,
+                ),
+                asyncio.to_thread(
+                    store.get_run_snapshot, workspace_id, mission_id, run_id,
+                ),
+            )
+            by_sequence = {event.root.sequence: event for event in buffered}
+            by_sequence.update({event.root.sequence: event for event in persisted})
+            events = [by_sequence[key] for key in sorted(by_sequence)]
+            if events and events[0].root.sequence > sequence + 1:
+                yield (
+                    f": contextox-snapshot-required missing={sequence + 1}-"
+                    f"{events[0].root.sequence - 1}\n\n"
+                )
+            for event in events:
+                yield _format_sse(event)
+                sequence = event.root.sequence
+            if not events and snapshot.last_sequence > sequence:
+                late = await asyncio.to_thread(
+                    runtime.buffered_events,
+                    workspace_id, mission_id, run_id, sequence,
+                )
+                if late:
+                    continue
+                yield (
+                    f": contextox-snapshot-required missing={sequence + 1}-"
+                    f"{snapshot.last_sequence}\n\n"
+                )
+                sequence = snapshot.last_sequence
+            if snapshot.status in terminal_statuses and sequence >= snapshot.last_sequence:
+                return
+            if not events:
+                await asyncio.to_thread(
+                    runtime.wait_for_change,
+                    workspace_id, mission_id, run_id, sequence, 15.0,
+                )
+                yield ": contextox-sse-heartbeat\n\n"
     except asyncio.CancelledError:
         return
 
@@ -376,7 +443,7 @@ def _evidence() -> list[EvidenceLane]:
             key="real_model",
             label="Real model",
             status="not_run",
-            detail="N1 does not call a provider.",
+            detail="No real Provider run is part of this runtime snapshot.",
         ),
         EvidenceLane(
             key="human_acceptance",
@@ -400,6 +467,13 @@ def _workspace_store(app: FastAPI) -> WorkspaceStore:
     error = getattr(app.state, "workspace_store_error", None)
     if isinstance(error, WorkspaceStoreError):
         raise error
+    raise WorkspaceStoreUnavailableError()
+
+
+def _path2_runtime(app: FastAPI) -> Path2Runtime:
+    runtime = getattr(app.state, "path2_runtime", None)
+    if isinstance(runtime, Path2Runtime):
+        return runtime
     raise WorkspaceStoreUnavailableError()
 
 
@@ -434,12 +508,18 @@ def _workspace_store_error_response(
             code="source_not_found",
             message="Source revision was not found.",
         )
-    if isinstance(error, Path2NotImplementedError):
+    if isinstance(error, Path2StateError):
+        not_found = error.code in {
+            "mission_draft_attempt_not_found", "mission_not_found", "run_not_found"
+        }
         return _workspace_error(
             request,
-            status_code=501,
-            code="path2_not_implemented",
-            message="This Path 2 capability is not implemented.",
+            status_code=404 if not_found else 422,
+            code=error.code,
+            message=(
+                "The requested Path 2 object was not found."
+                if not_found else "The requested Path 2 operation could not be applied."
+            ),
         )
     if isinstance(error, InvalidWorkspaceNameError):
         return _workspace_error(
@@ -520,12 +600,6 @@ def _invalid_object_path(request: Request, object_id: str) -> JSONResponse | Non
         code="invalid_request",
         message="Invalid request.",
     )
-
-
-def _raise_path2_after_workspace_check(store: WorkspaceStore, workspace_id: str) -> None:
-    if store.get_workspace(workspace_id) is None:
-        raise WorkspaceNotFoundError()
-    raise Path2NotImplementedError()
 
 
 def _source_error(code: str, message: str) -> WorkspaceError:
@@ -671,20 +745,32 @@ def create_app(
     data_dir: Path | None = None,
 ) -> FastAPI:
     resolved_static_dir = (static_dir or DEFAULT_STATIC_DIR).resolve()
+
+    @asynccontextmanager
+    async def lifespan(current_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            runtime = getattr(current_app.state, "path2_runtime", None)
+            if isinstance(runtime, Path2Runtime):
+                await asyncio.to_thread(runtime.shutdown)
+
     app = FastAPI(
         title="ContextOx Workbench API",
         version=__version__,
         summary="Local-first business-definition Workbench shell",
         description=(
-            "Path 2 exposes local Workspace and authorized Source persistence. "
-            "It does not call a model provider or implement Mission/Run behavior."
+            "Path 2 exposes local governed Workspace, Source, Mission, and Run behavior. "
+            "Provider work starts only after the matching explicit send confirmation."
         ),
+        lifespan=lifespan,
     )
     app.add_middleware(_Path2BodyLimitMiddleware)
     app.state.static_dir = resolved_static_dir
     app.state.data_dir = data_dir.resolve() if data_dir else None
     app.state.workspace_store = None
     app.state.workspace_store_error = None
+    app.state.path2_runtime = None
     if app.state.data_dir is not None:
         try:
             app.state.workspace_store = WorkspaceStore.open(app.state.data_dir)
@@ -692,6 +778,8 @@ def create_app(
             app.state.workspace_store_error = error
         except (OSError, sqlite3.Error):
             app.state.workspace_store_error = WorkspaceStoreUnavailableError()
+    if app.state.workspace_store is not None:
+        app.state.path2_runtime = Path2Runtime(app.state.workspace_store)
 
     @app.exception_handler(RequestValidationError)
     async def workspace_request_validation(
@@ -1033,17 +1121,18 @@ def create_app(
     )
     def create_mission_draft_attempt(
         workspace_id: str,
-        _payload: MissionDraftAttemptCreateRequest,
+        payload: MissionDraftAttemptCreateRequest,
         request: Request,
     ) -> MissionDraftAttempt | JSONResponse:
         invalid = _invalid_workspace_path(request, workspace_id)
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _path2_runtime(app).start_mission_draft(
+                workspace_id, payload.original_input
+            )
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.get(
         "/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}",
@@ -1067,7 +1156,9 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _workspace_store(app).get_mission_draft_attempt(
+                workspace_id, attempt_id
+            )
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
 
@@ -1084,7 +1175,7 @@ def create_app(
     def confirm_mission_draft_attempt(
         workspace_id: str,
         attempt_id: str,
-        _payload: MissionDraftConfirmRequest,
+        payload: MissionDraftConfirmRequest,
         request: Request,
     ) -> Mission | JSONResponse:
         invalid = _invalid_workspace_path(request, workspace_id)
@@ -1094,10 +1185,12 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _workspace_store(app).confirm_mission_draft_attempt(
+                workspace_id, attempt_id, payload.candidate_version,
+                payload.candidate_sha256, payload.source_refs,
+            )
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.get(
         "/api/workspaces/{workspace_id}/missions",
@@ -1116,10 +1209,9 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _workspace_store(app).list_missions(workspace_id)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.get(
         "/api/workspaces/{workspace_id}/missions/{mission_id}",
@@ -1143,10 +1235,11 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _workspace_store(app).get_mission_snapshot(
+                workspace_id, mission_id
+            )
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.post(
         "/api/workspaces/{workspace_id}/missions/{mission_id}/runs",
@@ -1162,7 +1255,7 @@ def create_app(
     def start_run(
         workspace_id: str,
         mission_id: str,
-        _payload: RunStartRequest,
+        payload: RunStartRequest,
         request: Request,
     ) -> RunSnapshot | JSONResponse:
         invalid = _invalid_workspace_path(request, workspace_id)
@@ -1172,10 +1265,9 @@ def create_app(
         if invalid is not None:
             return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _path2_runtime(app).start_run(workspace_id, mission_id, payload)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.get(
         "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}",
@@ -1201,10 +1293,11 @@ def create_app(
             if invalid is not None:
                 return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _workspace_store(app).get_run_snapshot(
+                workspace_id, mission_id, run_id
+            )
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.post(
         "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/cancel",
@@ -1231,10 +1324,9 @@ def create_app(
             if invalid is not None:
                 return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            return _path2_runtime(app).cancel_run(workspace_id, mission_id, run_id)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
 
     @app.get(
         "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/events",
@@ -1258,7 +1350,6 @@ def create_app(
         request: Request,
         _last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     ) -> StreamingResponse | JSONResponse:
-        del _last_event_id
         invalid = _invalid_workspace_path(request, workspace_id)
         if invalid is not None:
             return invalid
@@ -1267,10 +1358,33 @@ def create_app(
             if invalid is not None:
                 return invalid
         try:
-            _raise_path2_after_workspace_check(_workspace_store(app), workspace_id)
+            store = _workspace_store(app)
+            runtime = _path2_runtime(app)
+            snapshot = store.get_run_snapshot(workspace_id, mission_id, run_id)
+            if _last_event_id is None:
+                after_sequence = 0
+            elif (
+                not _last_event_id.isdigit()
+                or str(int(_last_event_id)) != _last_event_id
+            ):
+                raise Path2StateError("run_event_cursor_invalid")
+            else:
+                after_sequence = int(_last_event_id)
+            if after_sequence > snapshot.last_sequence:
+                raise Path2StateError("run_event_cursor_invalid")
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
-        raise AssertionError("unreachable")
+        return StreamingResponse(
+            _run_event_stream(
+                store, runtime, workspace_id, mission_id, run_id, after_sequence
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get(
         "/api/events",
