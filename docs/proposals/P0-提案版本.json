@@ -1,0 +1,15 @@
+{
+  "status": "PROPOSED_NOT_APPLIED",
+  "contract_sha256": "6a90167c33e356da857ad9b104d5589fed2ef0325c3184cb3c19f82be5786df1",
+  "targets": {
+    "docs/架构与迁移报告.md": {
+      "before": "ace05f5588f5288315087781907889d72125ad12e4b9ce90f614edd6281b2d02",
+      "after": "bb1089a3caeab5167c92eb89394b1cc9e64402a9dee7fffc4d8c2f46cf5c543b"
+    },
+    "docs/路径二共享契约.md": {
+      "before": "d79e1e580cb88a7372059856156b9929c6841710b98ab0b3deb97c548fa39ed1",
+      "after": "2404f39d512979754eb7ec5e524a2db36af7e013c50f16dc8fc07a80e21d7172"
+    }
+  },
+  "patch_format": "unified-zero-context; apply with --unidiff-zero after verifying source hashes"
+}

@@ -1,0 +1,13 @@
+--- a/docs/路径二共享契约.md
++++ b/docs/路径二共享契约.md
+@@ -454,0 +455,10 @@
++
++## 14. 任务对话与执行续接增量
++
++本节以 `docs/proposals/P0-任务对话与执行续接契约-v1.md` 的精确内容为新开发实施合同（SHA256：`6a90167c33e356da857ad9b104d5589fed2ef0325c3184cb3c19f82be5786df1`）。本文§0–13保留其历史基线与批准范围，不将其中历史未实现状态当作当前事实。
++
++新增TaskMessage/MessageReference、消息与Run分页列表、显式消息发送和按client_request_id核对接口；请求与回复形状、限额、分页、状态转换、失败恢复、v4单表增量、历史hash兼容和验收遵循该增量。新增接口由Pydantic生成OpenAPI/TypeScript/client，旧入口、历史记录与证据语义保留；新消息入口不允许绕过当前审批或未知外部结果。
++
++本增量不创建第八个工具。新消息Run复用finish_run.reason保存本轮公开答复与来源引用，保留partial和Mission未完成；消息输入通过不可变Run关联绑定至每轮ContextPacket。消息页仅回读持久正文，不重建Provider transcript或丢失delta。
++
++实施按只读回读、合成诊断、消息发送、结果联动分别形成检查点；真实模型调用、实际私有库迁移与外部Git/发布动作仍需各自授权。
