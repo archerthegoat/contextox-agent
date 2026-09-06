@@ -1123,6 +1123,7 @@ export type Path2WorkbenchState = {
   missionSnapshot: MissionSnapshot | null;
   missionSnapshotState: CollectionState<Mission>;
   refreshMission: () => Promise<void>;
+  refreshTask: () => Promise<MissionSnapshot | null>;
   selectMission: (missionId: string) => Promise<void>;
   adoptDialogueRun: (run: RunSnapshot) => void;
   attempt: MissionDraftAttempt | null;
@@ -2709,17 +2710,38 @@ export function usePath2Workbench(
 
   const refreshRunSnapshot = useCallback(
     async (identity: RunIdentity): Promise<void> => {
-      await readRunSnapshot(identity);
+      if (workspaceIdRef.current !== identity.workspaceId || selectedMissionIdRef.current !== identity.missionId) return;
+      await loadMissionSnapshot(identity.workspaceId, identity.missionId);
     },
-    [readRunSnapshot],
+    [loadMissionSnapshot],
   );
+
+  const refreshTask = useCallback(async (): Promise<MissionSnapshot | null> => {
+    const ws = workspaceIdRef.current;
+    const mid = selectedMissionIdRef.current;
+    if (!ws || !mid) return null;
+    const task = await loadMissionSnapshot(ws, mid);
+    if (workspaceIdRef.current !== ws || selectedMissionIdRef.current !== mid) return null;
+    const latest = task?.latest_run;
+    // An explicit task refresh also reconciles a newer run started elsewhere.
+    if (latest && latest.run_id !== runRef.current?.run_id) {
+      storeRunSnapshot(null);
+      replaceRunEventState(createRunEventState());
+      preferredRunIdRef.current = latest.run_id;
+      preferredRunMissionIdRef.current = mid;
+      applyRunSnapshot(latest, {workspaceId:ws, missionId:mid, runId:latest.run_id});
+      if (!writePath2ObjectPointers(ws, {missionId:mid, runId:latest.run_id, runMissionId:mid})) setRunReadbackIssue(pendingActionStorageIssue());
+    }
+    return task;
+  }, [loadMissionSnapshot, storeRunSnapshot, replaceRunEventState, applyRunSnapshot]);
 
   useEffect(() => {
     if (!workspaceId || !runSnapshot) {
       setRunConnectionState(workspaceId ? "closed" : "idle");
       return;
     }
-    if (runSnapshot.status !== "queued" && runSnapshot.status !== "running") {
+    if (runSnapshot.status !== "queued" && runSnapshot.status !== "running" &&
+        !(runSnapshot.status === "partial" && !runSnapshot.final_output)) {
       return replayTerminalRunEvents(
         runSnapshot, eventSourceFactory, replaceRunEventState,
         setRunConnectionState, setRunEventIssue,
@@ -2770,6 +2792,7 @@ export function usePath2Workbench(
           void readback.finally(() => {
             if (!cancelled) {
               source.close();
+              setRunConnectionState("closed");
             }
           });
         }
@@ -2810,7 +2833,7 @@ export function usePath2Workbench(
     replaceRunEventState,
     runSnapshot?.mission_id,
     runSnapshot?.run_id,
-    runSnapshot?.status,
+    // Keep the live subscription until the terminal event, not just a receipt.
     updateRunEventState,
     workspaceId,
   ]);
@@ -2910,6 +2933,7 @@ export function usePath2Workbench(
     missionSnapshot: visibleMissionSnapshot,
     missionSnapshotState: visibleMissionSnapshotState,
     refreshMission: refreshMissions,
+    refreshTask,
     selectMission, adoptDialogueRun,
     attempt: visibleAttempt,
     attemptAction: visibleAttemptAction,

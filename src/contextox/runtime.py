@@ -72,6 +72,15 @@ class Path2Runtime:
         with self._slot_lock:
             if self._active is not None and self._active.token == token:
                 self._active = None
+        with self._event_condition:
+            self._event_condition.notify_all()
+
+    def is_run_active(self, workspace_id: str, mission_id: str, run_id: str) -> bool:
+        with self._slot_lock:
+            task = self._active
+            return bool(task is not None and task.kind == "run"
+                        and task.workspace_id == workspace_id
+                        and task.mission_id == mission_id and task.object_id == run_id)
 
     def _start_thread(self, task: _ActiveTask, target: Callable[[], None]) -> None:
         thread = self._thread_factory(

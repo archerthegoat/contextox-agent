@@ -7,6 +7,23 @@ type Message = components["schemas"]["TaskMessage"];
 export type MessageReference = Message["references"][number];
 type SendRequest = components["schemas"]["TaskMessageSendRequest"];
 type RunSummary = components["schemas"]["TaskRunSummary"];
+type SourceIdentity = components["schemas"]["SourceIdentity"];
+
+// Collect exact identities carried by the approved context packet and references.
+export function dialogueSources(...payloads: unknown[]): SourceIdentity[] {
+  const sources: SourceIdentity[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const item = value as Record<string, unknown>;
+    if (["workspace_id", "source_id", "revision_id", "sha256"].every(key => typeof item[key] === "string")) {
+      const ref = {workspace_id:item.workspace_id, source_id:item.source_id, revision_id:item.revision_id, sha256:item.sha256} as SourceIdentity;
+      if (!sources.some(old => sourceIdentityEquals(old, ref))) sources.push(ref);
+    } else Object.values(item).forEach(visit);
+  };
+  payloads.forEach(visit);
+  return sources;
+}
 
 export function referenceLabel(ref: MessageReference): string {
   switch (ref.kind) {
@@ -63,6 +80,9 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
     const gen = ++generation.current;
     setLoading(true);
     try {
+      const task = await stateRef.current.refreshTask();
+      if (current.current !== scope || gen !== generation.current) return;
+      if (!task || task.mission.workspace_id !== ws || task.mission.mission_id !== mid) throw new Error("task readback failed");
       const [mp, rp] = await Promise.all([fetchTaskMessages(ws, mid), fetchTaskRuns(ws, mid)]);
       if (current.current !== scope || gen !== generation.current) return;
       if ([...mp.items, ...rp.items].some(item => item.workspace_id !== ws || item.mission_id !== mid)) throw new Error("scope mismatch");
@@ -88,6 +108,24 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
     if (pair.length === 2 && pair[0].role === "user" && pair[1].role === "assistant") setHistoryIds(pair.map(m => m.message_id));
   }, [messages, historyTouched, loaded, scope]);
 
+  const historyRunIds = [...new Set(messages.filter(m => historyIds.includes(m.message_id)).flatMap(m => m.run_id ? [m.run_id] : []))];
+  const historyKey = JSON.stringify([scope, ...historyRunIds]);
+  const [historyScope, setHistoryScope] = useState<{key: string; sources: SourceIdentity[]; issue: string}>({key:"", sources:[], issue:""});
+  useEffect(() => {
+    let disposed = false;
+    if (!ws || !mid || loaded !== scope) return;
+    void Promise.all(historyRunIds.map(id => fetchRunSnapshot(ws, mid, id))).then(snapshots => {
+      if (disposed) return;
+      if (snapshots.some((snapshot, i) => snapshot.workspace_id !== ws || snapshot.mission_id !== mid || snapshot.run_id !== historyRunIds[i])) throw new Error("scope mismatch");
+      setHistoryScope({key:historyKey, sources:dialogueSources(snapshots.map(snapshot => snapshot.source_refs)), issue:""});
+    }).catch(e => {if (!disposed) setHistoryScope({key:historyKey, sources:[], issue:dialogueError(e)});});
+    return () => {disposed = true;};
+  }, [historyKey, loaded, runs]);
+  const scopeReady = loaded === scope && historyScope.key === historyKey && !historyScope.issue;
+  const requiredSources = dialogueSources(state.latestDraft, state.clarifications, references,
+    messages.filter(m => historyIds.includes(m.message_id)).map(m => m.references), historyScope.key === historyKey ? historyScope.sources : []);
+  const missingSources = requiredSources.filter(ref => !state.selectedSourceRefs.some(selected => sourceIdentityEquals(ref, selected)));
+
   const adopt = async (receipt: components["schemas"]["TaskMessageSendReceipt"]) => {
     if (current.current !== scope || receipt.run.workspace_id !== ws || receipt.run.mission_id !== mid || receipt.input_message.run_id !== receipt.run.run_id) return;
     sessionStorage.removeItem(storageKey);
@@ -96,7 +134,7 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
     await refresh();
   };
   const submit = async (repeat = false) => {
-    if (!ws || !mid || sendingRef.current) return;
+    if (!ws || !mid || sendingRef.current || (!repeat && (!scopeReady || missingSources.length > 0))) return;
     const mission = stateRef.current.missionSnapshot?.mission ?? stateRef.current.selectedMission;
     if (!mission) return;
     const request: SendRequest | null = repeat ? pendingRequest.current : {
@@ -154,6 +192,7 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
   return { messages: loaded === scope ? messages : [], runs: loaded === scope ? runs : [],
     loading, ready: loaded === scope, error, text: loaded === scope ? text : "", setText, references: loaded === scope ? references : [], setReferences, addReference,
     historyIds, setHistoryIds: (ids: string[]) => {setHistoryTouched(true); setHistoryIds(ids);},
+    scopeReady, scopeIssue: historyScope.key === historyKey ? historyScope.issue : "", missingSources,
     pendingId, canRepeat: pendingRequest.current !== null, sending, submit, reconcile, refresh, more, messageCursor, runCursor };
 }
 export type DialogueState = ReturnType<typeof useTaskDialogue>;
@@ -169,9 +208,10 @@ export function TaskConversation({ state, dialogue: d, onReference, onHistory, o
   const run = state.runSnapshot;
   const mission = state.missionSnapshot?.mission ?? state.selectedMission;
   const active = run?.status === "queued" || run?.status === "running";
+  const finalizing = run?.status === "partial" && !run.final_output && state.runConnectionState !== "closed";
   const waiting = mission?.status === "waiting_for_human" || state.clarifications.length > 0 || state.latestDraft?.status === "in_review";
   const sourceAllowed = state.selectedSourceRefs.every(ref => mission?.source_refs.some(source => sourceIdentityEquals(source, ref)));
-  const blocked = !mission || !d.ready || active || waiting || mission.status === "cancelled" || mission.status === "completed" || !sourceAllowed;
+  const blocked = !mission || !d.ready || d.loading || !d.scopeReady || d.missingSources.length > 0 || active || finalizing || waiting || mission.status === "cancelled" || mission.status === "completed" || !sourceAllowed;
   if (!mission) return <div className="conversation-empty"><h3>围绕一个任务展开分析</h3><p>先在任务工作区描述目标并确认任务，再在这里提问、查看答复与引用。</p></div>;
   return <div className="task-conversation">
     <div className="conversation-context"><strong>{mission.title}</strong><span>任务：{mission.status === "blocked" && run?.status === "partial" && !waiting ? "待继续" : statusLabel(mission.status)}</span><button onClick={onHistory}>执行历史</button></div>
@@ -186,7 +226,7 @@ export function TaskConversation({ state, dialogue: d, onReference, onHistory, o
       </article>)}
       {run && <div className="conversation-activity" role="status">
         <strong>{active ? "正在分析本轮问题…" : `本轮：${statusLabel(run.status)}`}</strong>
-        {active ? <p>可以继续编辑草稿，当前分析结束后再发送。</p> : !run.final_output && <p>{waiting ? "本轮已产生待回应事项（系统状态）。" : run.terminal_receipt ? "答复未保存；可查看本轮结构化结果。" : "本轮未形成可保存的答复。"}</p>}
+        {active ? <p>可以继续编辑草稿，当前分析结束后再发送。</p> : !run.final_output && <p>{finalizing ? "正在核对本轮答复与任务状态…" : waiting ? "本轮已产生待回应事项（系统状态）。" : "本轮未形成可读取的公开答复，可查看结构化结果。"}</p>}
         {run.error_code && <p>{run.error_code === "context_budget_exceeded" ? "本轮触及上下文预算，已停止；已有结果保留。" : `分析停止：${run.error_code}`}</p>}
         {state.latestDraft && <button onClick={onResults}>查看字段与关系草案 · v{state.latestDraft.version}</button>}
         {waiting && <p>需要业务裁决。当前版本尚未提供回答与批准入口，普通消息不能代替批准。</p>}
@@ -194,9 +234,16 @@ export function TaskConversation({ state, dialogue: d, onReference, onHistory, o
       </div>}
     </div>
     <form className="conversation-composer" onSubmit={event => {event.preventDefault(); void d.submit();}}>
-      {d.error && <div role="alert" className="conversation-error">{d.error}<button type="button" onClick={() => void d.refresh()}>刷新对话</button></div>}
+      {(d.error || d.scopeIssue) && <div role="alert" className="conversation-error">{d.error || d.scopeIssue}<button type="button" disabled={d.loading} onClick={() => void d.refresh()}>刷新对话</button></div>}
+      {finalizing && state.runConnectionState === "blocked" && <button type="button" onClick={() => void d.refresh()}>核对本轮结果</button>}
       {d.pendingId && !d.sending && <div role="status"><p>本次发送等待核对，原请求标识已保留。</p><button type="button" disabled={d.sending} onClick={() => void d.reconcile()}>核对发送结果</button>{d.canRepeat && <button type="button" disabled={d.sending} onClick={() => void d.submit(true)}>按原请求重提</button>}</div>}
       {d.references.map((ref, index) => <button type="button" className="reference-chip" key={index} disabled={Boolean(d.pendingId)} onClick={() => d.setReferences(d.references.filter((_, i) => i !== index))}>{referenceLabel(ref)} ×</button>)}
+      {d.missingSources.length > 0 && <fieldset className="dialogue-missing-sources"><legend>本轮还需明确选择资料</legend><p>历史、引用或当前草案使用了以下资料。勾选后才纳入本轮模型范围。</p>{d.missingSources.map(ref => {
+        const source = state.sourceState.items.find(item => sourceIdentityEquals(item, ref));
+        const allowed = Boolean(source && mission.source_refs.some(item => sourceIdentityEquals(item, ref)));
+        return <label className="history-choice" key={`${ref.revision_id}/${ref.sha256}`}><input type="checkbox" checked={false} disabled={!allowed || Boolean(d.pendingId)} onChange={() => state.toggleSource(ref.revision_id)}/><span>{source?.original_name ?? `来源 ${ref.revision_id.slice(0, 8)}`}{!allowed && "（当前任务不可选，请调整引用或历史并核对任务范围）"}</span></label>;
+      })}</fieldset>}
+      {!d.scopeReady && !d.scopeIssue && d.ready && <p role="status">正在核对历史使用的资料范围…</p>}
       <details><summary>携带 {d.historyIds.length} 条历史 · {state.selectedSourceRefs.length} 份资料</summary>
         <p>仅携带勾选的消息与资料；最多 4 条历史。可在资料页调整来源。</p>
         {state.selectedSourceRefs.map(ref => <p key={ref.revision_id}>{state.sourceState.items.find(s => s.revision_id === ref.revision_id)?.original_name ?? "已选来源"}</p>)}

@@ -1,4 +1,5 @@
 """Task conversation behavior through Store, runtime and the fake Provider seam."""
+import asyncio
 import json
 from contextlib import closing
 import sqlite3
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from contextox import agent
+from contextox.api import _run_event_stream
 from contextox.models import TaskMessageSendRequest, MessageHistoryRef
 from contextox.provider import ProviderCompletion, ProviderToolCall, ProviderUsage
 from contextox.runtime import Path2Runtime
@@ -49,6 +51,55 @@ class DialogueTests(unittest.TestCase):
         self.store = WorkspaceStore.open(self.temp.name)
         self.ws, self.mission = _mission(self.store)
         self.mid = self.mission.mission_id
+
+    def test_sse_waits_for_answer_after_terminal_receipt(self):
+        runtime = Path2Runtime(self.store)
+        entered, release, observed = Event(), Event(), Event()
+        save = self.store.save_run_final_output
+        snapshot = self.store.get_run_snapshot
+
+        def delayed_save(*args):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("test did not release final output")
+            return save(*args)
+
+        def inspect_snapshot(*args):
+            result = snapshot(*args)
+            if entered.is_set() and not result.final_output:
+                observed.set()
+            return result
+
+        async def check():
+            receipt, _ = runtime.send_task_message(self.ws, self.mid, request())
+            self.assertTrue(await asyncio.to_thread(entered.wait, 3))
+            self.assertTrue(runtime.is_run_active(self.ws, self.mid, receipt.run.run_id))
+            self.assertFalse(runtime.is_run_active(str(uuid4()), self.mid, receipt.run.run_id))
+
+            async def consume():
+                return [part async for part in _run_event_stream(
+                    self.store, runtime, self.ws, self.mid, receipt.run.run_id, 0)]
+
+            stream = asyncio.create_task(consume())
+            try:
+                self.assertTrue(await asyncio.to_thread(observed.wait, 3))
+                await asyncio.sleep(0.05)
+                self.assertFalse(stream.done(), "SSE closed before the answer was saved")
+            finally:
+                release.set()
+            chunks = await asyncio.wait_for(stream, 3)
+            self.assertIn("event: run_partial", "".join(chunks))
+            self.assertEqual(snapshot(self.ws, self.mid, receipt.run.run_id).final_output,
+                             "A bounded public answer")
+
+        try:
+            with patch.object(agent, "get_provider", return_value=AnswerProvider()), \
+                 patch.object(self.store, "save_run_final_output", side_effect=delayed_save), \
+                 patch.object(self.store, "get_run_snapshot", side_effect=inspect_snapshot):
+                asyncio.run(check())
+        finally:
+            release.set()
+            runtime.shutdown()
 
     def test_send_is_atomic_and_idempotent_including_runtime_busy(self):
         runtime = Path2Runtime(self.store, thread_factory=HoldingThread)

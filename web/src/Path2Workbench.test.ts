@@ -212,6 +212,7 @@ const emptyState: Path2WorkbenchState = {
   selectMission: async () => undefined,
   adoptDialogueRun: () => undefined,
   refreshMission: async () => undefined,
+  refreshTask: async () => null,
   attempt: null,
   attemptAction: { status: "idle", issue: null },
   submitAttempt: async () => null,

@@ -343,6 +343,9 @@ async def _run_event_stream(
     }
     try:
         while True:
+            # A terminal tool receipt may precede the saved answer and final event.
+            # Observe worker completion before reading its final persisted state.
+            worker_active = runtime.is_run_active(workspace_id, mission_id, run_id)
             persisted, buffered, snapshot = await asyncio.gather(
                 asyncio.to_thread(
                     store.list_run_events,
@@ -379,9 +382,11 @@ async def _run_event_stream(
                     f"{snapshot.last_sequence}\n\n"
                 )
                 sequence = snapshot.last_sequence
-            if snapshot.status in terminal_statuses and sequence >= snapshot.last_sequence:
+            if not worker_active and snapshot.status in terminal_statuses and sequence >= snapshot.last_sequence:
                 return
             if not events:
+                if worker_active and not runtime.is_run_active(workspace_id, mission_id, run_id):
+                    continue
                 await asyncio.to_thread(
                     runtime.wait_for_change,
                     workspace_id, mission_id, run_id, sequence, 15.0,
