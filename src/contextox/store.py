@@ -2284,25 +2284,60 @@ class WorkspaceStore:
                             code=exc.code, reason=reasons[exc.code]
                         )
                 elif call.name == "inspect_dataset":
-                    if call.arguments.kind == "table":
-                        _, artifact, _ = self._run_source_material(
-                            connection, run, call.arguments.revision_id
-                        )
-                        output = next(
-                            table for table in artifact.tables
-                            if table.table_id == call.arguments.table_id
-                        )
-                    else:
-                        left_revision, _, left_content = self._run_source_material(
-                            connection, run, call.arguments.left.source_ref.revision_id
-                        )
-                        right_revision, _, right_content = self._run_source_material(
-                            connection, run, call.arguments.right.source_ref.revision_id
-                        )
-                        output = inspect_relationship(
-                            call.arguments.left, left_revision, left_content,
-                            call.arguments.right, right_revision, right_content,
-                        )
+                    revision_ids = (
+                        [call.arguments.revision_id]
+                        if call.arguments.kind == "table" else
+                        [call.arguments.left.source_ref.revision_id,
+                         call.arguments.right.source_ref.revision_id]
+                    )
+                    materials = [
+                        self._run_source_material(connection, run, revision_id)
+                        for revision_id in revision_ids
+                    ]
+                    # Parse failures must take precedence over a bad lookup.
+                    if any(artifact.parse_status in {"blocked", "failed"}
+                           for _, artifact, _ in materials):
+                        raise Path2StateError("source_parse_failed")
+                    try:
+                        if call.arguments.kind == "table":
+                            output = next(
+                                (table for table in materials[0][1].tables
+                                 if table.table_id == call.arguments.table_id), None
+                            )
+                            if output is None:
+                                raise SourceInputError("table_not_found")
+                        else:
+                            output = inspect_relationship(
+                                call.arguments.left, materials[0][0], materials[0][2],
+                                call.arguments.right, materials[1][0], materials[1][2],
+                            )
+                    except SourceInputError as exc:
+                        reasons = {
+                            "table_not_found": "Inspect an available table ID first.",
+                            "join_column_not_found": (
+                                "Inspect both table profiles and select their exact column names."
+                            ),
+                            "join_columns_empty": "Select at least one column on each side.",
+                            "invalid_table_key": "Select valid, distinct columns from each table profile.",
+                        }
+                        if exc.code not in reasons:
+                            raise
+                        reason = reasons[exc.code]
+                        if exc.code == "table_not_found":
+                            # Bound hints without cutting a table ID into a false locator.
+                            for revision, artifact, _ in materials:
+                                hint = f" Revision {revision.revision_id} table IDs: "
+                                reason += hint
+                                for table in artifact.tables:
+                                    item = json.dumps(table.table_id, ensure_ascii=True) + "; "
+                                    if len(reason) + len(item) > 3000:
+                                        reason += "[remaining IDs omitted]"
+                                        break
+                                    reason += item
+                                if not artifact.tables:
+                                    reason += "none; "
+                        status, error_code = "rejected", exc.code
+                        output = DomainRejection(code=exc.code, reason=reason)
                 elif call.name == "update_definition_draft":
                     latest = _load_latest_draft(connection, workspace_id, mission_id)
                     if latest is not None and latest.status == "in_review":
@@ -2471,25 +2506,13 @@ class WorkspaceStore:
             return
         if call.name == "inspect_dataset":
             if call.arguments.kind == "table":
-                _, artifact, _ = self._run_source_material(
+                self._run_source_material(
                     connection, run, call.arguments.revision_id
                 )
-                if not any(table.table_id == call.arguments.table_id for table in artifact.tables):
-                    raise Path2StateError("table_not_found")
             else:
                 self._validate_run_identity_refs(
                     connection, run,
                     [call.arguments.left.source_ref, call.arguments.right.source_ref],
-                )
-                left_revision, _, left_content = self._run_source_material(
-                    connection, run, call.arguments.left.source_ref.revision_id
-                )
-                right_revision, _, right_content = self._run_source_material(
-                    connection, run, call.arguments.right.source_ref.revision_id
-                )
-                inspect_relationship(
-                    call.arguments.left, left_revision, left_content,
-                    call.arguments.right, right_revision, right_content,
                 )
             return
         if call.name == "update_definition_draft":

@@ -686,6 +686,69 @@ const RUN_EVENT_TYPES: RunEventEnvelope["event_type"][] = [
 ];
 
 const RUN_EVENT_TYPE_SET = new Set<string>(RUN_EVENT_TYPES);
+
+// A terminal stream is a single replay, never an automatically retried subscription.
+export function replayTerminalRunEvents(
+  run: RunSnapshot,
+  factory: RunEventSourceFactory,
+  onEvents: (state: RunEventState) => void,
+  onState: (state: Path2WorkbenchState["runConnectionState"]) => void,
+  onIssue: (issue: string | null) => void,
+): () => void {
+  onIssue(null);
+  if (run.last_sequence === 0) {
+    onState("closed");
+    return () => undefined;
+  }
+  onState("connecting");
+  const source = factory(runEventsUrl(run.workspace_id, run.mission_id, run.run_id));
+  let closed = false;
+  // Snapshot sequence is not the cursor for history that has yet to be read.
+  let replay = createRunEventState();
+  const dispose = () => {
+    if (closed) return;
+    closed = true;
+    clearTimeout(timeout);
+    source.onopen = null;
+    source.onerror = null;
+    RUN_EVENT_TYPES.forEach((type) => source.removeEventListener(type, handleEvent));
+    source.close();
+  };
+  const fail = () => {
+    if (closed) return;
+    dispose();
+    onState("blocked");
+    onIssue("历史事件未完整加载；已显示的事件与任务快照仍保留。请刷新页面重新读取，不会重新执行任务。");
+  };
+  const handleEvent = (event: Event) => {
+    if (closed || !("data" in event) || typeof event.data !== "string") return;
+    const parsed = parseRunEvent(event.data);
+    if (!parsed || parsed.workspace_id !== run.workspace_id ||
+        parsed.mission_id !== run.mission_id || parsed.run_id !== run.run_id ||
+        parsed.sequence > run.last_sequence) {
+      fail();
+      return;
+    }
+    // The server can still have transient deltas in its in-memory buffer.
+    // Historical review uses durable events and the persisted final output.
+    if (parsed.event_type !== "model_delta") {
+      replay = acceptRunEvent(replay, parsed, {
+        workspaceId: run.workspace_id, missionId: run.mission_id, runId: run.run_id,
+      });
+      onEvents(replay);
+    }
+    if (parsed.sequence === run.last_sequence) {
+      dispose();
+      onState("closed");
+    }
+  };
+  const timeout = setTimeout(fail, 15000);
+  source.onopen = () => { if (!closed) onState("connected"); };
+  source.onerror = fail;
+  RUN_EVENT_TYPES.forEach((type) => source.addEventListener(type, handleEvent));
+  return dispose;
+}
+
 const DOMAIN_TOOL_NAMES = new Set([
   "list_sources",
   "read_source",
@@ -2659,8 +2722,10 @@ export function usePath2Workbench(
       return;
     }
     if (runSnapshot.status !== "queued" && runSnapshot.status !== "running") {
-      setRunConnectionState("closed");
-      return;
+      return replayTerminalRunEvents(
+        runSnapshot, eventSourceFactory, replaceRunEventState,
+        setRunConnectionState, setRunEventIssue,
+      );
     }
 
     const identity: RunIdentity = {
@@ -2744,6 +2809,7 @@ export function usePath2Workbench(
   }, [
     eventSourceFactory,
     refreshRunSnapshot,
+    replaceRunEventState,
     runSnapshot?.mission_id,
     runSnapshot?.run_id,
     runSnapshot?.status,
@@ -3313,6 +3379,7 @@ function RunStatusCard({ state }: { state: Path2WorkbenchState }) {
       {state.runAction.issue ? <IssueCallout issue={state.runAction.issue} /> : null}
       {state.cancelAction.issue ? <IssueCallout issue={state.cancelAction.issue} title="取消未完成" /> : null}
       {state.runReadbackIssue ? <IssueCallout issue={state.runReadbackIssue} title="快照回读未完成" /> : null}
+      <RunFailureNotice run={run} />
       {state.runEventIssue ? <div className="path2-event-warning" role="status">{state.runEventIssue}</div> : null}
       {state.runEventState.hasSequenceGap ? <div className="path2-event-warning" role="status">公开事件存在序号缺口；未用 delta 拼造完整文字，最终摘要只取持久化快照。</div> : null}
       {run.final_output ? (
@@ -3343,6 +3410,25 @@ function RunStatusCard({ state }: { state: Path2WorkbenchState }) {
       ) : null}
     </div>
   );
+}
+
+function RunFailureNotice({ run }: { run: RunSnapshot }) {
+  if (run.status !== "blocked" && run.status !== "failed") return null;
+  const lookupFailure = ["table_not_found", "join_column_not_found", "locator_out_of_bounds",
+    "json_pointer_out_of_bounds", "locator_column_not_found", "locator_media_type_mismatch"]
+    .includes(run.error_code ?? "");
+  const unknownOutcome = run.error_code?.includes("outcome_unknown") ||
+    run.error_code === "interrupted_without_receipt";
+  const guidance = lookupFailure
+    ? "读取资料时未能找到指定的表、字段或片段。请核对资料与定位方式；修正后，在任务中重新选择来源并明确开始新的 Run。"
+    : unknownOutcome
+      ? "上次执行结果尚不明确。请先核对已有回执和外部结果，确认后再决定下一步，不要直接重试。"
+      : "本次执行已停止。请结合下方原因代码和公开事件检查来源、权限或服务状态，解决原因后再决定是否开始新的 Run。";
+  return <div className="path2-event-warning" role="status">
+    <strong>{run.status === "blocked" ? "本次任务受阻" : "本次执行失败"}</strong>
+    <p>{guidance}</p>
+    <span>原因代码：<code>{run.error_code ?? "未记录具体原因"}</code></span>
+  </div>;
 }
 
 function MissionPanel({ state }: { state: Path2WorkbenchState }) {
@@ -3761,7 +3847,7 @@ function eventSummary(event: RunEventEnvelope): string {
     case "run_partial":
     case "run_blocked":
     case "run_failed":
-    case "run_cancelled": return `Run 终态：${statusLabel(event.public_payload.status)}`;
+    case "run_cancelled": return `Run 终态：${statusLabel(event.public_payload.status)}${event.public_payload.error_code ? `；原因：${event.public_payload.error_code}` : ""}`;
   }
 }
 
@@ -3784,9 +3870,17 @@ export function Path2AgentContent({ state }: { state: Path2WorkbenchState }) {
       {run ? (
         <>
           <div className="path2-agent-run-heading"><div><span className="path2-eyebrow">PUBLIC RUN STATE</span><strong>{run.run_id}</strong></div><StatusPill status={run.status}>{statusLabel(run.status)}</StatusPill></div>
+          <RunFailureNotice run={run} />
+          {state.runEventIssue ? <div className="path2-event-warning" role="status">{state.runEventIssue}</div> : null}
           {state.runEventState.hasSequenceGap ? <div className="path2-event-warning">事件中间有缺口；实时文字可能不完整，摘要以快照为准。</div> : null}
           <div className="path2-agent-events" aria-label="公开 Run 事件">
-            {state.runEventState.events.length === 0 ? <span className="path2-inline-status">等待公开事件…</span> : null}
+            {state.runEventState.events.length === 0 ? <span className="path2-inline-status">
+              {state.runEventIssue ? "历史事件加载失败。" :
+                isTerminalRunStatus(run.status)
+                  ? state.runConnectionState === "connecting" || state.runConnectionState === "connected"
+                    ? "正在加载历史事件…" : "本次运行已结束，暂无可回放的公开事件。"
+                  : "等待公开事件…"}
+            </span> : null}
             {state.runEventState.events.map((event) => <article className="path2-agent-event" key={event.event_id}><div><span>#{event.sequence}</span><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleTimeString()}</time></div><p>{eventSummary(event)}</p></article>)}
           </div>
           {run.final_output ? <div className="path2-agent-output"><strong>持久化公开摘要</strong><p>{run.final_output}</p></div> : null}

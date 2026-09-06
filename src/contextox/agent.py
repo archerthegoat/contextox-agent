@@ -125,7 +125,12 @@ _TOOL_DESCRIPTIONS = {
         "JSON pointer; after a locator rejection, retry with a smaller range or "
         "a corrected locator."
     ),
-    "inspect_dataset": "Inspect deterministic profiling or an explicit relationship.",
+    "inspect_dataset": (
+        "Inspect deterministic profiling or an explicit relationship. JSON table_id "
+        "is a JSON Pointer such as /orders; CSV table_id is the empty string. "
+        "Inspect each table profile before selecting columns for a relationship. "
+        "After a rejected lookup, use the available table IDs and profile columns."
+    ),
     "update_definition_draft": "Update the candidate definition draft using CAS fields and evidence.",
     "create_clarification": "Create structured questions for unresolved business or data decisions.",
     "submit_for_review": "Freeze the exact candidate draft for human review.",
@@ -192,6 +197,7 @@ TOOL_DEFINITIONS = _make_tool_definitions()
 TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 SUPPORTED_TOOL_SCHEMA_SHA256S = frozenset({
     TOOL_SCHEMA_SHA256,
+    "029c655c34a5ec4dbd64bb4d477093f29110dc8a95955965231d7d80caa5b993",
     "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9",
     "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028",
 })

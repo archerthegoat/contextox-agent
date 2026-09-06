@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ApiRequestError } from "./api/client";
 import {
@@ -20,6 +20,7 @@ import {
   missionSnapshotIsMonotonic,
   mergeRunSnapshot,
   parseRunEvent,
+  replayTerminalRunEvents,
   pendingActionIssue,
   pendingConfirmMatchesIdentity,
   runSnapshotIsMonotonic,
@@ -35,6 +36,7 @@ import {
   type Path2PendingAction,
   type RunEventEnvelope,
   type RunSnapshot,
+  type RunEventSource,
   type SourceRevision,
 } from "./Path2Workbench";
 
@@ -246,6 +248,105 @@ function event(sequence: number, eventId: string, workspace = workspaceId): RunE
 }
 
 describe("Path 2 Workbench state boundaries", () => {
+  it("replays terminal events once and closes without rerunning the task", () => {
+    const listeners = new Map<string, (event: Event) => void>();
+    const source: RunEventSource = {
+      addEventListener: (type, listener) => { listeners.set(type, listener); },
+      removeEventListener: (type) => { listeners.delete(type); },
+      close: vi.fn(), onopen: null, onerror: null,
+    };
+    const factory = vi.fn(() => source);
+    const state = vi.fn();
+    const issue = vi.fn();
+    let events = mergeRunSnapshot(createRunEventState(), { ...run, last_sequence: 3 });
+    const cleanup = replayTerminalRunEvents({ ...run, status: "blocked", last_sequence: 3 }, factory,
+      (history) => { events = history; },
+      state, issue);
+    const handler = listeners.get("model_started")!;
+    const first = event(1, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    handler(new MessageEvent("model_started", { data: JSON.stringify(first) }));
+    handler(new MessageEvent("model_started", { data: JSON.stringify(first) }));
+    listeners.get("model_delta")!(new MessageEvent("model_delta", { data: JSON.stringify({
+      ...event(2, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+      event_type: "model_delta", public_payload: { turn_index: 1, content: "transient text" },
+    }) }));
+    handler(new MessageEvent("model_started", { data: JSON.stringify(event(3, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")) }));
+    expect(events.events).toHaveLength(2);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(state).toHaveBeenLastCalledWith("closed");
+    expect(source.close).toHaveBeenCalledTimes(1);
+    expect(source.onerror).toBeNull();
+    cleanup();
+    handler(new MessageEvent("model_started", { data: JSON.stringify(first) }));
+    expect(events.events).toHaveLength(2);
+  });
+
+  it("fails closed on wrong-scope replay, malformed events, incomplete EOF and timeout", () => {
+    vi.useFakeTimers();
+    try {
+      for (const failure of ["scope", "malformed", "eof", "timeout"]) {
+        const listeners = new Map<string, (event: Event) => void>();
+        const source: RunEventSource = {
+          addEventListener: (type, handler) => { listeners.set(type, handler); },
+          removeEventListener: (type) => { listeners.delete(type); },
+          close: vi.fn(), onopen: null, onerror: null,
+        };
+        const accepted = vi.fn();
+        const state = vi.fn();
+        const issue = vi.fn();
+        replayTerminalRunEvents({ ...run, status: "failed" }, () => source, accepted, state, issue);
+        if (failure === "timeout") vi.advanceTimersByTime(15000);
+        else if (failure === "eof") source.onerror!(new Event("error"));
+        else listeners.get("model_started")!(new MessageEvent("model_started", { data:
+          failure === "malformed" ? "invalid" : JSON.stringify(event(1, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "another-workspace")),
+        }));
+        expect(accepted).not.toHaveBeenCalled();
+        expect(source.close).toHaveBeenCalledTimes(1);
+        expect(state).toHaveBeenLastCalledWith("blocked");
+        expect(issue.mock.lastCall?.[0]).toContain("历史事件未完整加载");
+      }
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not open replay for zero events and cleans up on Workspace change", () => {
+    const factory = vi.fn();
+    const state = vi.fn();
+    replayTerminalRunEvents({ ...run, status: "failed", last_sequence: 0 }, factory, vi.fn(), state, vi.fn());
+    expect(factory).not.toHaveBeenCalled();
+    expect(state).toHaveBeenLastCalledWith("closed");
+    const listeners = new Map<string, (event: Event) => void>();
+    const source: RunEventSource = {
+      addEventListener: (type, handler) => { listeners.set(type, handler); },
+      removeEventListener: (type) => { listeners.delete(type); },
+      close: vi.fn(), onopen: null, onerror: null,
+    };
+    const accepted = vi.fn();
+    const cleanup = replayTerminalRunEvents({ ...run, status: "blocked" }, () => source, accepted, state, vi.fn());
+    const late = listeners.get("model_started")!;
+    cleanup();
+    late(new MessageEvent("model_started", { data: JSON.stringify(event(1, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")) }));
+    expect(accepted).not.toHaveBeenCalled();
+    expect(source.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows persisted failure reasons and truthful replay loading, empty and failed states", () => {
+    const stopped: Path2WorkbenchState = {
+      ...emptyState, workspaceId, selectedMission: mission,
+      runSnapshot: { ...run, status: "blocked", error_code: "table_not_found" },
+      runConnectionState: "connecting",
+    };
+    const render = (state: Path2WorkbenchState) => renderToStaticMarkup(createElement(Path2AgentContent, { state }));
+    expect(render(stopped)).toContain("正在加载历史事件");
+    expect(render(stopped)).toContain("table_not_found");
+    expect(render(stopped)).toContain("核对资料与定位方式");
+    expect(render({ ...stopped, runConnectionState: "closed" })).toContain("本次运行已结束");
+    expect(render({ ...stopped, runEventIssue: "回放连接失败" })).toContain("历史事件加载失败");
+    expect(render({ ...stopped, runConnectionState: "closed" })).not.toContain("等待公开事件");
+    const missionMarkup = renderToStaticMarkup(createElement(Path2Workbench, { state: stopped, activeArea: "mission" }));
+    expect(missionMarkup).toContain("table_not_found");
+    expect(render({ ...stopped, runSnapshot: { ...run, status: "failed", error_code: "interrupted_without_receipt" } })).toContain("不要直接重试");
+  });
+
   it("rejects late responses once the Workspace epoch or identity changes", () => {
     expect(isCurrentWorkspaceResponse(3, 4, workspaceId, workspaceId)).toBe(false);
     expect(isCurrentWorkspaceResponse(3, 3, workspaceId, "99999999-9999-4999-8999-999999999999")).toBe(false);

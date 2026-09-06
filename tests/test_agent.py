@@ -698,36 +698,21 @@ class PersistedRunTests(unittest.TestCase):
                     workspace_id, mission.mission_id, retry_request
                 )
             self.assertEqual(raised.exception.code, "state_conflict")
-            with closing(sqlite3.connect(store.db_path)) as connection, connection:
-                connection.execute(
-                    """
-                    UPDATE provider_receipts SET tool_schema_sha256=?
-                    WHERE workspace_id=? AND mission_id=? AND run_id=?
-                    """,
-                    (
-                        "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9",
-                        workspace_id, mission.mission_id, run.run_id,
-                    ),
+            for known_hash in (
+                "029c655c34a5ec4dbd64bb4d477093f29110dc8a95955965231d7d80caa5b993",
+                "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9",
+                "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028",
+            ):
+                with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                    connection.execute(
+                        "UPDATE provider_receipts SET tool_schema_sha256=? "
+                        "WHERE workspace_id=? AND mission_id=? AND run_id=?",
+                        (known_hash, workspace_id, mission.mission_id, run.run_id),
+                    )
+                self.assertEqual(
+                    restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),
+                    snapshot,
                 )
-            self.assertEqual(
-                restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),
-                snapshot,
-            )
-            with closing(sqlite3.connect(store.db_path)) as connection, connection:
-                connection.execute(
-                    """
-                    UPDATE provider_receipts SET tool_schema_sha256=?
-                    WHERE workspace_id=? AND mission_id=? AND run_id=?
-                    """,
-                    (
-                        "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028",
-                        workspace_id, mission.mission_id, run.run_id,
-                    ),
-                )
-            self.assertEqual(
-                restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),
-                snapshot,
-            )
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
                 connection.execute(
                     """
@@ -865,6 +850,92 @@ class PersistedRunTests(unittest.TestCase):
             tool_messages = [item for item in second_messages if item["role"] == "tool"]
             self.assertEqual(len(tool_messages), 1)
             self.assertIn("locator_out_of_bounds", tool_messages[0]["content"])
+
+    def test_inspect_dataset_rejects_bad_lookups_and_preserves_safety_failures(self):
+        import contextox.store as store_module
+
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            run = store.start_run(workspace_id, mission.mission_id, _start_request(mission, refs))
+            store.mark_run_running(workspace_id, mission.mission_id, run.run_id)
+            scope = (workspace_id, mission.mission_id, run.run_id)
+            table = InspectDatasetCall(call_id="bad-table", name="inspect_dataset", arguments={
+                "kind": "table", "revision_id": refs[0].revision_id, "table_id": "missing",
+            })
+            store.validate_run_tool_batch(*scope, [table])
+            rejected = store.execute_run_tool(*scope, table)
+            self.assertEqual((rejected.status, rejected.output.code), ("rejected", "table_not_found"))
+            self.assertIn('""', rejected.output.reason)
+            self.assertNotIn(refs[1].revision_id, rejected.output.reason)
+            self.assertEqual(rejected.tool_receipt.source_refs, [])
+
+            for index, (columns, table_id, code) in enumerate([
+                (["missing"], "", "join_column_not_found"),
+                ([], "", "join_columns_empty"),
+                (["id", "id"], "", "invalid_table_key"),
+                (["id"], "missing", "table_not_found"),
+            ]):
+                with self.subTest(code=code):
+                    call = InspectDatasetCall(call_id=f"relationship-{index}", name="inspect_dataset", arguments={
+                        "kind": "relationship",
+                        "left": {"source_ref": refs[0], "table_id": table_id, "columns": columns},
+                        "right": {"source_ref": refs[1], "table_id": "", "columns": ["id"]},
+                    })
+                    store.validate_run_tool_batch(*scope, [call])
+                    result = store.execute_run_tool(*scope, call)
+                    self.assertEqual((result.status, result.output.code, result.tool_receipt.error_code),
+                                     ("rejected", code, code))
+                    self.assertIsNone(result.terminal_snapshot)
+
+            for code in ("source_parse_failed", "source_identity_mismatch", "workspace_mismatch",
+                         "source_hash_mismatch", "unknown_inspection_error"):
+                with self.subTest(fatal_code=code):
+                    with patch.object(store_module, "inspect_relationship", side_effect=SourceInputError(code)):
+                        with self.assertRaises(Path2StateError) as raised:
+                            store.execute_run_tool(*scope, call.model_copy(update={"call_id": "unsafe"}))
+                    self.assertEqual(raised.exception.code, code)
+            wrong = call.model_copy(deep=True, update={"call_id": "wrong-identity"})
+            wrong.arguments.left.source_ref.sha256 = "0" * 64
+            with self.assertRaises(Path2StateError) as raised:
+                store.validate_run_tool_batch(*scope, [wrong])
+            self.assertEqual(raised.exception.code, "source_revision_mismatch")
+
+            material = store._run_source_material
+            def failed_artifact(connection, selected_run, revision_id):
+                revision, artifact, content = material(connection, selected_run, revision_id)
+                return revision, artifact.model_copy(update={"parse_status": "failed"}), content
+            with patch.object(store, "_run_source_material", side_effect=failed_artifact):
+                with self.assertRaises(Path2StateError) as raised:
+                    store.execute_run_tool(*scope, table.model_copy(update={"call_id": "parse-first"}))
+                self.assertEqual(raised.exception.code, "source_parse_failed")
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                self.assertEqual(connection.execute(
+                    "SELECT count(*) FROM tool_receipts WHERE run_id=?", (run.run_id,)
+                ).fetchone()[0], 5)
+
+    def test_real_store_agent_corrects_table_lookup_then_finishes(self):
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            run = store.start_run(workspace_id, mission.mission_id, _start_request(mission, refs))
+            provider = FakeProvider([
+                _completion("", (ProviderToolCall("bad", "inspect_dataset", json.dumps({
+                    "kind": "table", "revision_id": refs[0].revision_id, "table_id": "left.csv",
+                })),)),
+                _completion("", (ProviderToolCall("corrected", "inspect_dataset", json.dumps({
+                    "kind": "table", "revision_id": refs[0].revision_id, "table_id": "",
+                })),)),
+                _completion("Bounded inspection done.", (ProviderToolCall("finish", "finish_run",
+                    '{"outcome":"partial","reason":"Business definition needs approval.","source_refs":[]}'),)),
+            ])
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
+            result = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+            self.assertEqual(result.status, "partial")
+            self.assertEqual(len(result.terminal_receipt.tool_receipt_ids), 3)
+            second_tools = [m for m in provider.calls[1]["messages"] if m["role"] == "tool"]
+            self.assertIn("table_not_found", second_tools[0]["content"])
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                self.assertEqual(connection.execute(
+                    "SELECT status FROM tool_receipts WHERE run_id=? ORDER BY ordinal", (run.run_id,)
+                ).fetchall(), [("rejected",), ("succeeded",), ("succeeded",)])
 
     def test_all_seven_tools_use_selected_sources_and_terminal_receipts(self):
         with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
