@@ -227,6 +227,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task Messages */
+        get: operations["task_messages_api_workspaces__workspace_id__missions__mission_id__messages_get"];
+        put?: never;
+        /** Send Task Message */
+        post: operations["send_task_message_api_workspaces__workspace_id__missions__mission_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/missions/{mission_id}/runs": {
         parameters: {
             query?: never;
@@ -234,10 +252,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Task Runs */
+        get: operations["task_runs_api_workspaces__workspace_id__missions__mission_id__runs_get"];
         put?: never;
         /** Start Run */
         post: operations["start_run_api_workspaces__workspace_id__missions__mission_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/message-submissions/{client_request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Message Submission */
+        get: operations["message_submission_api_workspaces__workspace_id__missions__mission_id__message_submissions__client_request_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -498,6 +534,38 @@ export interface components {
             /** Unknowns */
             unknowns: components["schemas"]["UnknownItem"][];
         };
+        /** DraftFieldMessageReference */
+        DraftFieldMessageReference: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "draft_field";
+            /** Draft Id */
+            draft_id: string;
+            /** Draft Version */
+            draft_version: number;
+            /** Draft Sha256 */
+            draft_sha256: string;
+            /** Field Key */
+            field_key: string;
+        };
+        /** DraftRelationshipMessageReference */
+        DraftRelationshipMessageReference: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "draft_relationship";
+            /** Draft Id */
+            draft_id: string;
+            /** Draft Version */
+            draft_version: number;
+            /** Draft Sha256 */
+            draft_sha256: string;
+            /** Relationship Key */
+            relationship_key: string;
+        };
         /** DraftUpdatedEventEnvelope */
         DraftUpdatedEventEnvelope: {
             /** Event Id */
@@ -675,6 +743,13 @@ export interface components {
              * @enum {string}
              */
             role: "user" | "assistant";
+        };
+        /** MessageHistoryRef */
+        MessageHistoryRef: {
+            /** Message Id */
+            message_id: string;
+            /** Sha256 */
+            sha256: string;
         };
         /** Mission */
         Mission: {
@@ -1271,6 +1346,19 @@ export interface components {
             /** Items */
             items: components["schemas"]["SourceImportItem"][];
         };
+        /** SourceColumnMessageReference */
+        SourceColumnMessageReference: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "source_column";
+            source_ref: components["schemas"]["SourceIdentity"];
+            /** Table Id */
+            table_id: string;
+            /** Column Name */
+            column_name: string;
+        };
         /** SourceExcerpt */
         SourceExcerpt: {
             source_ref: components["schemas"]["EvidenceRef"];
@@ -1278,6 +1366,15 @@ export interface components {
             text: string;
             /** Truncated */
             truncated: boolean;
+        };
+        /** SourceExcerptMessageReference */
+        SourceExcerptMessageReference: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "source_excerpt";
+            evidence_ref: components["schemas"]["EvidenceRef"];
         };
         /** SourceExcerptRequest */
         SourceExcerptRequest: {
@@ -1398,6 +1495,107 @@ export interface components {
             sample_rows: components["schemas"]["SampleRow"][];
             /** Source Refs */
             source_refs: components["schemas"]["EvidenceRef"][];
+        };
+        /** TaskMessage */
+        TaskMessage: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Message Id */
+            message_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
+            /** Original Attempt Id */
+            original_attempt_id: string | null;
+            /** Run Id */
+            run_id: string | null;
+            /** References */
+            references: (components["schemas"]["SourceExcerptMessageReference"] | components["schemas"]["SourceColumnMessageReference"] | components["schemas"]["DraftFieldMessageReference"] | components["schemas"]["DraftRelationshipMessageReference"])[];
+            /** Sha256 */
+            sha256: string;
+        };
+        /** TaskMessagePage */
+        TaskMessagePage: {
+            /** Items */
+            items: components["schemas"]["TaskMessage"][];
+            /** Next Before Message Id */
+            next_before_message_id: string | null;
+        };
+        /** TaskMessageSendReceipt */
+        TaskMessageSendReceipt: {
+            input_message: components["schemas"]["TaskMessage"];
+            run: components["schemas"]["RunSnapshot"];
+        };
+        /** TaskMessageSendRequest */
+        TaskMessageSendRequest: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "message";
+            /** Client Request Id */
+            client_request_id: string;
+            /** Expected State Version */
+            expected_state_version: number;
+            /** Content */
+            content: string;
+            /** References */
+            references: (components["schemas"]["SourceExcerptMessageReference"] | components["schemas"]["SourceColumnMessageReference"] | components["schemas"]["DraftFieldMessageReference"] | components["schemas"]["DraftRelationshipMessageReference"])[];
+            /** History Messages */
+            history_messages: components["schemas"]["MessageHistoryRef"][];
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+            /** Provider Send Confirmed */
+            provider_send_confirmed: boolean;
+        };
+        /** TaskRunPage */
+        TaskRunPage: {
+            /** Items */
+            items: components["schemas"]["TaskRunSummary"][];
+            /** Next Before Run Id */
+            next_before_run_id: string | null;
+        };
+        /** TaskRunSummary */
+        TaskRunSummary: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "waiting_for_human" | "partial" | "completed" | "blocked" | "failed" | "cancelled";
+            /** Last Sequence */
+            last_sequence: number;
+            /** Error Code */
+            error_code: string | null;
+            /** Input Message Id */
+            input_message_id: string | null;
+            /** Has Final Output */
+            has_final_output: boolean;
         };
         /** TerminalReceipt */
         TerminalReceipt: {
@@ -1857,8 +2055,18 @@ export interface components {
             /** Sha256 */
             sha256: string;
         };
+        /** MessageContext */
+        MessageContext: {
+            input: components["schemas"]["TaskMessage"];
+            /** History */
+            history: components["schemas"]["TaskMessage"][];
+            /** Request Sha256 */
+            request_sha256: string;
+        };
         /** ContextSnapshot */
         ContextSnapshot: {
+            /** @default null */
+            message_context: components["schemas"]["MessageContext"] | null;
             mission: components["schemas"]["Mission"];
             run: components["schemas"]["RunSnapshot"];
             /** Sources */
@@ -2860,6 +3068,184 @@ export interface operations {
             };
         };
     };
+    task_messages_api_workspaces__workspace_id__missions__mission_id__messages_get: {
+        parameters: {
+            query?: {
+                before_message_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskMessagePage"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    send_task_message_api_workspaces__workspace_id__missions__mission_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskMessageSendRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskMessageSendReceipt"];
+                };
+            };
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskMessageSendReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    task_runs_api_workspaces__workspace_id__missions__mission_id__runs_get: {
+        parameters: {
+            query?: {
+                before_run_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskRunPage"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
     start_run_api_workspaces__workspace_id__missions__mission_id__runs_post: {
         parameters: {
             query?: never;
@@ -2901,6 +3287,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    message_submission_api_workspaces__workspace_id__missions__mission_id__message_submissions__client_request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                client_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskMessageSendReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */

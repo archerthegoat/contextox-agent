@@ -166,6 +166,7 @@ def _insert_run(
 def _downgrade_empty_v3_to_exact_v2(db_path: Path) -> None:
     with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("DROP TABLE IF EXISTS run_message_inputs")
         connection.execute("DROP INDEX runs_one_active_per_mission")
         connection.execute("DROP TABLE definition_drafts")
         connection.execute("DROP TABLE runs")
@@ -220,14 +221,14 @@ def _raw_source_path(store: WorkspaceStore, revision) -> Path:
 
 
 class StoreTests(unittest.TestCase):
-    def test_initializes_exact_v3_schema_and_persists_after_restart(self) -> None:
+    def test_initializes_exact_v4_schema_and_persists_after_restart(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
             data_dir = Path(directory)
             store = WorkspaceStore.open(data_dir)
             self.assertEqual(store.db_path, data_dir.resolve() / "contextox.sqlite3")
             self.assertEqual(store.list_workspaces(), [])
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
                 self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "delete")
                 self.assertEqual(
                     [
@@ -236,7 +237,7 @@ class StoreTests(unittest.TestCase):
                             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                         ).fetchall()
                     ],
-                    sorted(EXPECTED_V2_TABLE_NAMES),
+                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs"]),
                 )
                 self.assertTrue(store_module._schema_is_exact(connection))
                 active_indexes = connection.execute(
@@ -1213,7 +1214,7 @@ class StoreTests(unittest.TestCase):
             with self.assertRaises(WorkspaceStoreUnavailableError):
                 WorkspaceStore.open(corrupt)
 
-            for label, version in (("older", 0), ("newer", 4)):
+            for label, version in (("older", 0), ("newer", 5)):
                 with self.subTest(label=label):
                     candidate = root / label
                     candidate.mkdir()
@@ -1275,7 +1276,7 @@ class StoreTests(unittest.TestCase):
             ),
             (
                 "newer",
-                lambda connection: connection.execute("PRAGMA user_version=4"),
+                lambda connection: connection.execute("PRAGMA user_version=5"),
             ),
         )
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
@@ -1387,7 +1388,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(v3_diagnostics["workspace_store_schema"].status, "ready")
             self.assertEqual(v3_diagnostics["workspace_store_open"].actual, "open")
             self.assertEqual(v3_diagnostics["workspace_store_readwrite"].status, "ready")
-            self.assertEqual(v3_diagnostics["workspace_store_schema"].actual, "user_version=3")
+            self.assertEqual(v3_diagnostics["workspace_store_schema"].actual, "user_version=4")
 
     def test_open_and_doctor_fail_closed_for_foreign_key_violations(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
@@ -1531,7 +1532,7 @@ class StoreTests(unittest.TestCase):
                     store.list_workspaces()
             self.assertFalse(db_path.exists())
 
-    def test_failed_initialization_rolls_back_partial_v3_schema(self) -> None:
+    def test_failed_initialization_rolls_back_partial_v4_schema(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
             db_path = Path(directory) / "contextox.sqlite3"
 
@@ -1553,7 +1554,7 @@ class StoreTests(unittest.TestCase):
 
             initialized = WorkspaceStore.open(directory)
             with closing(sqlite3.connect(initialized.db_path)) as connection, connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
                 self.assertTrue(store_module._schema_is_exact(connection))
 
     def test_source_persistence_supports_four_media_types_restart_and_isolation(self) -> None:
@@ -1814,6 +1815,6 @@ class StoreTests(unittest.TestCase):
                             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                         ).fetchall()
                     ],
-                    sorted(EXPECTED_V2_TABLE_NAMES),
+                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs"]),
                 )
             self.assertEqual(len(store.list_workspaces()), 1)

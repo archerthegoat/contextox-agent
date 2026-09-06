@@ -1003,7 +1003,161 @@ class ContextPacketManifest(ContextManifestInput):
         return self
 
 
+class SourceExcerptMessageReference(ContextOxModel):
+    kind: Literal["source_excerpt"]
+    evidence_ref: EvidenceRef
+
+
+class SourceColumnMessageReference(ContextOxModel):
+    kind: Literal["source_column"]
+    source_ref: SourceIdentity
+    table_id: Annotated[StrictStr, Field(max_length=4096)]
+    column_name: Key
+
+
+class DraftFieldMessageReference(ContextOxModel):
+    kind: Literal["draft_field"]
+    draft_id: ID
+    draft_version: PositiveInt
+    draft_sha256: Hash
+    field_key: Key
+
+
+class DraftRelationshipMessageReference(ContextOxModel):
+    kind: Literal["draft_relationship"]
+    draft_id: ID
+    draft_version: PositiveInt
+    draft_sha256: Hash
+    relationship_key: Key
+
+
+MessageReference = Annotated[
+    SourceExcerptMessageReference | SourceColumnMessageReference |
+    DraftFieldMessageReference | DraftRelationshipMessageReference,
+    Field(discriminator="kind"),
+]
+
+
+def _unique_message_references(refs: list[MessageReference]) -> list[MessageReference]:
+    if len({canonical_sha256(ref) for ref in refs}) != len(refs):
+        raise ValueError("duplicate message reference")
+    return refs
+
+
+MessageReferences = Annotated[
+    list[MessageReference], Field(max_length=8), AfterValidator(_unique_message_references)
+]
+
+
+class TaskMessage(ContextOxModel):
+    workspace_id: ID
+    mission_id: ID
+    message_id: ID
+    created_at: UTC
+    role: Literal["user", "assistant"]
+    content: Annotated[StrictStr, Field(min_length=1, max_length=32768)]
+    original_attempt_id: ID | None
+    run_id: ID | None
+    references: MessageReferences
+    sha256: Hash
+
+    @model_validator(mode="after")
+    def validate_message_hash(self) -> TaskMessage:
+        payload = self.model_dump(mode="json", include={
+            "workspace_id", "mission_id", "message_id", "role", "content", "references"
+        })
+        if canonical_sha256(payload) != self.sha256:
+            raise ValueError("message hash mismatch")
+        for ref in self.references:
+            source = ref.evidence_ref if ref.kind == "source_excerpt" else (
+                ref.source_ref if ref.kind == "source_column" else None
+            )
+            if source is not None and source.workspace_id != self.workspace_id:
+                raise ValueError("message reference workspace mismatch")
+        return self
+
+
+class MessageHistoryRef(ContextOxModel):
+    message_id: ID
+    sha256: Hash
+
+
+class TaskMessagePage(ContextOxModel):
+    items: list[TaskMessage]
+    next_before_message_id: ID | None
+
+
+class TaskRunSummary(ContextOxModel):
+    workspace_id: ID
+    mission_id: ID
+    run_id: ID
+    created_at: UTC
+    started_at: UTC | None
+    finished_at: UTC | None
+    status: RunStatus
+    last_sequence: Count
+    error_code: Key | None
+    input_message_id: ID | None
+    has_final_output: StrictBool
+
+
+class TaskRunPage(ContextOxModel):
+    items: list[TaskRunSummary]
+    next_before_run_id: ID | None
+
+
+class TaskMessageSendRequest(ContextOxModel):
+    kind: Literal["message"]
+    client_request_id: ID
+    expected_state_version: PositiveInt
+    content: Annotated[StrictStr, Field(min_length=1, max_length=4096)]
+    references: MessageReferences
+    history_messages: list[MessageHistoryRef] = Field(max_length=4)
+    source_refs: list[SourceIdentity] = Field(max_length=8)
+    provider_send_confirmed: StrictBool
+
+    @model_validator(mode="after")
+    def validate_send(self) -> TaskMessageSendRequest:
+        if not self.content.strip() or self.provider_send_confirmed is not True:
+            raise ValueError("explicit nonblank message and provider confirmation required")
+        if len({ref.message_id for ref in self.history_messages}) != len(self.history_messages):
+            raise ValueError("duplicate history message")
+        if len({canonical_sha256(ref) for ref in self.source_refs}) != len(self.source_refs):
+            raise ValueError("duplicate source")
+        return self
+
+
+class TaskMessageSendReceipt(ContextOxModel):
+    input_message: TaskMessage
+    run: RunSnapshot
+
+    @model_validator(mode="after")
+    def validate_parent(self) -> TaskMessageSendReceipt:
+        if (self.input_message.workspace_id, self.input_message.mission_id,
+            self.input_message.run_id, self.input_message.role) != (
+            self.run.workspace_id, self.run.mission_id, self.run.run_id, "user"
+        ):
+            raise ValueError("message receipt identity mismatch")
+        return self
+
+
+class MessageContext(ContextOxModel):
+    input: TaskMessage
+    history: list[TaskMessage] = Field(max_length=4)
+    request_sha256: Hash
+
+    @model_validator(mode="after")
+    def validate_parent(self) -> MessageContext:
+        if self.input.role != "user" or any(
+            (m.workspace_id, m.mission_id) != (self.input.workspace_id, self.input.mission_id)
+            for m in self.history
+        ):
+            raise ValueError("message context identity mismatch")
+        return self
+
+
 class ContextSnapshot(ContextOxModel):
+    message_context: MessageContext | None = None
     mission: Mission
     run: RunSnapshot
     sources: list[SourceRevision]
@@ -1014,6 +1168,11 @@ class ContextSnapshot(ContextOxModel):
     def validate_nested_scope(self) -> ContextSnapshot:
         mission = self.mission
         run = self.run
+        if self.message_context is not None and (
+            self.message_context.input.workspace_id, self.message_context.input.mission_id,
+            self.message_context.input.run_id
+        ) != (mission.workspace_id, mission.mission_id, run.run_id):
+            raise ValueError("message context Run mismatch")
         if run.workspace_id != mission.workspace_id or run.mission_id != mission.mission_id:
             raise ValueError("ContextSnapshot Run identity does not match the Mission")
         if any(source.workspace_id != mission.workspace_id for source in self.sources):

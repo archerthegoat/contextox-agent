@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import RFC_4122, UUID, uuid4
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Request, Query, Response
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from contextox import __version__
 from contextox.models import (
+    TaskMessagePage, TaskRunPage, TaskMessageSendRequest, TaskMessageSendReceipt,
     AgentRunResult,
     CancelRunRequest,
     ClarificationRequest,
@@ -510,11 +511,17 @@ def _workspace_store_error_response(
         )
     if isinstance(error, Path2StateError):
         not_found = error.code in {
-            "mission_draft_attempt_not_found", "mission_not_found", "run_not_found"
+            "mission_draft_attempt_not_found", "mission_not_found", "run_not_found",
+            "message_not_found", "message_submission_not_found"
         }
         return _workspace_error(
             request,
-            status_code=404 if not_found else 422,
+            status_code=(404 if not_found else 503 if error.code in {
+                "task_dialogue_not_implemented", "message_page_item_too_large"
+            } else 409 if error.code in {"message_reference_stale",
+                "message_context_scope_mismatch", "task_waiting_for_review",
+                "previous_outcome_unresolved"} or (error.code in {"state_conflict", "run_already_active"} and
+                (request.url.path.endswith("/messages") or "/message-submissions/" in request.url.path)) else 422),
             code=error.code,
             message=(
                 "The requested Path 2 object was not found."
@@ -743,6 +750,7 @@ def create_app(
     *,
     static_dir: Path | None = None,
     data_dir: Path | None = None,
+    migrate_dialogue: bool = False,
 ) -> FastAPI:
     resolved_static_dir = (static_dir or DEFAULT_STATIC_DIR).resolve()
 
@@ -773,7 +781,7 @@ def create_app(
     app.state.path2_runtime = None
     if app.state.data_dir is not None:
         try:
-            app.state.workspace_store = WorkspaceStore.open(app.state.data_dir)
+            app.state.workspace_store = WorkspaceStore.open(app.state.data_dir, migrate_dialogue=migrate_dialogue)
         except WorkspaceStoreError as error:
             app.state.workspace_store_error = error
         except (OSError, sqlite3.Error):
@@ -1238,6 +1246,51 @@ def create_app(
             return _workspace_store(app).get_mission_snapshot(
                 workspace_id, mission_id
             )
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/messages",
+             response_model=TaskMessagePage, tags=["missions"],
+             responses={404: {"model": WorkspaceError}, 422: {"model": WorkspaceError}, 503: {"model": WorkspaceError}})
+    def task_messages(workspace_id: str, mission_id: str, request: Request,
+                      before_message_id: str | None = None, limit: int = Query(20, ge=1, le=50)):
+        try:
+            return _workspace_store(app).list_task_messages(workspace_id, mission_id, before_message_id, limit)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/runs",
+             response_model=TaskRunPage, tags=["runs"],
+             responses={404: {"model": WorkspaceError}, 422: {"model": WorkspaceError}, 503: {"model": WorkspaceError}})
+    def task_runs(workspace_id: str, mission_id: str, request: Request,
+                  before_run_id: str | None = None, limit: int = Query(20, ge=1, le=50)):
+        try:
+            return _workspace_store(app).list_task_runs(workspace_id, mission_id, before_run_id, limit)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.post("/api/workspaces/{workspace_id}/missions/{mission_id}/messages",
+              response_model=TaskMessageSendReceipt, status_code=202, tags=["missions"],
+              responses={200: {"model": TaskMessageSendReceipt}, 404: {"model": WorkspaceError},
+                         409: {"model": WorkspaceError}, 422: {"model": WorkspaceError}, 503: {"model": WorkspaceError}})
+    def send_task_message(workspace_id: str, mission_id: str, payload: TaskMessageSendRequest,
+                          request: Request, response: Response):
+        try:
+            receipt, created = _path2_runtime(app).send_task_message(workspace_id, mission_id, payload)
+            response.status_code = 202 if created else 200
+            return receipt
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/message-submissions/{client_request_id}",
+             response_model=TaskMessageSendReceipt, tags=["missions"],
+             responses={404: {"model": WorkspaceError}, 409: {"model": WorkspaceError}, 503: {"model": WorkspaceError}})
+    def message_submission(workspace_id: str, mission_id: str, client_request_id: str, request: Request):
+        try:
+            receipt = _workspace_store(app).message_submission(workspace_id, mission_id, client_request_id)
+            if receipt is None:
+                raise Path2StateError("message_submission_not_found")
+            return receipt
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
 

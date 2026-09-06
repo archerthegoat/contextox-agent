@@ -220,6 +220,7 @@ class PersistedAttemptTests(unittest.TestCase):
             import contextox.store as store_module
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
                 connection.execute("PRAGMA foreign_keys=ON")
+                connection.execute("DROP TABLE IF EXISTS run_message_inputs")
                 connection.execute("DROP INDEX runs_one_active_per_mission")
                 connection.execute("DROP TABLE definition_drafts")
                 connection.execute("DROP TABLE runs")
@@ -705,9 +706,9 @@ class PersistedRunTests(unittest.TestCase):
             ):
                 with closing(sqlite3.connect(store.db_path)) as connection, connection:
                     connection.execute(
-                        "UPDATE provider_receipts SET tool_schema_sha256=? "
+                        "UPDATE provider_receipts SET tool_schema_sha256=?, p0_sha256=? "
                         "WHERE workspace_id=? AND mission_id=? AND run_id=?",
-                        (known_hash, workspace_id, mission.mission_id, run.run_id),
+                        (known_hash, "6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", workspace_id, mission.mission_id, run.run_id),
                     )
                 self.assertEqual(
                     restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),

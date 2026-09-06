@@ -10,6 +10,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import logging
 import multiprocessing
 import os
 import select
@@ -122,8 +123,17 @@ class ProviderCancelledError(ProviderError):
 
 
 class ProviderContextBudgetError(ProviderError):
-    def __init__(self) -> None:
+    def __init__(self, *, stage: str | None = None, used_bytes: int | None = None,
+                 limit_bytes: int | None = None) -> None:
         super().__init__("context_budget_exceeded", "blocked")
+        allowed = {"request_body", "http_headers", "sse_wire", "stream_content", "agent_public_output", "ipc_result"}
+        self.stage = stage if stage in allowed else None
+        self.used_bytes = min(max(used_bytes, 0), 2**31 - 1) if type(used_bytes) is int else None
+        self.limit_bytes = min(max(limit_bytes, 0), 2**31 - 1) if type(limit_bytes) is int else None
+        if self.stage is not None:
+            logging.getLogger(__name__).warning("budget_boundary stage=%s used_bytes=%s limit_bytes=%s",
+                self.stage, self.used_bytes, self.limit_bytes)
+
 
 
 @dataclass(frozen=True)
@@ -499,7 +509,7 @@ def _bounded_text_append(
         return
     value_bytes = len(value.encode("utf-8"))
     if used_bytes[0] + value_bytes > max_bytes:
-        raise ProviderContextBudgetError()
+        raise ProviderContextBudgetError(stage="stream_content", used_bytes=used_bytes[0] + value_bytes, limit_bytes=max_bytes)
     parts.append(value)
     used_bytes[0] += value_bytes
 
@@ -515,7 +525,7 @@ def _bounded_text_concat(
         return current
     value_bytes = len(value.encode("utf-8"))
     if used_bytes[0] + value_bytes > max_bytes:
-        raise ProviderContextBudgetError()
+        raise ProviderContextBudgetError(stage="stream_content", used_bytes=used_bytes[0] + value_bytes, limit_bytes=max_bytes)
     used_bytes[0] += value_bytes
     return current + value
 
@@ -786,7 +796,7 @@ def _read_response_headers(
                 raise ProviderUnavailableError()
             chunk = bytes(chunk_buffer[:count])
             if len(received) + len(chunk) > max_context_bytes:
-                raise ProviderContextBudgetError()
+                raise ProviderContextBudgetError(stage="http_headers", used_bytes=len(received) + len(chunk), limit_bytes=max_context_bytes)
             received.extend(chunk)
             marker = received.find(b"\r\n\r\n", block_start)
 
@@ -1010,7 +1020,7 @@ class DeepSeekProvider:
         except (TypeError, ValueError) as exc:
             raise ProviderProtocolError() from exc
         if len(body) > max_context_bytes:
-            raise ProviderContextBudgetError()
+            raise ProviderContextBudgetError(stage="request_body", used_bytes=len(body), limit_bytes=max_context_bytes)
 
         request = Request(
             DEEPSEEK_ENDPOINT,
@@ -1153,7 +1163,7 @@ class DeepSeekProvider:
         try:
             packet_bytes = _encode_bounded_json(packet, max_bytes=IPC_MAX_MESSAGE_BYTES)
         except _ProviderIpcProtocolError as exc:
-            raise ProviderContextBudgetError() from exc
+            raise ProviderContextBudgetError(stage="request_body", used_bytes=IPC_MAX_MESSAGE_BYTES + 1, limit_bytes=IPC_MAX_MESSAGE_BYTES) from exc
 
         started_at = time.monotonic()
         total_ms = timeouts.total_ms
@@ -1488,7 +1498,7 @@ class DeepSeekProvider:
         if isinstance(response, (bytes, bytearray)):
             raw = bytes(response)
             if len(raw) > max_context_bytes:
-                raise ProviderContextBudgetError()
+                raise ProviderContextBudgetError(stage="stream_content", used_bytes=len(raw), limit_bytes=max_context_bytes)
         else:
             body = bytearray()
             saw_data = False
@@ -1513,7 +1523,7 @@ class DeepSeekProvider:
                 if not chunk_bytes:
                     break
                 if len(body) + len(chunk_bytes) > max_context_bytes:
-                    raise ProviderContextBudgetError()
+                    raise ProviderContextBudgetError(stage="stream_content", used_bytes=len(body) + len(chunk_bytes), limit_bytes=max_context_bytes)
                 body.extend(chunk_bytes)
                 saw_data = True
                 last_data_at = time.monotonic()
@@ -1871,7 +1881,7 @@ class DeepSeekProvider:
             else:
                 raise ProviderProtocolError()
             if max_bytes is not None and received_bytes + chunk_bytes > max_bytes:
-                raise ProviderContextBudgetError()
+                raise ProviderContextBudgetError(stage="sse_wire", used_bytes=received_bytes + chunk_bytes, limit_bytes=max_bytes)
             received_bytes += chunk_bytes
             buffer += text
             while "\n" in buffer:
@@ -1927,6 +1937,7 @@ class _ChildIpc:
             self._send_conn.send_bytes(raw)
         except _ProviderIpcProtocolError as exc:
             if event_type == "result":
+                ProviderContextBudgetError(stage="ipc_result", used_bytes=IPC_MAX_MESSAGE_BYTES + 1, limit_bytes=IPC_MAX_MESSAGE_BYTES)
                 self.send("error", code="context_budget_exceeded", usage=None)
                 return
             raise _ChildIpcSendError() from exc

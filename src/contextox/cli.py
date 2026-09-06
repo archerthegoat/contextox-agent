@@ -177,6 +177,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     start = commands.add_parser("start", help="Start the local Workbench server.")
+    start.add_argument("--migrate-task-dialogue", action="store_true", help="Explicitly back up and migrate a stopped v3 store to task dialogue v4.")
     start.add_argument("--host", default="127.0.0.1")
     start.add_argument("--port", type=int, default=8787)
     start.add_argument("--data-dir", type=Path, default=Path.cwd() / ".contextox-agent")
@@ -219,7 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         import uvicorn
 
         uvicorn.run(
-            create_app(static_dir=args.static_dir.resolve(), data_dir=data_dir),
+            create_app(static_dir=args.static_dir.resolve(), data_dir=data_dir, migrate_dialogue=args.migrate_task_dialogue),
             host="127.0.0.1",
             port=args.port,
             log_level="info",

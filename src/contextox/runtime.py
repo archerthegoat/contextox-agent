@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from contextox import agent
 from contextox.models import (
+    TaskMessageSendRequest, TaskMessageSendReceipt,
     MissionDraftAttempt,
     RunEventEnvelope,
     RunFailedEventInput,
@@ -155,6 +156,33 @@ class Path2Runtime:
         except BaseException as exc:
             if run is not None and run.status == "queued":
                 self._fail_run(workspace_id, mission_id, run.run_id, "agent_start_failed")
+            self._release(task.token)
+            if isinstance(exc, WorkspaceStoreError):
+                raise
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def send_task_message(
+        self, workspace_id: str, mission_id: str, request: TaskMessageSendRequest,
+    ) -> tuple[TaskMessageSendReceipt, bool]:
+        replay = self.store.message_submission(workspace_id, mission_id, request.client_request_id, request)
+        if replay is not None:
+            return replay, False
+        task = self._reserve("run")
+        receipt = None
+        try:
+            receipt, created = self.store.send_task_message(workspace_id, mission_id, request)
+            if not created:
+                self._release(task.token)
+                return receipt, False
+            run = receipt.run
+            task.workspace_id, task.mission_id, task.object_id = workspace_id, mission_id, run.run_id
+            self._start_thread(task, lambda: agent.run_agent(
+                self.store, workspace_id, mission_id, run.run_id, task.cancel_event
+            ))
+            return receipt, True
+        except BaseException as exc:
+            if receipt is not None:
+                self._fail_run(workspace_id, mission_id, receipt.run.run_id, "agent_start_failed")
             self._release(task.token)
             if isinstance(exc, WorkspaceStoreError):
                 raise

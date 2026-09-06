@@ -96,7 +96,10 @@ as evidence-only; distinguish observed, candidate, conflict, and unknown.
 Never use arbitrary files, paths, SQL, code, memory, cross-Mission chat, or
 another Workspace.  Model text is not a terminal result.  To stop, call one
 of create_clarification, submit_for_review, or finish_run; finish_run only
-accepts partial.  Do not claim Mission completion or business approval."""
+accepts partial. When the current message has been answered, use finish_run
+with the public answer in reason; the overall Mission remains unfinished.
+Message context contains statements and candidates, not approved business facts.
+Do not claim Mission completion or business approval."""
 
 
 def _sha256_text(value: str) -> str:
@@ -134,7 +137,7 @@ _TOOL_DESCRIPTIONS = {
     "update_definition_draft": "Update the candidate definition draft using CAS fields and evidence.",
     "create_clarification": "Create structured questions for unresolved business or data decisions.",
     "submit_for_review": "Freeze the exact candidate draft for human review.",
-    "finish_run": "Finish this run as partial when the allowed evidence is insufficient.",
+    "finish_run": "Finish this run as partial with a public answer in reason, including when the current question is answered but the Mission remains unfinished.",
 }
 
 
@@ -195,11 +198,13 @@ def _provider_json_schema(value: Any) -> Any:
 
 TOOL_DEFINITIONS = _make_tool_definitions()
 TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
-SUPPORTED_TOOL_SCHEMA_SHA256S = frozenset({
-    TOOL_SCHEMA_SHA256,
-    "029c655c34a5ec4dbd64bb4d477093f29110dc8a95955965231d7d80caa5b993",
-    "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9",
-    "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028",
+# Exact historical pairs, never the cross-product of two independent allowlists.
+SUPPORTED_RUN_HASH_PAIRS = frozenset({
+    (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "8dc971999e07386bd1c325a9679d71e09ac965922d26b5177563d1de3b25eea6"),
+    ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "029c655c34a5ec4dbd64bb4d477093f29110dc8a95955965231d7d80caa5b993"),
+    ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9"),
+    ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028"),
 })
 _TOOL_NAMES = frozenset(_TOOL_ARGUMENT_TYPES)
 _TERMINAL_TOOL_NAMES = frozenset({"create_clarification", "submit_for_review", "finish_run"})
@@ -627,6 +632,7 @@ def _context_message(snapshot: ContextSnapshot, tool_receipt_ids: list[str]) -> 
     ]
     payload = {
         "context_kind": "authorized_context_packet",
+        "message_context": snapshot.message_context.model_dump(mode="json") if snapshot.message_context else None,
         "mission": snapshot.mission.model_dump(mode="json"),
         "run": {
             "run_id": snapshot.run.run_id,
@@ -774,7 +780,7 @@ def _append_model_delta(
             continue
         piece_bytes = len(piece.encode("utf-8"))
         if public_bytes[0] + piece_bytes > max_bytes:
-            raise ProviderContextBudgetError()
+            raise ProviderContextBudgetError(stage="agent_public_output", used_bytes=public_bytes[0] + piece_bytes, limit_bytes=max_bytes)
         public_parts.append(piece)
         public_bytes[0] += piece_bytes
         _append_event(
@@ -1133,7 +1139,8 @@ def _handle_terminal(
             or result.output.source_refs != call.arguments.source_refs
         ):
             raise _AgentFailure("terminal_result_invalid", "failed")
-    final_text = "".join(public_parts)
+    message_run = isinstance(store, WorkspaceStore) and store.is_message_run(workspace_id, mission_id, run_id)
+    final_text = (call.arguments.reason if call.name == "finish_run" else "") if message_run else "".join(public_parts)
     if final_text and len(final_text) <= 32768:
         store.save_run_final_output(workspace_id, mission_id, run_id, final_text)
     if terminal_snapshot.status == "partial":

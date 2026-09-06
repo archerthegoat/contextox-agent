@@ -640,6 +640,8 @@ class ApiTests(unittest.TestCase):
                     "/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}/confirm",
                     "/api/workspaces/{workspace_id}/missions",
                     "/api/workspaces/{workspace_id}/missions/{mission_id}",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/messages",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/message-submissions/{client_request_id}",
                     "/api/workspaces/{workspace_id}/missions/{mission_id}/runs",
                     "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}",
                     "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/cancel",
