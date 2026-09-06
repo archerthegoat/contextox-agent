@@ -200,7 +200,7 @@ export function missionSnapshotIsMonotonic(
   if (current.latest_run && !next.latest_run) {
     return false;
   }
-  if (current.latest_run && next.latest_run && !runSnapshotIsMonotonic(current.latest_run, next.latest_run)) {
+  if (current.latest_run && next.latest_run && current.latest_run.run_id === next.latest_run.run_id && !runSnapshotIsMonotonic(current.latest_run, next.latest_run)) {
     return false;
   }
   if (current.clarifications.some((currentClarification) =>
@@ -1123,6 +1123,8 @@ export type Path2WorkbenchState = {
   missionSnapshot: MissionSnapshot | null;
   missionSnapshotState: CollectionState<Mission>;
   refreshMission: () => Promise<void>;
+  selectMission: (missionId: string) => Promise<void>;
+  adoptDialogueRun: (run: RunSnapshot) => void;
   attempt: MissionDraftAttempt | null;
   attemptAction: ActionState;
   submitAttempt: (request: MissionDraftAttemptCreateRequest) => Promise<MissionDraftAttempt | null>;
@@ -1911,10 +1913,6 @@ export function usePath2Workbench(
     [selectedSourceIds, sourceState.items],
   );
   selectedSourceRefsRef.current = selectedSourceRefs;
-
-  const selectSource = useCallback((revisionId: string) => {
-    setSelectedSourceIds((current) => (current.includes(revisionId) ? current : [...current, revisionId]));
-  }, []);
 
   const toggleSource = useCallback((revisionId: string) => {
     setSelectedSourceIds((current) =>
@@ -2817,6 +2815,41 @@ export function usePath2Workbench(
     workspaceId,
   ]);
 
+  const selectSource = useCallback((revisionId: string) => {
+    // Browsing a source never changes the explicit Provider send selection.
+    void loadSourceArtifact(revisionId);
+  }, [loadSourceArtifact]);
+
+  const adoptDialogueRun = useCallback((run: RunSnapshot) => {
+    if (run.workspace_id !== workspaceIdRef.current || run.mission_id !== selectedMissionIdRef.current) return;
+    if (!runSnapshotMatchesIdentity(run, {workspaceId: run.workspace_id, missionId: run.mission_id, runId: run.run_id})) return;
+    if (runRef.current?.run_id !== run.run_id) {
+      storeRunSnapshot(null);
+      replaceRunEventState(createRunEventState());
+    }
+    preferredRunIdRef.current = run.run_id;
+    preferredRunMissionIdRef.current = run.mission_id;
+    writePath2ObjectPointers(run.workspace_id, {runId: run.run_id, runMissionId: run.mission_id});
+    applyRunSnapshot(run, {workspaceId: run.workspace_id, missionId: run.mission_id, runId: run.run_id});
+    void loadMissionSnapshot(run.workspace_id, run.mission_id);
+  }, [applyRunSnapshot, loadMissionSnapshot, replaceRunEventState, storeRunSnapshot]);
+
+  const selectMission = useCallback(async (missionId: string) => {
+    const ws = workspaceIdRef.current;
+    if (!ws || !missionState.items.some(m => m.mission_id === missionId && m.workspace_id === ws)) return;
+    selectedMissionIdRef.current = missionId;
+    setSelectedMissionId(missionId);
+    setSelectedSourceIds([]);
+    preferredRunIdRef.current = null;
+    preferredRunMissionIdRef.current = null;
+    storeMissionSnapshot(null);
+    storeRunSnapshot(null);
+    storeAttempt(null);
+    replaceRunEventState(createRunEventState());
+    writePath2ObjectPointers(ws, {missionId, attemptId: null, runId: null, runMissionId: null});
+    await loadMissionSnapshot(ws, missionId);
+  }, [missionState.items, loadMissionSnapshot, storeMissionSnapshot, storeRunSnapshot, storeAttempt, replaceRunEventState]);
+
   const dataBelongsToWorkspace = loadedWorkspaceId === workspaceId;
   const visibleSourceState = dataBelongsToWorkspace
     ? sourceState
@@ -2877,6 +2910,7 @@ export function usePath2Workbench(
     missionSnapshot: visibleMissionSnapshot,
     missionSnapshotState: visibleMissionSnapshotState,
     refreshMission: refreshMissions,
+    selectMission, adoptDialogueRun,
     attempt: visibleAttempt,
     attemptAction: visibleAttemptAction,
     submitAttempt,
@@ -2921,6 +2955,9 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "失败",
   cancelled: "已取消",
   pending: "待处理",
+  candidate: "候选",
+  observed: "已观测",
+  conflict: "存在冲突",
   denied: "已拒绝",
   unknown: "未知",
   connected: "已连接",
@@ -3479,11 +3516,12 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
       <div className="path2-panel-intro">
         <div>
           <span className="path2-eyebrow">MISSION FLOW</span>
-          <h2>任务草案与 Agent Run</h2>
-          <p>草案生成、精确确认和显式 Start 是三个可回读的领域边界；当前服务接缝不可用时只显示真实阻塞。</p>
+          <h2>{mission ? mission.title : "定义一个新任务"}</h2>
+          <p>{mission ? "在右侧提问，查看中间的资料、关系与字段。分析结果保持候选，业务含义由你裁决。" : "描述目标和范围，确认任务后即可开始对话分析。"}</p>
         </div>
         <StatusPill status={state.missionState.status}>{statusLabel(state.missionState.status)}</StatusPill>
       </div>
+      <details open={!mission} className="task-create-details"><summary>{mission ? "创建另一个任务" : "任务目标与来源"}</summary>
       <form className="path2-card" onSubmit={handleSubmit}>
         <div className="path2-card-heading">
           <div>
@@ -3566,6 +3604,7 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
           ) : null}
         </div>
       ) : null}
+      </details>
       {mission ? (
         <div className="path2-card">
           <div className="path2-card-heading">
@@ -3578,7 +3617,9 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
           <p className="path2-body-copy">{mission.goal}</p>
           <div className="path2-attempt-meta"><span>state version <code>{mission.state_version}</code></span><span>mission <code>{mission.mission_id}</code></span></div>
           {state.missionSnapshotState.issue ? <IssueCallout issue={state.missionSnapshotState.issue} title="Mission 快照不可用" /> : null}
-          <SourceSelection state={state} idPrefix="run-source" title="本次 Run 使用的来源" description="Run 外发确认只覆盖下面显式选择的 SourceRevision 和该任务所需上下文。" />
+          <SourceSelection state={state} idPrefix="run-source" title="对话使用的资料" description="选择本轮可用资料；右侧发送时会显示这一范围。" />
+          <p className="path2-body-copy">在右侧发送具体问题，开始或继续分析。</p>
+          <details><summary>原有整任务分析入口</summary>
           <label className="path2-confirmation-row">
             <input type="checkbox" checked={runSendConfirmed} onChange={(event) => setRunSendConfirmed(event.target.checked)} />
             <span>我明确确认本次 Run 可以向 Provider 发送所选来源及任务上下文。</span>
@@ -3593,14 +3634,15 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
           <button type="button" className="path2-primary-button" disabled={!canStart || state.runAction.status === "submitting" || state.runAction.status === "unknown"} onClick={() => void state.startRun(runSendConfirmed)}>
             {state.runAction.status === "submitting" ? "Start 中…" : "明确开始 Run"}
           </button>
-          <p className="path2-boundary-note">Start 是独立领域动作；未知结果不会自动重发。Agent 自然停止也不表示 Mission completed。</p>
+          <p className="path2-boundary-note">未知结果不会自动重发；分析结束不表示任务业务完成。</p>
+          </details>
         </div>
       ) : state.missionState.issue ? (
         <IssueCallout issue={state.missionState.issue} title="Mission 列表不可用" />
       ) : state.missionState.status === "empty" ? (
         <div className="path2-inline-empty">当前 Workspace 尚无 Mission。请先生成并确认任务草案。</div>
       ) : null}
-      <RunStatusCard state={state} />
+      <details className="path2-card"><summary>执行状态与诊断详情</summary><RunStatusCard state={state} /></details>
     </div>
   );
 }
@@ -3851,7 +3893,7 @@ function eventSummary(event: RunEventEnvelope): string {
   }
 }
 
-export function Path2AgentContent({ state }: { state: Path2WorkbenchState }) {
+export function Path2RunDetails({ state }: { state: Path2WorkbenchState }) {
   const run = state.runSnapshot;
   return (
     <div className="path2-agent-state">
@@ -3886,7 +3928,6 @@ export function Path2AgentContent({ state }: { state: Path2WorkbenchState }) {
           {run.final_output ? <div className="path2-agent-output"><strong>持久化公开摘要</strong><p>{run.final_output}</p></div> : null}
         </>
       ) : null}
-      <div className="path2-agent-composer-note">当前版本不提供自由对话输入；不会把问题或隐藏推理写入 Run。</div>
     </div>
   );
 }

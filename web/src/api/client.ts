@@ -291,3 +291,35 @@ export function runEventsUrl(
     missionId,
   )}/runs/${encodeURIComponent(runId)}/events`;
 }
+
+export async function fetchTaskMessages(workspaceId: string, missionId: string, before?: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/missions/{mission_id}/messages", {
+    params: { path: { workspace_id: workspaceId, mission_id: missionId }, query: { before_message_id: before } },
+  });
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+
+export async function fetchTaskRuns(workspaceId: string, missionId: string, before?: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/missions/{mission_id}/runs", {
+    params: { path: { workspace_id: workspaceId, mission_id: missionId }, query: { before_run_id: before } },
+  });
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+
+export async function sendTaskMessage(workspaceId: string, missionId: string, body: components["schemas"]["TaskMessageSendRequest"]) {
+  const result = await client.POST("/api/workspaces/{workspace_id}/missions/{mission_id}/messages", {
+    params: { path: { workspace_id: workspaceId, mission_id: missionId } }, body,
+  });
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+
+export async function fetchMessageSubmission(workspaceId: string, missionId: string, requestId: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/missions/{mission_id}/message-submissions/{client_request_id}", {
+    params: { path: { workspace_id: workspaceId, mission_id: missionId, client_request_id: requestId } },
+  });
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}

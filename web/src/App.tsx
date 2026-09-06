@@ -2,7 +2,6 @@ import { useEffect, useState, type CSSProperties } from "react";
 
 import { fetchWorkbench, type WorkbenchSnapshot, type Workspace } from "./api/client";
 import {
-  Path2AgentContent,
   Path2Workbench,
   statusLabel,
   sourceIdentityEquals,
@@ -12,6 +11,7 @@ import {
   type Path2WorkbenchState,
   type SourceRevision,
 } from "./Path2Workbench";
+import { useTaskDialogue, ReferenceInspector, TaskConversation, TaskExecutionHistory, type DialogueState, type MessageReference } from "./TaskDialogue";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
 import "./styles.css";
 
@@ -120,16 +120,17 @@ export function navigationForAreas(areas: WorkbenchSnapshot["areas"]): AreaNavig
 }
 
 export const AGENT_COPY = {
-  title: "Agent Run",
-  mode: "公开状态",
-  composerPlaceholder: "当前版本不提供自由对话输入",
+  title: "数契 Agent",
+  mode: "任务对话",
+  composerPlaceholder: "围绕当前任务继续提问",
 } as const;
 
-export type ObjectTabId = "mission" | "relationship";
+export type ObjectTabId = "mission" | "relationship" | "history";
 
 export const OBJECT_TABS: Array<{ id: ObjectTabId; label: string }> = [
-  { id: "mission", label: "高潜客户定义" },
-  { id: "relationship", label: "客户粒度关系" },
+  { id: "mission", label: "任务工作区" },
+  { id: "relationship", label: "关系与字段" },
+  { id: "history", label: "执行历史" },
 ];
 
 const BRAND_MARK_URL = new URL("./assets/contextox-mark.png", import.meta.url).href;
@@ -224,31 +225,19 @@ function ObjectPane({
   selectedObject,
   onObjectSelect,
   sources,
-  missionTitle,
+  missionTitle, path2,
 }: {
   selectedObject: MissionObjectId;
   onObjectSelect: (objectId: MissionObjectId) => void;
   sources: SourceRevision[];
-  missionTitle: string;
+  missionTitle: string; path2: Path2WorkbenchState;
 }) {
   return (
     <aside className="object-pane" aria-label="任务对象">
       <div className="object-pane-header">
         <h2>任务</h2>
-        <div className="object-pane-actions">
-          <button type="button" aria-label="新增对象">
-            新增
-          </button>
-          <button type="button" aria-label="筛选对象">
-            筛选
-          </button>
-        </div>
       </div>
-
-      <label className="object-search">
-        <span className="sr-only">搜索任务内容</span>
-        <input type="search" placeholder="搜索任务内容" />
-      </label>
+      <label className="task-selector">当前任务<select aria-label="切换任务" value={path2.selectedMission?.mission_id ?? ""} onChange={e => void path2.selectMission(e.target.value)}><option value="" disabled>请选择任务</option>{path2.missionState.items.map(m => <option value={m.mission_id} key={m.mission_id}>{m.title}</option>)}</select></label>
 
       <div className="object-tree" role="tree" aria-label="任务对象树">
         <button
@@ -340,44 +329,6 @@ function OpenObjectTabs({ activeTab, onTabChange }: { activeTab: ObjectTabId; on
   );
 }
 
-type GraphNodeId =
-  | "customers-source"
-  | "orders-source"
-  | "customers-entity"
-  | "orders-entity"
-  | "conflict"
-  | "confirmation"
-  | "contract";
-
-type GraphNodeProps = {
-  id: GraphNodeId;
-  icon: IconName;
-  kind: string;
-  title: string;
-  subtitle: string;
-  className: string;
-  selected: boolean;
-  onSelect: (id: GraphNodeProps["id"]) => void;
-};
-
-function GraphNode({ id, icon, kind, title, subtitle, className, selected, onSelect }: GraphNodeProps) {
-  return (
-    <button
-      type="button"
-      className={`graph-node ${className}${selected ? " graph-node-selected" : ""}`}
-      aria-pressed={selected}
-      aria-label={`${title}，${kind}，${subtitle}`}
-      onClick={() => onSelect(id)}
-    >
-      <span className="graph-node-icon">
-        <Icon name={icon} />
-      </span>
-      <span className="graph-node-title">{title}</span>
-      <span className="graph-node-subtitle">{subtitle}</span>
-    </button>
-  );
-}
-
 type RelationshipCandidate = DefinitionDraft["relationships"][number];
 
 export type RelationshipGraphResolution = {
@@ -415,199 +366,46 @@ export function relationshipGraphResolution(
   };
 }
 
-function GraphWires({
-  relationshipPresent,
-  leftSourceMatched,
-  rightSourceMatched,
-  completeRelationship,
-}: {
-  relationshipPresent: boolean;
-  leftSourceMatched: boolean;
-  rightSourceMatched: boolean;
-  completeRelationship: boolean;
+function RelationshipGraph({ path2, onReference }: {
+  path2: Path2WorkbenchState; onReference: (ref: MessageReference) => void;
 }) {
-  return (
-    <div className="graph-wires" aria-hidden="true">
-      {relationshipPresent && leftSourceMatched && rightSourceMatched ? <span className="wire wire-source-branch" /> : null}
-      {relationshipPresent && leftSourceMatched && rightSourceMatched ? <span className="wire wire-source-top" /> : null}
-      {relationshipPresent && leftSourceMatched && rightSourceMatched ? <span className="wire wire-source-middle" /> : null}
-      {relationshipPresent && leftSourceMatched ? (
-        <span className={`wire ${rightSourceMatched ? "wire-source-to-entity-top" : "wire-source-direct-top"}`} />
-      ) : null}
-      {relationshipPresent && rightSourceMatched ? (
-        <span className={`wire ${leftSourceMatched ? "wire-source-to-entity-bottom" : "wire-source-direct-bottom"}`} />
-      ) : null}
-      {completeRelationship ? <span className="wire wire-entity-join" /> : null}
-      {completeRelationship ? <span className="wire wire-entity-top" /> : null}
-      {completeRelationship ? <span className="wire wire-entity-bottom" /> : null}
-      {completeRelationship ? <span className="wire wire-conflict" /> : null}
-      {completeRelationship ? <span className="wire wire-confirmation" /> : null}
-      {completeRelationship ? <span className="wire wire-contract" /> : null}
-    </div>
-  );
-}
-
-function RelationshipGraph({
-  selectedNode,
-  onNodeSelect,
-  path2,
-}: {
-  selectedNode: GraphNodeProps["id"];
-  onNodeSelect: (id: GraphNodeProps["id"]) => void;
-  path2: Path2WorkbenchState;
-}) {
-  const relationshipCandidates = path2.latestDraft?.relationships ?? [];
-  const sources = path2.sourceState.items;
-  const hasWorkspace = Boolean(path2.workspaceId);
-  const graphResolution = relationshipGraphResolution(relationshipCandidates, sources);
-  const relationship = graphResolution.relationship;
-
-  const sourceForTable = (table: RelationshipCandidate["left"]) => {
-    const match = sources.find((source) => sourceIdentityEquals(
-      table.source_ref,
-      sourceIdentityFromRevision(source),
-    ));
-    return {
-      title: match
-        ? `${match.original_name}${table.table_id ? ` · ${table.table_id}` : ""}`
-        : hasWorkspace
-          ? "关系来源待核验"
-          : "来源待导入",
-      subtitle: match ? "候选绑定的 SourceRevision" : "来源身份未匹配",
-    };
-  };
-  const leftSource = relationship ? sourceForTable(relationship.left) : null;
-  const rightSource = relationship ? sourceForTable(relationship.right) : null;
-  const sourceTitles = [
-    leftSource?.title ?? (hasWorkspace ? "尚无关系候选" : "来源待导入"),
-    rightSource?.title ?? (hasWorkspace ? "尚无关系候选" : "来源待导入"),
-  ];
-  const sourceSubtitles = [
-    leftSource?.subtitle ?? (hasWorkspace ? "等待 DefinitionDraft" : "请选择 Workspace"),
-    rightSource?.subtitle ?? (hasWorkspace ? "等待 DefinitionDraft" : "请选择 Workspace"),
-  ];
-  const leftEntity = relationship?.left.table_id || (hasWorkspace ? "实体待识别" : "实体待加载");
-  const rightEntity = relationship?.right.table_id || (hasWorkspace ? "实体待识别" : "实体待加载");
-  const relationshipStatus = relationship ? statusLabel(relationship.evidence_status) : "尚无关系草案";
-  const hasSourceMismatch = Boolean(relationship && !graphResolution.completeRelationship);
-  const canvasNote = !hasWorkspace
-    ? "请先选择 Workspace；下方仅保留关系区域的空状态框架。"
-    : path2.missionSnapshotState.issue
-      ? "当前 Mission/Run 快照不可用；关系图不显示预置业务结果。"
-      : path2.missionSnapshotState.status === "loading"
-        ? "正在回读当前 Workspace 的 DefinitionDraft…"
-        : relationship
-          ? `仅展示当前 Workspace 快照中的关系候选；共 ${relationshipCandidates.length} 条，语义仍待确认。`
-          : "当前 Workspace 尚无 DefinitionDraft；不显示预置业务结果。";
-  return (
-    <section className="relationship-canvas" aria-label="客户粒度关系图，可横向滚动查看" tabIndex={0}>
-      <div className="relationship-canvas-inner">
-        <div className="relationship-canvas-note" role="status">{canvasNote}</div>
-        <GraphWires
-          relationshipPresent={Boolean(relationship)}
-          leftSourceMatched={graphResolution.leftSourceMatched}
-          rightSourceMatched={graphResolution.rightSourceMatched}
-          completeRelationship={graphResolution.completeRelationship}
-        />
-        <GraphNode
-          id="customers-source"
-          icon="file-text"
-          kind="来源"
-          title={sourceTitles[0]}
-          subtitle={sourceSubtitles[0]}
-          className="graph-source graph-source-top"
-          selected={selectedNode === "customers-source"}
-          onSelect={onNodeSelect}
-        />
-        <GraphNode
-          id="orders-source"
-          icon="file-text"
-          kind="来源"
-          title={sourceTitles[1]}
-          subtitle={sourceSubtitles[1]}
-          className="graph-source graph-source-middle"
-          selected={selectedNode === "orders-source"}
-          onSelect={onNodeSelect}
-        />
-        <GraphNode
-          id="customers-entity"
-          icon="cube"
-          kind="实体"
-          title={leftEntity}
-          subtitle={relationship ? "左侧表" : "尚未识别"}
-          className="graph-entity graph-entity-top"
-          selected={selectedNode === "customers-entity"}
-          onSelect={onNodeSelect}
-        />
-        <GraphNode
-          id="orders-entity"
-          icon="cube"
-          kind="实体"
-          title={rightEntity}
-          subtitle={relationship ? "右侧表" : "尚未识别"}
-          className="graph-entity graph-entity-bottom"
-          selected={selectedNode === "orders-entity"}
-          onSelect={onNodeSelect}
-        />
-        <GraphNode
-          id="conflict"
-          icon="mix"
-          kind="定义冲突"
-          title={relationship?.evidence_status === "conflict" ? "关系冲突" : "定义检查"}
-          subtitle={hasSourceMismatch ? "来源身份未匹配" : relationshipStatus}
-          className="graph-conflict"
-          selected={selectedNode === "conflict"}
-          onSelect={onNodeSelect}
-        />
-        <GraphNode
-          id="confirmation"
-          icon="question-mark-circled"
-          kind="用户确认"
-          title="待用户确认"
-          subtitle={path2.latestDraft?.unresolved_items.length ? `${path2.latestDraft.unresolved_items.length} 个未决项` : "尚无问题"}
-          className="graph-confirmation"
-          selected={selectedNode === "confirmation"}
-          onSelect={onNodeSelect}
-        />
-        <GraphNode
-          id="contract"
-          icon="file-text"
-          kind="业务契约"
-          title="定义草案"
-          subtitle={path2.latestDraft ? `version ${path2.latestDraft.version}` : "尚未生成"}
-          className="graph-contract"
-          selected={selectedNode === "contract"}
-          onSelect={onNodeSelect}
-        />
-        {relationshipCandidates.length > 0 ? (
-          <div className="relationship-candidate-strip" aria-label="关系候选列表">
-            <strong>关系候选</strong>
-            {relationshipCandidates.map((candidate) => (
-              <div className="relationship-candidate-item" key={candidate.relationship_key}>
-                <code>{candidate.relationship_key}</code>
-                <span>{candidate.left.table_id || "根表"} ↔ {candidate.right.table_id || "根表"}</span>
-                <span className="relationship-candidate-status">{statusLabel(candidate.evidence_status)}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    </section>
-  );
+  const draft = path2.latestDraft;
+  const sourceName = (table: RelationshipCandidate["left"]) => path2.sourceState.items.find(s =>
+    sourceIdentityEquals(table.source_ref, sourceIdentityFromRevision(s)))?.original_name ?? "来源未匹配";
+  return <section className="task-results" aria-label="客户粒度关系图">
+    <p>关系连接来自当前任务草案。基数是观测或候选结果，业务含义仍待确认。</p>
+    {!draft?.relationships.length && <div className="conversation-empty"><h3>尚无关系候选</h3><p>导入资料并分析后，在这里查看实际表与表之间的关系。</p></div>}
+    {draft?.relationships.map((relationship, index) => <article className="relationship-result" key={relationship.relationship_key}>
+      <header><h3>{relationship.relationship_key}</h3><span>{statusLabel(relationship.evidence_status)} · v{draft.version}</span></header>
+      <svg viewBox="0 0 620 145" role="img" aria-label={`${relationship.left.table_id || "根表"} 与 ${relationship.right.table_id || "根表"}，${relationship.observed_cardinality}`}>
+        <title>{relationship.relationship_key}</title>
+        <defs><marker id={`relation-arrow-${index}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="currentColor"/></marker></defs>
+        {relationshipGraphResolution([relationship], path2.sourceState.items).completeRelationship && <path d="M225 70 H395" fill="none" stroke="currentColor" strokeWidth="2" markerEnd={`url(#relation-arrow-${index})`} strokeDasharray={relationship.evidence_status === "observed" ? undefined : "6 5"}/>}
+        <rect x="5" y="30" width="220" height="85" rx="10"/><rect x="395" y="30" width="220" height="85" rx="10"/>
+        <text x="20" y="58">{sourceName(relationship.left).slice(0, 25)}</text><text x="20" y="86">{(relationship.left.table_id || "根表").slice(0, 25)}</text>
+        <text x="410" y="58">{sourceName(relationship.right).slice(0, 25)}</text><text x="410" y="86">{(relationship.right.table_id || "根表").slice(0, 25)}</text>
+        <text x="310" y="52" textAnchor="middle">{({one_to_one:"1 : 1",one_to_many:"1 : N",many_to_one:"N : 1",many_to_many:"N : N",unknown:"待核验"} as Record<string,string>)[relationship.observed_cardinality] ?? relationship.observed_cardinality}</text>
+      </svg>
+      <p><strong>连接规则：</strong>{relationship.join_rule ?? "待定义"}</p><p><strong>数据粒度：</strong>{relationship.grain_notes ?? "待确认"}</p>
+      {relationship.risks.map((risk, i) => <p className="relationship-risk" key={i}>{risk}</p>)}
+      <button onClick={() => onReference({kind:"draft_relationship", draft_id:draft.draft_id, draft_version:draft.version, draft_sha256:draft.sha256, relationship_key:relationship.relationship_key})}>引用关系继续讨论</button>
+      {relationship.source_refs.map((ref, i) => <button className="reference-chip" key={i} onClick={() => onReference({kind:"source_excerpt", evidence_ref:ref})}>引用证据 {i + 1}</button>)}
+    </article>)}
+    {draft && <section aria-label="字段定义"><h2>字段定义</h2>{draft.fields.map(field => <article className="field-result" key={field.field_key}><h3>{field.name}</h3><p>{field.meaning ?? "含义待确认"}</p><p>{field.rule ?? "计算规则待确认"}</p><button onClick={() => onReference({kind:"draft_field", draft_id:draft.draft_id, draft_version:draft.version, draft_sha256:draft.sha256, field_key:field.field_key})}>引用字段继续讨论</button></article>)}</section>}
+  </section>;
 }
 function CenterPanel({
   activeArea,
   activeTab,
   onTabChange,
-  selectedNode,
-  onNodeSelect,
+  dialogue, onReference, focusedReference, clearReference,
   path2,
 }: {
   activeArea: AreaId;
   activeTab: ObjectTabId;
   onTabChange: (tab: ObjectTabId) => void;
-  selectedNode: GraphNodeId;
-  onNodeSelect: (id: GraphNodeId) => void;
+  dialogue: DialogueState; onReference: (ref: MessageReference) => void;
+  focusedReference: MessageReference | null; clearReference: () => void;
   path2: Path2WorkbenchState;
 }) {
   const content = AREA_CONTENT[activeArea];
@@ -618,17 +416,10 @@ function CenterPanel({
       <OpenObjectTabs activeTab={activeTab} onTabChange={onTabChange} />
       <div className="center-toolbar">
         <h1 id="center-title">{title}</h1>
-        <div className="canvas-tools" aria-label="画布工具">
-          <button type="button">适应画布</button>
-          <button type="button">缩放</button>
-          <button type="button">布局</button>
-          <button type="button">更多</button>
-        </div>
       </div>
-      {activeArea === "mission" && activeTab === "relationship" ? (
+      {focusedReference ? <ReferenceInspector state={path2} reference={focusedReference} onClose={clearReference} onQuote={onReference}/> : activeTab === "history" ? <TaskExecutionHistory state={path2} dialogue={dialogue} /> : activeArea === "mission" && activeTab === "relationship" ? (
         <RelationshipGraph
-          selectedNode={selectedNode}
-          onNodeSelect={onNodeSelect}
+          onReference={onReference}
           path2={path2}
         />
       ) : (
@@ -638,13 +429,13 @@ function CenterPanel({
   );
 }
 
-function AgentPanel({ path2 }: { path2: Path2WorkbenchState }) {
+function AgentPanel({ path2, dialogue, onReference, onHistory, onResults }: { path2: Path2WorkbenchState; dialogue: DialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onResults: () => void }) {
   const [isOpen, setIsOpen] = useState(true);
   const contentId = "agent-panel-content";
-  const toggleLabel = isOpen ? "折叠 Agent Run" : "展开 Agent Run";
+  const toggleLabel = isOpen ? "折叠任务对话" : "展开任务对话";
 
   return (
-    <aside className={`agent-panel${isOpen ? "" : " agent-panel-collapsed"}`} aria-label="Agent Run 公开状态">
+    <aside className={`agent-panel${isOpen ? "" : " agent-panel-collapsed"}`} aria-label="任务 Agent 对话">
       <div className="agent-panel-header">
         <div className="agent-panel-title-group">
           <h2>{AGENT_COPY.title}</h2>
@@ -664,7 +455,7 @@ function AgentPanel({ path2 }: { path2: Path2WorkbenchState }) {
         </button>
       </div>
       <div id={contentId} className="agent-panel-content" hidden={!isOpen}>
-        <Path2AgentContent state={path2} />
+        <TaskConversation state={path2} dialogue={dialogue} onReference={onReference} onHistory={onHistory} onResults={onResults} />
       </div>
     </aside>
   );
@@ -672,14 +463,25 @@ function AgentPanel({ path2 }: { path2: Path2WorkbenchState }) {
 
 function App() {
   const [activeArea, setActiveArea] = useState<AreaId>("mission");
-  const [activeTab, setActiveTab] = useState<ObjectTabId>("relationship");
+  const [activeTab, setActiveTab] = useState<ObjectTabId>("mission");
   const [selectedObject, setSelectedObject] = useState<MissionObjectId>("relationship");
-  const [selectedNode, setSelectedNode] = useState<GraphNodeId>("conflict");
   const [apiState, setApiState] = useState<ApiState>("loading");
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const path2 = usePath2Workbench(selectedWorkspace);
+  const dialogue = useTaskDialogue(path2);
+  const [focusedReference, setFocusedReference] = useState<MessageReference | null>(null);
+  useEffect(() => {setFocusedReference(null);}, [path2.workspaceId, path2.selectedMission?.mission_id]);
+  const [mobileView, setMobileView] = useState<"result" | "agent">("result");
+  const [navOpen, setNavOpen] = useState(false);
+  const addReference = (ref: MessageReference) => { dialogue.addReference(ref); setMobileView("agent"); };
+  const inspectReference = (ref: MessageReference) => {
+    setFocusedReference(ref);
+    setMobileView("result");
+    if (ref.kind === "draft_field" || ref.kind === "draft_relationship") { setActiveArea("mission"); setActiveTab("relationship"); }
+    else { setActiveArea("sources"); setActiveTab("mission"); }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -718,8 +520,11 @@ function App() {
   const areas = snapshot ? navigationForAreas(snapshot.areas) : AREA_NAV;
   const handleObjectSelect = (objectId: MissionObjectId) => {
     setSelectedObject(objectId);
+    setFocusedReference(null);
+    setNavOpen(false);
     if (objectId.startsWith("source:")) {
       setActiveArea("sources");
+      setActiveTab("mission");
       path2.selectSource(objectId.slice("source:".length));
     } else if (objectId === "relationship") {
       setActiveArea("mission");
@@ -741,23 +546,27 @@ function App() {
         selectedWorkspace={selectedWorkspace}
         onWorkspaceChange={setSelectedWorkspace}
       />
-      <div className="workspace-layout">
-        <PrimaryRail areas={areas} activeArea={activeArea} onAreaChange={setActiveArea} />
+      <div className="compact-controls"><button aria-expanded={navOpen} onClick={() => setNavOpen(!navOpen)}>任务与资料</button><button aria-pressed={mobileView === "result"} onClick={() => setMobileView("result")}>结果</button><button aria-pressed={mobileView === "agent"} onClick={() => setMobileView("agent")}>Agent 对话</button></div>
+      <div className={`workspace-layout mobile-${mobileView}${navOpen ? " nav-open" : ""}`}>
+        <PrimaryRail areas={areas} activeArea={activeArea} onAreaChange={area => {setActiveArea(area); setActiveTab("mission"); setFocusedReference(null); setNavOpen(false);}} />
         <ObjectPane
           selectedObject={selectedObject}
           onObjectSelect={handleObjectSelect}
           sources={path2.sourceState.items}
-          missionTitle={path2.selectedMission?.title ?? "当前 Mission"}
+          missionTitle={path2.selectedMission?.title ?? "当前任务"}
+          path2={path2}
         />
         <CenterPanel
           activeArea={activeArea}
           activeTab={activeTab}
-          onTabChange={setActiveTab}
-          selectedNode={selectedNode}
-          onNodeSelect={setSelectedNode}
+          onTabChange={tab => {setActiveArea("mission"); setActiveTab(tab); setFocusedReference(null);}}
+          focusedReference={focusedReference}
+          clearReference={() => setFocusedReference(null)}
+          dialogue={dialogue}
+          onReference={addReference}
           path2={path2}
         />
-        <AgentPanel path2={path2} />
+        <AgentPanel path2={path2} dialogue={dialogue} onReference={inspectReference} onHistory={() => {setFocusedReference(null); setActiveTab("history"); setMobileView("result");}} onResults={() => {setFocusedReference(null); setActiveArea("mission"); setActiveTab("relationship"); setMobileView("result");}} />
       </div>
     </div>
   );

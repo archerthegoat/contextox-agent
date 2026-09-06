@@ -33,7 +33,7 @@
 html,
 body,
 #root {
-  min-width: 1100px;
+  min-width: 0;
   min-height: 100vh;
   margin: 0;
   background: var(--canvas);
@@ -93,7 +93,7 @@ a:focus-visible {
 
 .app-shell {
   width: 100%;
-  min-width: 1100px;
+  min-width: 0;
   height: 100vh;
   overflow: hidden;
   background: var(--paper);
@@ -870,323 +870,52 @@ a:focus-visible {
   gap: 20px;
 }
 
-.relationship-canvas {
-  position: relative;
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-  background: #ffffff;
-}
 
-.relationship-canvas-inner {
-  position: relative;
-  width: 100%;
-  min-width: 720px;
-  height: 100%;
-  min-height: 540px;
-  --node-radius: 26px;
-  --source-center-x: 11%;
-  --source-branch-x: 20.8%;
-  --entity-center-x: 35.5%;
-  --entity-join-x: 46.8%;
-  --conflict-center-x: 57.8%;
-  --confirmation-center-x: 73.8%;
-  --contract-center-x: 89.05%;
-}
 
-.relationship-canvas:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -3px;
-}
 
-.graph-wires {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
 
-.wire {
-  position: absolute;
-  display: block;
-  z-index: 1;
-  background: #8c99aa;
-}
 
-.wire-source-branch {
-  top: calc(7% + var(--node-radius));
-  bottom: calc(63% - var(--node-radius));
-  left: var(--source-branch-x);
-  width: 1px;
-}
 
-.wire-source-top,
-.wire-source-middle,
-.wire-source-bottom {
-  left: calc(var(--source-center-x) + var(--node-radius));
-  width: calc(var(--source-branch-x) - var(--source-center-x) - var(--node-radius));
-  height: 1px;
-}
 
-.wire-source-top {
-  top: calc(7% + var(--node-radius));
-}
 
-.wire-source-middle {
-  top: calc(37% + var(--node-radius));
-}
 
-.wire-source-bottom {
-  top: calc(67% + var(--node-radius));
-}
 
-.wire-source-to-entity-top,
-.wire-source-to-entity-bottom {
-  left: var(--source-branch-x);
-  width: calc(var(--entity-center-x) - var(--source-branch-x) - var(--node-radius));
-  height: 1px;
-}
 
-.wire-source-direct-top,
-.wire-source-direct-bottom {
-  left: calc(var(--source-center-x) + var(--node-radius));
-  width: calc(var(--entity-center-x) - var(--source-center-x) - var(--node-radius) - var(--node-radius));
-  height: 1px;
-}
 
-.wire-source-to-entity-top {
-  top: calc(20% + var(--node-radius));
-}
 
-.wire-source-to-entity-bottom {
-  top: calc(56% + var(--node-radius));
-}
 
-.wire-source-direct-top {
-  top: calc(20% + var(--node-radius));
-}
 
-.wire-source-direct-bottom {
-  top: calc(56% + var(--node-radius));
-}
 
-.wire-entity-join {
-  top: calc(20% + var(--node-radius));
-  bottom: calc(44% - var(--node-radius));
-  left: var(--entity-join-x);
-  width: 1px;
-}
 
-.wire-entity-top,
-.wire-entity-bottom {
-  left: calc(var(--entity-center-x) + var(--node-radius));
-  width: calc(var(--entity-join-x) - var(--entity-center-x) - var(--node-radius));
-  height: 1px;
-}
 
-.wire-entity-top {
-  top: calc(20% + var(--node-radius));
-}
 
-.wire-entity-bottom {
-  top: calc(56% + var(--node-radius));
-}
 
-.wire-conflict,
-.wire-confirmation,
-.wire-contract {
-  height: 1px;
-}
 
-.wire-conflict {
-  top: calc(37% + var(--node-radius));
-  left: var(--entity-join-x);
-  width: calc(var(--conflict-center-x) - var(--entity-join-x) - var(--node-radius));
-}
 
-.wire-confirmation {
-  top: calc(37% + var(--node-radius));
-  left: calc(var(--conflict-center-x) + var(--node-radius));
-  width: calc(var(--confirmation-center-x) - var(--conflict-center-x) - var(--node-radius) - var(--node-radius));
-}
 
-.wire-contract {
-  top: calc(37% + var(--node-radius));
-  left: calc(var(--confirmation-center-x) + var(--node-radius));
-  width: calc(var(--contract-center-x) - var(--confirmation-center-x) - var(--node-radius) - var(--node-radius));
-}
 
-.wire-source-to-entity-top::after,
-.wire-source-to-entity-bottom::after,
-.wire-source-direct-top::after,
-.wire-source-direct-bottom::after,
-.wire-conflict::after,
-.wire-confirmation::after,
-.wire-contract::after {
-  position: absolute;
-  top: -3px;
-  right: -1px;
-  width: 5px;
-  height: 5px;
-  border-top: 1px solid #8c99aa;
-  border-right: 1px solid #8c99aa;
-  background: transparent;
-  content: "";
-  transform: rotate(45deg);
-}
 
-.graph-node {
-  position: absolute;
-  z-index: 2;
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  box-shadow: none;
-  color: var(--ink);
-  text-align: center;
-}
 
-.graph-node:hover,
-.graph-node-selected {
-  background: transparent;
-  box-shadow: none;
-}
 
-.graph-source {
-  left: var(--source-center-x);
-  width: 128px;
-  transform: translateX(-50%);
-}
 
-.graph-source-top {
-  top: 7%;
-}
 
-.graph-source-middle {
-  top: 37%;
-}
 
-.graph-source-bottom {
-  top: 67%;
-}
 
-.graph-entity {
-  left: var(--entity-center-x);
-  width: 112px;
-  transform: translateX(-50%);
-}
 
-.graph-entity-top {
-  top: 20%;
-}
 
-.graph-entity-bottom {
-  top: 56%;
-}
 
-.graph-conflict {
-  top: 37%;
-  left: var(--conflict-center-x);
-  width: 112px;
-  transform: translateX(-50%);
-}
 
-.graph-confirmation {
-  top: 37%;
-  left: var(--confirmation-center-x);
-  width: 122px;
-  transform: translateX(-50%);
-}
 
-.graph-contract {
-  top: 37%;
-  left: var(--contract-center-x);
-  width: 136px;
-  transform: translateX(-50%);
-}
 
-.graph-node-icon {
-  display: inline-flex;
-  width: 52px;
-  height: 52px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--blue-line);
-  border-radius: 50%;
-  background: var(--blue-soft);
-  color: var(--blue);
-  transition: border-color 130ms ease, box-shadow 130ms ease, background-color 130ms ease;
-}
 
-.graph-node-icon .icon {
-  width: 23px;
-  height: 23px;
-}
 
-.graph-node:hover .graph-node-icon,
-.graph-node-selected .graph-node-icon {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(22, 116, 243, 0.12);
-}
 
-.graph-node-title {
-  display: block;
-  width: 100%;
-  min-height: 2.6em;
-  margin-top: 9px;
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
 
-.graph-node-selected .graph-node-title {
-  color: var(--blue);
-}
 
-.graph-node-subtitle {
-  display: block;
-  width: 100%;
-  margin-top: 2px;
-  overflow-wrap: anywhere;
-  color: #5d6f86;
-  font-size: 11px;
-  line-height: 1.3;
-  white-space: normal;
-}
 
-.graph-source .graph-node-icon,
-.graph-entity .graph-node-icon {
-  border-color: var(--blue-line);
-  background: var(--blue-soft);
-  color: var(--blue);
-}
 
-.graph-conflict .graph-node-icon {
-  border-color: #f2c8cc;
-  background: var(--conflict-soft);
-  color: var(--conflict);
-}
 
-.graph-confirmation .graph-node-icon {
-  border-color: #f1d6a3;
-  background: var(--confirm-soft);
-  color: var(--confirm);
-}
 
-.graph-contract .graph-node-icon {
-  border-color: #d9caff;
-  background: var(--contract-soft);
-  color: var(--contract);
-}
 
 .module-surface {
   display: flex;
@@ -1227,68 +956,11 @@ a:focus-visible {
   font-size: 12px;
 }
 
-.relationship-canvas-note {
-  position: absolute;
-  z-index: 4;
-  top: 18px;
-  left: 25px;
-  max-width: min(440px, calc(100% - 50px));
-  padding: 8px 11px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.94);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-}
 
-.relationship-candidate-strip {
-  position: absolute;
-  z-index: 4;
-  right: 25px;
-  bottom: 18px;
-  left: 25px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 5px 12px;
-  max-height: 112px;
-  overflow: auto;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.95);
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.4;
-}
 
-.relationship-candidate-strip > strong {
-  grid-column: 1 / -1;
-  color: var(--ink);
-  font-size: 10px;
-}
 
-.relationship-candidate-item {
-  display: grid;
-  grid-template-columns: minmax(130px, 0.8fr) minmax(0, 1fr) auto;
-  gap: 10px;
-  min-width: 0;
-  padding-top: 4px;
-  border-top: 1px solid var(--line);
-}
 
-.relationship-candidate-item code,
-.relationship-candidate-item span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.relationship-candidate-status {
-  color: var(--blue);
-  font-weight: 700;
-}
 
 .path2-surface {
   display: flex;
@@ -2506,3 +2178,75 @@ a:focus-visible {
     gap: 12px;
   }
 }
+
+/* Task dialogue keeps execution detail in the result workspace. */
+:root { --rail-width: 76px; --object-width: 230px; --agent-width: 360px; }
+.compact-controls { display: none; }
+.task-selector { display: grid; gap: 8px; padding: 16px; color: var(--muted); font-size: 13px; }
+.task-selector select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line); background: white; border-radius: 6px; }
+.task-conversation { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.agent-panel-content { padding: 0; overflow: hidden; flex: 1; min-height: 0; }
+.conversation-context { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.conversation-context strong { flex-basis: 100%; font-size: 14px; }
+.conversation-context button { margin-left: auto; background: none; color: var(--blue); }
+.conversation-messages { flex: 1; min-height: 100px; overflow-y: auto; padding: 20px 16px; }
+.conversation-message { margin-bottom: 22px; overflow-wrap: anywhere; }
+.conversation-message header { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.conversation-message p { white-space: pre-wrap; line-height: 1.65; font-size: 14px; margin: 8px 0; }
+.message-user { padding: 12px 14px; background: #f1f5fa; border-radius: 12px; }
+.conversation-activity { border-left: 2px solid #bad3f5; padding: 2px 12px; font-size: 12px; line-height: 1.6; color: #51647d; }
+.conversation-activity button, .reference-chip { background: var(--blue-soft); border: 1px solid var(--blue-line); border-radius: 5px; color: #285f9e; padding: 5px 8px; margin: 4px 4px 4px 0; font-size: 12px; }
+.conversation-composer { padding: 12px 16px 16px; border-top: 1px solid var(--line); background: white; max-height: 55%; overflow: auto; }
+.conversation-composer textarea { width: 100%; resize: vertical; min-height: 76px; max-height: 180px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 8px; margin-top: 10px; line-height: 1.5; }
+.conversation-composer details { font-size: 12px; color: var(--muted); }
+.conversation-composer details[open] { max-height: 160px; overflow-y: auto; }
+.conversation-composer summary { cursor: pointer; }
+.history-choice { display: flex; align-items: start; gap: 6px; padding: 6px 0; }
+.history-choice span { overflow-wrap: anywhere; }
+.composer-scope { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.conversation-error { color: #9e402f; padding: 8px; background: #fff4ee; font-size: 12px; }
+.conversation-error button { display: block; margin-top: 6px; background: none; text-decoration: underline; }
+.conversation-empty { padding: 28px; color: var(--muted); line-height: 1.7; }
+.task-history, .task-results { padding: 24px; overflow: auto; min-height: 0; flex: 1; }
+.task-history > p, .task-results > p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.history-run { display: grid; gap: 8px; width: 100%; padding: 16px; margin: 12px 0; text-align: left; border: 1px solid var(--line); background: white; border-radius: 8px; }
+.history-run span, .history-run small { color: var(--muted); font-size: 12px; }
+.history-detail p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.history-detail pre { max-width: 100%; overflow: auto; background: #f4f7fa; font-size: 12px; }
+.relationship-result, .field-result { border: 1px solid var(--line); border-radius: 10px; background: white; padding: 16px; margin: 16px 0; }
+.relationship-result header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.relationship-result h3, .field-result h3 { font-size: 15px; margin: 4px 0; overflow-wrap: anywhere; }
+.relationship-result header span, .relationship-result p, .field-result p { font-size: 12px; line-height: 1.6; }
+.relationship-result svg { width: 100%; height: auto; min-width: 300px; color: #7198c8; margin-top: 8px; }
+.relationship-result svg rect { fill: #f7faff; stroke: #c6d9f0; }
+.relationship-result svg text { fill: #263e5c; font-size: 12px; }
+.relationship-result > button, .field-result > button { padding: 8px; background: #edf4fd; color: #285f9e; border-radius: 5px; font-size: 12px; }
+.relationship-risk { color: #9a5e23; }
+@media (max-width: 1200px) and (min-width: 901px) {
+  :root { --object-width: 180px; --agent-width: 330px; --rail-width: 64px; }
+  .primary-nav-label { font-size: 11px; }
+}
+@media (max-width: 900px) {
+  :root { --topbar-height: 62px; }
+  .topbar { grid-template-columns: 1fr 1fr; min-width: 0; }
+  .topbar-actions { display: none; }
+  .brand { padding-left: 14px; }
+  .compact-controls { display: flex; align-items: center; gap: 8px; height: 44px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+  .compact-controls button { padding: 6px 12px; border-radius: 5px; background: #edf2f8; font-size: 12px; }
+  .compact-controls button[aria-pressed="true"] { background: #ddecff; color: #1d65bd; }
+  .workspace-layout { display: flex; position: relative; height: calc(100dvh - var(--topbar-height) - 44px); }
+  .primary-rail, .object-pane { display: none; }
+  .nav-open .primary-rail { display: block; position: absolute; top: 0; left: 0; bottom: 0; width: 76px; z-index: 12; background: white; box-shadow: 4px 0 10px #1c2b3d18; }
+  .nav-open .object-pane { display: block; position: absolute; top: 0; left: 76px; bottom: 0; width: min(270px, calc(100vw - 76px)); z-index: 11; background: white; box-shadow: 4px 0 10px #1c2b3d18; }
+  .center-panel, .agent-panel { width: 100%; flex: 1; }
+  .mobile-result .agent-panel, .mobile-agent .center-panel { display: none; }
+  .center-tabs { overflow-x: auto; flex-shrink: 0; }
+  .path2-definition-grid { grid-template-columns: 1fr; }
+  .task-results, .task-history { padding: 16px; }
+}
+
+.reference-inspector { overflow: auto; padding: 24px; flex: 1; min-height: 0; }
+.reference-inspector header { display: flex; justify-content: space-between; gap: 8px; }
+.reference-inspector h2 { font-size: 16px; }
+.reference-inspector pre { overflow: auto; padding: 16px; border-radius: 8px; background: #f1f5fa; line-height: 1.6; font-size: 12px; }
+.reference-inspector button { padding: 8px; background: #edf4fd; border-radius: 5px; }

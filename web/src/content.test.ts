@@ -87,8 +87,9 @@ describe("ContextOx Workbench v3 content boundaries", () => {
 
   it("keeps the Mission relationship shell free of synthetic result data", () => {
     expect(OBJECT_TABS).toEqual([
-      { id: "mission", label: "高潜客户定义" },
-      { id: "relationship", label: "客户粒度关系" },
+      { id: "mission", label: "任务工作区" },
+      { id: "relationship", label: "关系与字段" },
+      { id: "history", label: "执行历史" },
     ]);
   });
 
@@ -123,13 +124,13 @@ describe("ContextOx Workbench v3 content boundaries", () => {
     const markup = renderToStaticMarkup(createElement(App));
 
     expect(markup.match(/primary-nav-icon/g)).toHaveLength(4);
-    expect(markup.match(/graph-node-icon/g)).toHaveLength(7);
-    expect(markup).toContain("tabindex=\"0\"");
-    expect(markup).toContain("aria-label=\"客户粒度关系图，可横向滚动查看\"");
+    expect(markup).not.toContain("graph-node-icon");
+    expect(markup).toContain("执行历史");
+    expect(markup).toContain("aria-label=\"任务 Agent 对话\"");
     expect(markup).toContain("aria-expanded=\"true\"");
     expect(markup).toContain("aria-controls=\"agent-panel-content\"");
     expect(markup).toContain("data-path2-state=\"workbench\"");
-    expect(markup).toContain("来源待导入");
+    expect(markup).toContain("围绕一个任务展开分析");
     expect(markup).not.toContain("尚无第三方关系来源");
     expect(markup).not.toContain("客户主数据.csv");
     expect(markup).not.toContain("演示模式");
@@ -166,11 +167,11 @@ describe("ContextOx Workbench v3 content boundaries", () => {
     });
   });
 
-  it("labels the Agent panel as public Run state without a free composer", () => {
+  it("labels the Agent panel as task dialogue", () => {
     expect(AGENT_COPY).toEqual({
-      title: "Agent Run",
-      mode: "公开状态",
-      composerPlaceholder: "当前版本不提供自由对话输入",
+      title: "数契 Agent",
+      mode: "任务对话",
+      composerPlaceholder: "围绕当前任务继续提问",
     });
   });
 });

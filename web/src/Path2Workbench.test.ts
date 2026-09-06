@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ApiRequestError } from "./api/client";
 import {
-  Path2AgentContent,
+  Path2RunDetails,
   Path2Workbench,
   acceptRunEvent,
   buildConfirmRequest,
@@ -209,6 +209,8 @@ const emptyState: Path2WorkbenchState = {
   selectedMission: null,
   missionSnapshot: null,
   missionSnapshotState: { status: "empty", items: [], issue: null },
+  selectMission: async () => undefined,
+  adoptDialogueRun: () => undefined,
   refreshMission: async () => undefined,
   attempt: null,
   attemptAction: { status: "idle", issue: null },
@@ -335,7 +337,7 @@ describe("Path 2 Workbench state boundaries", () => {
       runSnapshot: { ...run, status: "blocked", error_code: "table_not_found" },
       runConnectionState: "connecting",
     };
-    const render = (state: Path2WorkbenchState) => renderToStaticMarkup(createElement(Path2AgentContent, { state }));
+    const render = (state: Path2WorkbenchState) => renderToStaticMarkup(createElement(Path2RunDetails, { state }));
     expect(render(stopped)).toContain("正在加载历史事件");
     expect(render(stopped)).toContain("table_not_found");
     expect(render(stopped)).toContain("核对资料与定位方式");
@@ -625,7 +627,7 @@ describe("Path 2 Workbench state boundaries", () => {
       workspaceId,
       runSnapshot: { ...run, status: "cancelled", finished_at: "2026-09-03T10:00:03Z" },
     };
-    const markup = renderToStaticMarkup(createElement(Path2AgentContent, { state: cancelledState }));
+    const markup = renderToStaticMarkup(createElement(Path2RunDetails, { state: cancelledState }));
     expect(markup).toContain("已取消");
     expect(markup).not.toContain("已完成");
   });
