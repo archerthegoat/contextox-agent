@@ -1610,6 +1610,70 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(sse_response.read_sizes, [1024])
         self.assertTrue(sse_response.closed)
 
+    def test_small_content_can_cross_old_wire_limit_and_preserve_usage(self) -> None:
+        def event(content, finish=None, usage=None):
+            payload = {
+                "id": "synthetic-budget-stream", "object": "chat.completion.chunk",
+                "model": "synthetic-model", "created": 0,
+                "choices": [{"index": 0, "delta": {"content": content},
+                             "finish_reason": finish}],
+            }
+            if usage is not None:
+                payload["usage"] = usage
+            return _event(payload)
+
+        chunks = [event("x") for _ in range(2000)] + [
+            event("", "stop", _usage()), b"data: [DONE]\n\n",
+        ]
+        self.assertGreater(sum(map(len, chunks)), provider_module.MAX_CONTEXT_BYTES)
+        response = FakeResponse(chunks=chunks)
+        provider = DeepSeekProvider(transport=FakeTransport(response))
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}):
+            completion = provider.complete(
+                [{"role": "user", "content": "x"}], stream=True,
+                tools=[], user_id="ws-opaque",
+            )
+        self.assertEqual(completion.content, "x" * 2000)
+        self.assertEqual(completion.usage, ProviderUsage(7, 4, 2, 5))
+        self.assertTrue(response.closed)
+
+    def test_sse_wire_event_and_aggregate_limits_remain_independent(self) -> None:
+        limit = provider_module.MAX_CONTEXT_BYTES
+        wire_limit = provider_module.MAX_SSE_WIRE_BYTES
+        content_event = _event({
+            "id": "synthetic-content-budget",
+            "choices": [{"index": 0, "delta": {"content": "x" * 4096},
+                         "finish_reason": None}],
+        })
+        cases = (
+            ("sse_wire", [b":" + b"x" * 1021 + b"\n\n"] * (wire_limit // 1024 + 1)),
+            ("sse_event", [b"data: "] + [b"x" * 1024] * (limit // 1024 + 1)),
+            ("sse_event", [b"data: " + b"x" * 1024 + b"\n"] * (limit // 1024 + 1)),
+            ("sse_event", [b"data:" + b"x" * (limit - 5), b"\xe4"]),
+            ("stream_content", [content_event] * (limit // 4096 + 1)),
+        )
+        for expected_stage, chunks in cases:
+            with self.subTest(stage=expected_stage, chunks=len(chunks)):
+                response = FakeResponse(chunks=chunks)
+                provider = DeepSeekProvider(transport=FakeTransport(response))
+                with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-secret"}):
+                    with self.assertRaises(ProviderContextBudgetError) as raised:
+                        provider.complete(
+                            [{"role": "user", "content": "x"}], stream=True,
+                            tools=[], user_id="ws-opaque",
+                        )
+                self.assertEqual(raised.exception.stage, expected_stage)
+                self.assertEqual(raised.exception.limit_bytes,
+                                 wire_limit if expected_stage == "sse_wire" else limit)
+                self.assertTrue(response.closed)
+
+    def test_sse_event_budget_resets_for_batched_events_and_split_utf8(self) -> None:
+        events = "data: 甲\r\n\r\ndata: 乙\n\ndata: 丙\n\n".encode()
+        response = FakeResponse(chunks=[events[:7], events[7:]])
+        self.assertEqual(list(DeepSeekProvider._iter_sse_data(
+            response, max_bytes=100, max_event_bytes=13,
+        )), ["甲", "乙", "丙"])
+
     def test_real_httpresponse_read_path_allows_delayed_sse_and_stops_after_done(self) -> None:
         first = _event(
             {

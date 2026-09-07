@@ -32,6 +32,7 @@ DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 DEFAULT_MODEL = "deepseek-v4-flash"
 MAX_OUTPUT_TOKENS = 4096
 MAX_CONTEXT_BYTES = 262144
+MAX_SSE_WIRE_BYTES = 4 * 1024 * 1024
 READ_CHUNK_BYTES = 1024
 READ_POLL_INTERVAL_MS = 100
 IPC_MAX_MESSAGE_BYTES = MAX_CONTEXT_BYTES + 65536
@@ -126,7 +127,7 @@ class ProviderContextBudgetError(ProviderError):
     def __init__(self, *, stage: str | None = None, used_bytes: int | None = None,
                  limit_bytes: int | None = None) -> None:
         super().__init__("context_budget_exceeded", "blocked")
-        allowed = {"request_body", "http_headers", "sse_wire", "stream_content", "agent_public_output", "ipc_result"}
+        allowed = {"request_body", "http_headers", "sse_wire", "sse_event", "stream_content", "agent_public_output", "ipc_result"}
         self.stage = stage if stage in allowed else None
         self.used_bytes = min(max(used_bytes, 0), 2**31 - 1) if type(used_bytes) is int else None
         self.limit_bytes = min(max(limit_bytes, 0), 2**31 - 1) if type(limit_bytes) is int else None
@@ -1631,7 +1632,8 @@ class DeepSeekProvider:
             for data in self._iter_sse_data(
                 response,
                 read_chunk=read_chunk,
-                max_bytes=max_context_bytes,
+                max_bytes=MAX_SSE_WIRE_BYTES,
+                max_event_bytes=max_context_bytes,
             ):
                 now = time.monotonic()
                 if cancel_event is not None and cancel_event.is_set():
@@ -1841,6 +1843,7 @@ class DeepSeekProvider:
         *,
         read_chunk: Callable[[], object] | None = None,
         max_bytes: int | None = None,
+        max_event_bytes: int | None = None,
     ) -> Iterable[str]:
         """Yield complete SSE data events from arbitrarily split byte chunks."""
 
@@ -1867,6 +1870,15 @@ class DeepSeekProvider:
         buffer = ""
         data_lines: list[str] = []
         received_bytes = 0
+        event_bytes = 0
+
+        def check_event_bytes(used_bytes: int) -> None:
+            if max_event_bytes is not None and used_bytes > max_event_bytes:
+                raise ProviderContextBudgetError(
+                    stage="sse_event", used_bytes=used_bytes,
+                    limit_bytes=max_event_bytes,
+                )
+
         for chunk in chunks:
             if isinstance(chunk, str):
                 try:
@@ -1883,12 +1895,21 @@ class DeepSeekProvider:
             if max_bytes is not None and received_bytes + chunk_bytes > max_bytes:
                 raise ProviderContextBudgetError(stage="sse_wire", used_bytes=received_bytes + chunk_bytes, limit_bytes=max_bytes)
             received_bytes += chunk_bytes
-            buffer += text
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
+            # Account before retaining each fragment. A large network budget
+            # must not become a large unfinished line or multi-line event.
+            fragments = text.split("\n")
+            for index, fragment in enumerate(fragments):
+                complete_line = index < len(fragments) - 1
+                event_bytes += len(fragment.encode("utf-8")) + int(complete_line)
+                check_event_bytes(event_bytes)
+                buffer += fragment
+                if not complete_line:
+                    break
+                line, buffer = buffer, ""
                 if line.endswith("\r"):
                     line = line[:-1]
                 if line == "":
+                    event_bytes = 0
                     if data_lines:
                         yield "\n".join(data_lines)
                         data_lines = []
@@ -1900,6 +1921,8 @@ class DeepSeekProvider:
                     data_lines.append(value[1:] if value.startswith(" ") else value)
                     continue
                 raise ProviderProtocolError()
+            # A fragmented UTF-8 codepoint is also retained by the decoder.
+            check_event_bytes(event_bytes + len(decoder.getstate()[0]))
         buffer += decoder.decode(b"", final=True)
         if buffer:
             if buffer.endswith("\r"):
