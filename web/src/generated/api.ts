@@ -1036,9 +1036,9 @@ export interface components {
             /**
              * Max Output Tokens
              * @default 4096
-             * @constant
+             * @enum {integer}
              */
-            max_output_tokens: 4096;
+            max_output_tokens: 4096 | 16384;
             /**
              * Max Retries
              * @default 0

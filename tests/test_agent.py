@@ -22,6 +22,7 @@ from contextox.models import (
     ProviderConfigSnapshot,
     ProviderReceipt,
     ReadSourceCall,
+    RunBudget,
     RunCompletedEventInput,
     RunCompletedPayload,
     RunStartRequest,
@@ -536,6 +537,50 @@ def _start_request(mission: Mission, refs: list[SourceIdentity], client: int = 9
 
 
 class PersistedRunTests(unittest.TestCase):
+    def test_output_budget_accepts_only_legacy_and_current_strict_values(self):
+        self.assertEqual(RunBudget().max_output_tokens, 4096)
+        for value in (4096, 16384):
+            self.assertEqual(RunBudget(max_output_tokens=value).max_output_tokens, value)
+        for value in (0, 4097, 8192, 16385, True, "16384", 16384.0, None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                RunBudget(max_output_tokens=value)
+        with self.assertRaises(ValueError):
+            RunBudget(max_model_turns=9)
+
+    def test_new_and_legacy_runs_preserve_persisted_budget_on_replay_and_restart(self):
+        import contextox.store as store_module
+
+        for output_limit in (4096, 16384):
+            with self.subTest(output_limit=output_limit), self.store_case() as (store, ws, mission, refs):
+                request = _start_request(mission, refs)
+                if output_limit == 4096:
+                    # Model the previously shipped creation policy; leave all Store
+                    # serialization, identity, and replay checks in production code.
+                    with patch.object(store_module, "RunBudget", return_value=RunBudget()):
+                        run = store.start_run(ws, mission.mission_id, request)
+                else:
+                    run = store.start_run(ws, mission.mission_id, request)
+                self.assertEqual(run.budget.max_output_tokens, output_limit)
+                self.assertEqual(store.start_run(ws, mission.mission_id, request), run)
+                provider = FakeProvider([_completion("Synthetic answer", (ProviderToolCall(
+                    "finish", "finish_run", json.dumps({
+                        "outcome": "partial", "reason": "Synthetic answer", "source_refs": [],
+                    }),
+                ),))])
+                with patch.object(agent, "get_provider", return_value=provider):
+                    agent.run_agent(store, ws, mission.mission_id, run.run_id, Event())
+                self.assertEqual(len(provider.calls), 1)
+                self.assertEqual(provider.calls[0]["kwargs"]["max_tokens"], output_limit)
+                final = store.get_run_snapshot(ws, mission.mission_id, run.run_id)
+                self.assertEqual(final.status, "partial")
+                with closing(sqlite3.connect(store.db_path)) as connection:
+                    saved = connection.execute(
+                        "SELECT budget_json FROM context_manifests WHERE run_id=?", (run.run_id,)
+                    ).fetchall()
+                self.assertEqual([json.loads(row[0])["max_output_tokens"] for row in saved], [output_limit])
+                self.assertEqual(WorkspaceStore.open(store.data_dir).get_run_snapshot(
+                    ws, mission.mission_id, run.run_id), final)
+
     def test_incremental_updates_retain_unknowns_and_end_with_bound_clarification(self):
         with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
             run = store.start_run(workspace_id, mission.mission_id, _start_request(mission, refs))

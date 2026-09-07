@@ -615,6 +615,29 @@ class _BlockingSocketServer:
 
 
 class ProviderTests(unittest.TestCase):
+    def test_explicit_run_output_limit_and_preflight_rejection(self):
+        response = FakeResponse(body=json.dumps({
+            "id": "synthetic-budget-response",
+            "choices": [{"index": 0, "finish_reason": "stop",
+                         "message": {"role": "assistant", "content": "Synthetic answer"}}],
+            "usage": _usage(),
+        }).encode())
+        transport = FakeTransport(response)
+        provider = DeepSeekProvider(transport=transport)
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "synthetic-offline-only"}):
+            provider.complete([{"role": "user", "content": "Synthetic budget check"}],
+                              stream=False, tools=None, max_tokens=16384, user_id="ws-offline")
+            for value in (16385, True, "16384", 16384.0):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    provider.complete([], stream=False, tools=None,
+                                      max_tokens=value, user_id="ws-offline")
+        self.assertEqual(len(transport.requests), 1)
+        payload = json.loads(transport.requests[0].data)
+        self.assertEqual(payload["max_tokens"], 16384)
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+        self.assertEqual(payload["reasoning_effort"], "high")
+        self.assertTrue(response.closed)
+
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()

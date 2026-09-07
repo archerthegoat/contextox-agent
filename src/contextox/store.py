@@ -1835,7 +1835,7 @@ class WorkspaceStore:
                 "started_at, finished_at, status, budget_json, last_sequence, final_output, error_code, start_request_sha256) "
                 "VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, 0, NULL, NULL, ?)",
                 (workspace_id, mission_id, run_id, request.client_request_id, now,
-                 _canonical_json(RunBudget()), canonical_sha256(request)),
+                 _canonical_json(RunBudget(max_output_tokens=16384)), canonical_sha256(request)),
             )
             connection.executemany(
                 "INSERT INTO run_sources VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -2047,7 +2047,7 @@ class WorkspaceStore:
                         raise Path2StateError("state_conflict")
                 run_id = str(uuid4())
                 created_at = _utc_now()
-                budget = RunBudget()
+                budget = RunBudget(max_output_tokens=16384)
                 connection.execute(
                     """
                     INSERT INTO runs

@@ -30,7 +30,8 @@ from contextox.models import ProviderConfigSnapshot
 
 DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 DEFAULT_MODEL = "deepseek-v4-flash"
-MAX_OUTPUT_TOKENS = 4096
+DEFAULT_OUTPUT_TOKENS = 4096
+MAX_OUTPUT_TOKENS = 16384
 MAX_CONTEXT_BYTES = 262144
 MAX_SSE_WIRE_BYTES = 4 * 1024 * 1024
 READ_CHUNK_BYTES = 1024
@@ -978,7 +979,7 @@ class DeepSeekProvider:
         *,
         stream: bool,
         tools: list[dict[str, Any]] | None,
-        max_tokens: int = MAX_OUTPUT_TOKENS,
+        max_tokens: int = DEFAULT_OUTPUT_TOKENS,
         user_id: str,
         timeouts: ProviderTimeouts = ProviderTimeouts(),
         cancel_event: Any | None = None,

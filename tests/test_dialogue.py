@@ -107,6 +107,7 @@ class DialogueTests(unittest.TestCase):
         req = request()
         receipt, created = runtime.send_task_message(self.ws, self.mid, req)
         self.assertTrue(created)
+        self.assertEqual(receipt.run.budget.max_output_tokens, 16384)
         replay, created = runtime.send_task_message(self.ws, self.mid, req)
         self.assertFalse(created)
         self.assertEqual(receipt.input_message, replay.input_message)

@@ -551,7 +551,7 @@ class RunBudget(ContextOxModel):
     max_model_turns: Literal[8] = 8
     max_tool_calls: Literal[24] = 24
     max_elapsed_ms: Literal[300000] = 300000
-    max_output_tokens: Literal[4096] = 4096
+    max_output_tokens: Literal[4096, 16384] = 4096
     max_retries: Literal[0] = 0
     connect_timeout_ms: Literal[10000] = 10000
     first_event_timeout_ms: Literal[60000] = 60000
@@ -568,7 +568,6 @@ class RunBudget(ContextOxModel):
             "max_model_turns": 8,
             "max_tool_calls": 24,
             "max_elapsed_ms": 300000,
-            "max_output_tokens": 4096,
             "max_retries": 0,
             "connect_timeout_ms": 10000,
             "first_event_timeout_ms": 60000,
@@ -576,6 +575,11 @@ class RunBudget(ContextOxModel):
             "total_timeout_ms": 120000,
             "max_context_bytes": 262144,
         }
+        if "max_output_tokens" in values and (
+            type(values["max_output_tokens"]) is not int
+            or values["max_output_tokens"] not in {4096, 16384}
+        ):
+            raise ValueError("max_output_tokens must be a supported RunBudget value")
         for name, expected_value in expected.items():
             if name in values and (type(values[name]) is not int or values[name] != expected_value):
                 raise ValueError(f"{name} is a fixed RunBudget value")
