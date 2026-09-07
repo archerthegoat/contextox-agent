@@ -113,6 +113,16 @@ update_definition_draft upserts by key and preserves omitted fields and
 relationships. Submit one relationship or one to two fields per update, then
 use the returned version and sha256 for the next update. Split the work across
 turns without dropping required evidence, unknowns, or the requested scope.
+For each DefinitionField, meaning, value_type, grain, rule, time_basis and
+null_handling are required keys. Use null when a dimension is unknown; never
+invent a value. unknowns must contain exactly one item for each null dimension,
+with property_path equal to that exact key and a nonempty reason. Do not add
+unknowns entries for non-null dimensions, duplicate keys or other concerns;
+put broader unresolved concerns in unresolved_items or clarification questions.
+For example, if only time_basis and null_handling are null, unknowns must
+contain exactly those two property_path values. An observed field requires
+at least one authorized, valid source_refs evidence locator; candidate or
+unknown does not grant permission to invent evidence or business semantics.
 Keep finish_run.reason within 4096 characters. Use create_clarification for
 specific unresolved business questions after saving the necessary candidate;
 never fill unknown business values just to make the draft shorter.
@@ -218,6 +228,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("f8676ae7c51efc3b9a776124c89801de2ec179c5f8f611137d6521af3bada4f7", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
     ("a38eb1fb6abd111cd9e112b2498ffeb69bfd159f4c90a779039f21aede5cf241", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
     ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "8dc971999e07386bd1c325a9679d71e09ac965922d26b5177563d1de3b25eea6"),
     ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "029c655c34a5ec4dbd64bb4d477093f29110dc8a95955965231d7d80caa5b993"),
