@@ -536,6 +536,105 @@ def _start_request(mission: Mission, refs: list[SourceIdentity], client: int = 9
 
 
 class PersistedRunTests(unittest.TestCase):
+    def test_tool_diagnostics_preserve_rejections_and_exclude_private_payloads(self):
+        marker = "synthetic-private-marker"
+        finish = {"outcome": "partial", "reason": "Synthetic answer", "source_refs": []}
+
+        def call(name="list_sources", arguments="{}", call_id="call-1"):
+            return ProviderToolCall(call_id, name, arguments)
+
+        cases = [
+            ("malformed_json", [call(arguments="{")], "tool_arguments_invalid",
+             "stage=arguments_json_invalid", None),
+            ("duplicate_id", [call(), call()], "tool_arguments_invalid",
+             "stage=duplicate_call_id", None),
+            ("unknown_tool", [call(name=marker)], "capability_denied",
+             "stage=capability_denied tool=unknown", None),
+            ("extra_field", [call(arguments=json.dumps({marker: marker}))],
+             "tool_arguments_invalid", "unexpected_field:extra_forbidden", None),
+            ("invalid_call_id", [call(call_id="x" * 129)], "tool_arguments_invalid",
+             "call_id:value_error", None),
+            ("long_reason", [call("finish_run", json.dumps({**finish, "reason": "a" * 4097}))],
+             "tool_arguments_invalid", "reason:string_too_long", None),
+            ("missing_reason", [call("finish_run", json.dumps({"outcome": "partial", "source_refs": []}))],
+             "tool_arguments_invalid", "reason:missing", None),
+            ("invalid_evidence", [call("finish_run", json.dumps({**finish, "source_refs": [marker]}))],
+             "tool_arguments_invalid", "source_refs:model_type", None),
+            ("terminal_batch", [call(), call("finish_run", json.dumps(finish), "call-2")],
+             "terminal_tool_mixed_batch", "stage=terminal_mixed_batch", None),
+            ("inspect_table", [call("inspect_dataset", '{"kind":"table"}')],
+             "tool_arguments_invalid", "revision_id:missing", None),
+            ("inspect_relationship", [call("inspect_dataset", '{"kind":"relationship"}')],
+             "tool_arguments_invalid", "left:missing", None),
+            ("inspect_unknown_kind", [call("inspect_dataset", json.dumps({"kind": marker}))],
+             "tool_arguments_invalid", "call:union_tag_invalid", None),
+            ("inspect_extra_field", [call("inspect_dataset", json.dumps({
+                "kind": "table", "revision_id": _id(1), "table_id": "", marker: marker,
+            }))], "tool_arguments_invalid", "unexpected_field:extra_forbidden", None),
+            ("bounded_errors", [call(arguments=json.dumps({f"{marker}-{i}": marker for i in range(8)}))],
+             "tool_arguments_invalid", "stage=call_schema_invalid", 5),
+        ]
+        for name, calls, code, expected, error_count in cases:
+            with self.subTest(case=name):
+                with self.store_case() as (store, workspace_id, mission, refs):
+                    run = store.start_run(
+                        workspace_id, mission.mission_id, _start_request(mission, refs)
+                    )
+                    provider = FakeProvider([ProviderCompletion(
+                        completion_id=marker, content=marker, reasoning_content=marker,
+                        tool_calls=calls, finish_reason="tool_calls", usage=_usage(),
+                    )])
+                    with self.assertLogs("contextox.agent", level="WARNING") as logs:
+                        with patch.object(agent, "get_provider", return_value=provider):
+                            agent.run_agent(store, workspace_id, mission.mission_id,
+                                            run.run_id, Event())
+                    rendered = "\n".join(logs.output)
+                    self.assertEqual(len(logs.output), 1)
+                    self.assertIn(expected, rendered)
+                    self.assertNotIn(marker, rendered)
+                    self.assertNotIn("x" * 129, rendered)
+                    self.assertNotIn("a" * 4097, rendered)
+                    if error_count is not None:
+                        self.assertEqual(rendered.count("unexpected_field:extra_forbidden"), error_count)
+                    snapshot = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+                    status = "blocked" if code == "capability_denied" else "failed"
+                    self.assertEqual((snapshot.status, snapshot.error_code), (status, code))
+                    self.assertIsNone(snapshot.draft)
+                    self.assertEqual(snapshot.clarifications, [])
+                    self.assertIsNone(snapshot.final_output)
+                    self.assertIsNone(snapshot.terminal_receipt)
+                    self.assertEqual(len(provider.calls), 1)
+                    events = store.list_run_events(workspace_id, mission.mission_id, run.run_id)
+                    self.assertNotIn("tool_requested", [event.event_type for event in events])
+                    with closing(sqlite3.connect(store.db_path)) as connection:
+                        self.assertEqual(connection.execute(
+                            "SELECT status, input_tokens, output_tokens FROM provider_receipts WHERE run_id=?",
+                            (run.run_id,),
+                        ).fetchall(), [("succeeded", 9, 5)])
+                        self.assertEqual(connection.execute("SELECT count(*) FROM tool_receipts").fetchone()[0], 0)
+                    restarted = WorkspaceStore.open(store.data_dir)
+                    self.assertEqual(restarted.get_run_snapshot(
+                        workspace_id, mission.mission_id, run.run_id), snapshot)
+
+    def test_valid_finish_at_reason_limit_remains_partial_without_diagnostic(self):
+        with self.store_case() as (store, workspace_id, mission, refs):
+            run = store.start_run(workspace_id, mission.mission_id, _start_request(mission, refs))
+            reason = "界" * 4096
+            provider = FakeProvider([_completion("Synthetic public answer.", (ProviderToolCall(
+                "call-finish", "finish_run", json.dumps({
+                    "outcome": "partial", "reason": reason, "source_refs": [],
+                }),
+            ),))])
+            with self.assertNoLogs("contextox.agent", level="WARNING"):
+                with patch.object(agent, "get_provider", return_value=provider):
+                    agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
+            snapshot = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+            self.assertEqual(snapshot.status, "partial")
+            self.assertIsNone(snapshot.error_code)
+            self.assertIsNotNone(snapshot.terminal_receipt)
+            self.assertEqual(snapshot.final_output, "Synthetic public answer.")
+            self.assertEqual(len(provider.calls), 1)
+
     def test_protocol_diagnostics_preserve_failure_receipts_and_exclude_payloads(self):
         marker = "synthetic-private-marker"
         cases = [

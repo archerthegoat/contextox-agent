@@ -29,6 +29,8 @@ from contextox.models import (
     DomainToolCall,
     FinishRunArguments,
     InspectDatasetArguments,
+    InspectRelationshipArguments,
+    InspectTableArguments,
     ListSourcesArguments,
     MissionDraftPayload,
     ModelCompletedEventInput,
@@ -1020,13 +1022,54 @@ def _log_run_protocol_failure(stage: str, completion: ProviderCompletion, turn_i
     )
 
 
+def _log_tool_validation_failure(stage: str, name: str, error: ValidationError | None = None) -> None:
+    safe_stage = stage if stage in {
+        "capability_denied", "duplicate_call_id", "arguments_json_invalid",
+        "call_schema_invalid", "terminal_mixed_batch",
+    } else "unknown"
+    safe_name = name if name in _TOOL_NAMES else "unknown"
+    details: list[str] = []
+    if error is not None:
+        if safe_name == "inspect_dataset":
+            fields = {**InspectTableArguments.model_fields, **InspectRelationshipArguments.model_fields}
+        else:
+            fields = _TOOL_ARGUMENT_TYPES[safe_name].model_fields if safe_name in _TOOL_NAMES else {}
+        safe_types = {
+            "missing", "extra_forbidden", "string_type", "string_too_long",
+            "string_too_short", "string_pattern_mismatch", "list_type", "dict_type",
+            "model_type", "int_type", "int_parsing", "bool_type", "literal_error",
+            "too_long", "too_short", "greater_than", "greater_than_equal",
+            "less_than", "less_than_equal", "value_error", "union_tag_invalid",
+            "union_tag_not_found",
+        }
+        for item in error.errors(include_url=False, include_context=False, include_input=False)[:5]:
+            location = item.get("loc", ())
+            if len(location) > 2 and location[1] == "arguments":
+                path = location[2:]
+                if safe_name == "inspect_dataset" and path[0] in {"table", "relationship"}:
+                    path = path[1:]
+                field = path[0] if path and path[0] in fields else "unexpected_field"
+            elif len(location) > 1 and location[1] == "call_id":
+                field = "call_id"
+            else:
+                field = "call"
+            kind = item.get("type")
+            details.append(f"{field}:{kind if kind in safe_types else 'validation_error'}")
+    logger.warning(
+        "Agent tool call rejected stage=%s tool=%s errors=%s.",
+        safe_stage, safe_name, ",".join(details) if details else "none",
+    )
+
+
 def _normalize_tool_calls(completion: ProviderCompletion) -> list[DomainToolCall]:
     calls: list[DomainToolCall] = []
     seen_ids: set[str] = set()
     for raw_call in completion.tool_calls:
         if raw_call.name not in _TOOL_NAMES:
+            _log_tool_validation_failure("capability_denied", raw_call.name)
             raise _AgentFailure("capability_denied", "blocked")
         if raw_call.call_id in seen_ids:
+            _log_tool_validation_failure("duplicate_call_id", raw_call.name)
             raise _AgentFailure("tool_arguments_invalid", "failed")
         seen_ids.add(raw_call.call_id)
         try:
@@ -1040,10 +1083,15 @@ def _normalize_tool_calls(completion: ProviderCompletion) -> list[DomainToolCall
                     }
                 )
             )
-        except (TypeError, ValueError, ValidationError) as exc:
+        except ValidationError as exc:
+            _log_tool_validation_failure("call_schema_invalid", raw_call.name, exc)
+            raise _AgentFailure("tool_arguments_invalid", "failed") from exc
+        except (TypeError, ValueError) as exc:
+            _log_tool_validation_failure("arguments_json_invalid", raw_call.name)
             raise _AgentFailure("tool_arguments_invalid", "failed") from exc
     terminal_count = sum(call.name in _TERMINAL_TOOL_NAMES for call in calls)
     if terminal_count and len(calls) != 1:
+        _log_tool_validation_failure("terminal_mixed_batch", "unknown")
         raise _AgentFailure("terminal_tool_mixed_batch", "failed")
     return calls
 
