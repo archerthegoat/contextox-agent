@@ -2568,7 +2568,7 @@ class WorkspaceStore:
                         for ref in run.source_refs
                     ]
                 elif call.name == "read_source":
-                    revision, _, content = self._run_source_material(
+                    revision, artifact, content = self._run_source_material(
                         connection, run, call.arguments.revision_id
                     )
                     try:
@@ -2596,10 +2596,29 @@ class WorkspaceStore:
                         }
                         if exc.code not in reasons:
                             raise
+                        reason = reasons[exc.code]
+                        if exc.code == "locator_out_of_bounds":
+                            locator_kind = call.arguments.locator.kind
+                            count = None
+                            if locator_kind == "text_lines":
+                                count = artifact.text_line_count
+                                unit = "text lines"
+                            elif locator_kind == "csv_rows" and len(artifact.tables) == 1:
+                                count = artifact.tables[0].row_count
+                                unit = "CSV data rows (excluding the header)"
+                            if count is not None:
+                                bounds = (
+                                    f"Use a range within 1..{count}, inclusive, "
+                                    "and the existing per-read limits."
+                                    if count else "There is no valid nonempty range."
+                                )
+                                reason = (
+                                    f"The selected source has {count} {unit}. {bounds} "
+                                    "The oversized request was rejected, not clipped. "
+                                    "A rejected range does not show that the source body is missing."
+                                )
                         status, error_code = "rejected", exc.code
-                        output = DomainRejection(
-                            code=exc.code, reason=reasons[exc.code]
-                        )
+                        output = DomainRejection(code=exc.code, reason=reason)
                 elif call.name == "inspect_dataset":
                     revision_ids = (
                         [call.arguments.revision_id]
