@@ -536,6 +536,81 @@ def _start_request(mission: Mission, refs: list[SourceIdentity], client: int = 9
 
 
 class PersistedRunTests(unittest.TestCase):
+    def test_incremental_updates_retain_unknowns_and_end_with_bound_clarification(self):
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            run = store.start_run(workspace_id, mission.mission_id, _start_request(mission, refs))
+            dimensions = ("meaning", "value_type", "grain", "rule", "time_basis", "null_handling")
+
+            def field(key):
+                return {"field_key": key, "name": key, **{name: None for name in dimensions},
+                        "source_columns": [], "evidence_status": "unknown", "source_refs": [],
+                        "unknowns": [{"property_path": name, "reason": "Not supplied."} for name in dimensions]}
+
+            artifacts = [store.get_source_artifact(workspace_id, ref.revision_id) for ref in refs]
+            relationship = {
+                "relationship_key": "candidate-join",
+                "left": {"source_ref": refs[0].model_dump(mode="json"),
+                         "table_id": artifacts[0].tables[0].table_id, "columns": ["id"]},
+                "right": {"source_ref": refs[1].model_dump(mode="json"),
+                          "table_id": artifacts[1].tables[0].table_id, "columns": ["id"]},
+                "observed_cardinality": "unknown", "join_rule": None, "grain_notes": None,
+                "evidence_status": "unknown", "source_refs": [], "risks": [],
+                "unknowns": [{"property_path": name, "reason": "Not approved."}
+                             for name in ("join_rule", "grain_notes")],
+            }
+
+            class IncrementalProvider(FakeProvider):
+                def complete(self, messages, **kwargs):
+                    turn = len(self.calls) + 1
+                    draft = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id).draft
+                    if turn <= 3:
+                        name = "update_definition_draft"
+                        arguments = {
+                            "expected_version": draft.version if draft else 0,
+                            "expected_sha256": draft.sha256 if draft else None,
+                            "fields": [field(f"candidate-{turn}")] if turn > 1 else [],
+                            "relationships": [relationship] if turn == 1 else [],
+                            "unresolved_items": ["Business rule remains unknown."],
+                        }
+                    else:
+                        name = "create_clarification"
+                        arguments = {"draft_version": draft.version, "draft_sha256": draft.sha256,
+                                     "questions": [{"question": "Which business rule should be used?",
+                                        "why_needed": "The supplied evidence does not settle the rule.",
+                                        "expected_answer_type": "text", "suggested_owner_role": "Business owner",
+                                        "related_definition_paths": ["fields.candidate-2.rule"],
+                                        "evidence_requested": ["An approved definition and counterexample."],
+                                        "examples_or_options": [], "blocking_impact": "blocking", "source_refs": []}]}
+                    self.completions = [_completion("Synthetic candidate progress.", (
+                        ProviderToolCall(f"step-{turn}", name, json.dumps(arguments)),
+                    ))]
+                    return super().complete(messages, **kwargs)
+
+            provider = IncrementalProvider([])
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
+            snapshot = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+            self.assertEqual(snapshot.status, "waiting_for_human")
+            self.assertEqual(len(provider.calls), 4)
+            self.assertEqual(snapshot.draft.version, 3)
+            self.assertEqual([item.field_key for item in snapshot.draft.fields], ["candidate-2", "candidate-3"])
+            self.assertEqual(len(snapshot.draft.relationships), 1)
+            self.assertEqual(len(snapshot.clarifications), 1)
+            self.assertEqual(snapshot.clarifications[0].draft_sha256, snapshot.draft.sha256)
+            self.assertEqual(snapshot.terminal_receipt.terminal_tool, "create_clarification")
+            for item in snapshot.draft.fields:
+                self.assertIsNone(item.rule)
+                self.assertIsNone(item.time_basis)
+                self.assertEqual({unknown.property_path for unknown in item.unknowns}, set(dimensions))
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                versions = connection.execute(
+                    "SELECT version, fields_json, relationships_json FROM definition_drafts ORDER BY version"
+                ).fetchall()
+            self.assertEqual([(v, len(json.loads(f)), len(json.loads(r))) for v, f, r in versions],
+                             [(1, 0, 1), (2, 1, 1), (3, 2, 1)])
+            restarted = WorkspaceStore.open(store.data_dir)
+            self.assertEqual(restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id), snapshot)
+
     def test_tool_diagnostics_preserve_rejections_and_exclude_private_payloads(self):
         marker = "synthetic-private-marker"
         finish = {"outcome": "partial", "reason": "Synthetic answer", "source_refs": []}
@@ -931,31 +1006,35 @@ class PersistedRunTests(unittest.TestCase):
                     workspace_id, mission.mission_id, retry_request
                 )
             self.assertEqual(raised.exception.code, "state_conflict")
-            for known_hash in (
+            for known_p0, known_hash in (
+                ("a38eb1fb6abd111cd9e112b2498ffeb69bfd159f4c90a779039f21aede5cf241", agent.TOOL_SCHEMA_SHA256),
+                *[("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", schema_hash) for schema_hash in (
                 "029c655c34a5ec4dbd64bb4d477093f29110dc8a95955965231d7d80caa5b993",
                 "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9",
                 "dc36ac30c11ba88009903d4cc1f0a6ccb6f255abb64a8b65e91a7ee72a170028",
+                )],
             ):
                 with closing(sqlite3.connect(store.db_path)) as connection, connection:
                     connection.execute(
                         "UPDATE provider_receipts SET tool_schema_sha256=?, p0_sha256=? "
                         "WHERE workspace_id=? AND mission_id=? AND run_id=?",
-                        (known_hash, "6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", workspace_id, mission.mission_id, run.run_id),
+                        (known_hash, known_p0, workspace_id, mission.mission_id, run.run_id),
                     )
                 self.assertEqual(
                     restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),
                     snapshot,
                 )
-            with closing(sqlite3.connect(store.db_path)) as connection, connection:
-                connection.execute(
-                    """
-                    UPDATE provider_receipts SET p0_sha256=?
-                    WHERE workspace_id=? AND mission_id=? AND run_id=? AND turn_index=1
-                    """,
-                    ("0" * 64, workspace_id, mission.mission_id, run.run_id),
-                )
-            with self.assertRaises(WorkspaceStoreUnavailableError):
-                restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+            for invalid_p0 in (agent.P0_RUN_SHA256, "0" * 64):
+                with closing(sqlite3.connect(store.db_path)) as connection, connection:
+                    connection.execute(
+                        """
+                        UPDATE provider_receipts SET p0_sha256=?
+                        WHERE workspace_id=? AND mission_id=? AND run_id=? AND turn_index=1
+                        """,
+                        (invalid_p0, workspace_id, mission.mission_id, run.run_id),
+                    )
+                with self.assertRaises(WorkspaceStoreUnavailableError):
+                    restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
 
     def test_read_source_locator_rejection_is_receipted_and_non_locator_error_fails(self):
         import contextox.store as store_module

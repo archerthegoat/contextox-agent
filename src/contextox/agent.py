@@ -107,6 +107,15 @@ of create_clarification, submit_for_review, or finish_run; finish_run only
 accepts partial. When the current message has been answered, use finish_run
 with the public answer in reason; the overall Mission remains unfinished.
 Message context contains statements and candidates, not approved business facts.
+Work incrementally within the fixed per-turn output budget. Keep explanations
+and tool arguments concise; do not repeat source rows or the entire draft.
+update_definition_draft upserts by key and preserves omitted fields and
+relationships. Submit one relationship or one to two fields per update, then
+use the returned version and sha256 for the next update. Split the work across
+turns without dropping required evidence, unknowns, or the requested scope.
+Keep finish_run.reason within 4096 characters. Use create_clarification for
+specific unresolved business questions after saving the necessary candidate;
+never fill unknown business values just to make the draft shorter.
 Do not claim Mission completion or business approval."""
 
 
@@ -209,6 +218,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("a38eb1fb6abd111cd9e112b2498ffeb69bfd159f4c90a779039f21aede5cf241", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
     ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "8dc971999e07386bd1c325a9679d71e09ac965922d26b5177563d1de3b25eea6"),
     ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "029c655c34a5ec4dbd64bb4d477093f29110dc8a95955965231d7d80caa5b993"),
     ("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9"),
