@@ -116,6 +116,8 @@ export function runSnapshotMatchesIdentity(snapshot: RunSnapshot, identity: RunI
     snapshot.mission_id === identity.missionId &&
     snapshot.run_id === identity.runId &&
     snapshot.source_refs.every((reference) => reference.workspace_id === identity.workspaceId) &&
+    (snapshot.provider_receipts ?? []).every((receipt) => receipt.workspace_id === identity.workspaceId &&
+      receipt.mission_id === identity.missionId && receipt.run_id === identity.runId) &&
     (!snapshot.draft ||
       (snapshot.draft.workspace_id === identity.workspaceId && snapshot.draft.mission_id === identity.missionId)) &&
     snapshot.clarifications.every(
@@ -801,8 +803,17 @@ function isRunEventPayload(eventType: string, payload: unknown): payload is Unkn
       return payload.status === "running";
     case "message_created":
       return hasString(payload, "message_id") && isOneOf(payload.role, ["user", "assistant"]);
-    case "model_started":
-      return hasInteger(payload, "turn_index");
+    case "model_started": {
+      if (!hasInteger(payload, "turn_index")) return false;
+      const transport = payload.transport ?? "stream";
+      const previous = payload.fallback_of_turn_index;
+      if (!isOneOf(transport, ["stream", "non_stream"])) return false;
+      if (previous !== undefined && previous !== null &&
+          (typeof previous !== "number" || !Number.isInteger(previous) || previous < 1 ||
+            previous !== (payload.turn_index as number) - 1)) return false;
+      return transport === "non_stream" ? previous !== undefined && previous !== null
+        : previous === undefined || previous === null;
+    }
     case "model_delta":
       return hasInteger(payload, "turn_index") && hasString(payload, "content");
     case "model_completed":
@@ -3497,6 +3508,7 @@ function RunStatusCard({ state }: { state: Path2WorkbenchState }) {
       {state.cancelAction.issue ? <IssueCallout issue={state.cancelAction.issue} title="取消未完成" /> : null}
       {state.runReadbackIssue ? <IssueCallout issue={state.runReadbackIssue} title="快照回读未完成" /> : null}
       <RunFailureNotice run={run} />
+      <RunUsageNotice run={run} />
       {state.runEventIssue ? <div className="path2-event-warning" role="status">{state.runEventIssue}</div> : null}
       {state.runEventState.hasSequenceGap ? <div className="path2-event-warning" role="status">公开事件存在序号缺口；未用 delta 拼造完整文字，最终摘要只取持久化快照。</div> : null}
       {run.final_output ? (
@@ -3527,6 +3539,20 @@ function RunStatusCard({ state }: { state: Path2WorkbenchState }) {
       ) : null}
     </div>
   );
+}
+
+export function RunUsageNotice({ run }: { run: RunSnapshot }) {
+  const receipts = run.provider_receipts ?? [];
+  if (receipts.length === 0) return null;
+  const known = receipts.filter((receipt) => receipt.input_tokens !== null && receipt.output_tokens !== null);
+  const missing = receipts.length - known.length;
+  const input = known.reduce((total, receipt) => total + (receipt.input_tokens ?? 0), 0);
+  const output = known.reduce((total, receipt) => total + (receipt.output_tokens ?? 0), 0);
+  return <div className="path2-inline-status">
+    {known.length > 0 ? <span>已知用量小计：输入 {input}，输出 {output} tokens（{known.length} 次请求）。</span> : null}
+    {missing > 0 ? <span>{missing} 次请求用量未返回，总用量尚不完整。</span> : null}
+    <span>统计仅包含已回读的请求回执。</span>
+  </div>;
 }
 
 function RunFailureNotice({ run }: { run: RunSnapshot }) {
@@ -3952,13 +3978,19 @@ export function Path2Workbench({ state, activeArea }: { state: Path2WorkbenchSta
   );
 }
 
-function eventSummary(event: RunEventEnvelope): string {
+function eventSummary(event: RunEventEnvelope, replacedTurns: ReadonlySet<number>): string {
   switch (event.event_type) {
     case "run_started": return "Run 已进入运行阶段";
     case "message_created": return `公开消息已创建（${event.public_payload.role}）`;
-    case "model_started": return `模型轮次 ${event.public_payload.turn_index} 开始`;
-    case "model_delta": return `收到公开输出增量：${event.public_payload.content}`;
-    case "model_completed": return `模型轮次 ${event.public_payload.turn_index} 完成`;
+    case "model_started": return event.public_payload.transport === "non_stream"
+      ? `模型请求 ${event.public_payload.turn_index} 开始非流式降级，替代流式请求 ${event.public_payload.fallback_of_turn_index}；原请求的部分输出不作为结果。`
+      : `模型轮次 ${event.public_payload.turn_index} 开始`;
+    case "model_delta": return replacedTurns.has(event.public_payload.turn_index)
+      ? `原流式请求 ${event.public_payload.turn_index} 的部分输出（已停止并降级，不作为结果）：${event.public_payload.content}`
+      : `请求 ${event.public_payload.turn_index} 的公开输出增量（尚非最终结果）：${event.public_payload.content}`;
+    case "model_completed": return replacedTurns.has(event.public_payload.turn_index)
+      ? `流式请求 ${event.public_payload.turn_index} 已结束并转为非流式降级；此事件不表示原请求成功。`
+      : `模型轮次 ${event.public_payload.turn_index} 完成`;
     case "tool_requested": return `请求工具 ${event.public_payload.name}`;
     case "tool_started": return `开始工具 ${event.public_payload.name}`;
     case "tool_completed": return `工具 ${event.public_payload.call_id} ${event.public_payload.status}`;
@@ -3980,6 +4012,9 @@ function eventSummary(event: RunEventEnvelope): string {
 
 export function Path2RunDetails({ state }: { state: Path2WorkbenchState }) {
   const run = state.runSnapshot;
+  const replacedTurns = new Set(state.runEventState.events.flatMap((event) =>
+    event.event_type === "model_started" && event.public_payload.transport === "non_stream" &&
+      event.public_payload.fallback_of_turn_index != null ? [event.public_payload.fallback_of_turn_index] : []));
   return (
     <div className="path2-agent-state">
       {!state.workspaceId ? <WorkspaceRequired copy="Agent 面板只显示当前 Workspace 的公开状态，不保留跨 Workspace 内容。" /> : null}
@@ -4008,7 +4043,7 @@ export function Path2RunDetails({ state }: { state: Path2WorkbenchState }) {
                     ? "正在加载历史事件…" : "本次运行已结束，暂无可回放的公开事件。"
                   : "等待公开事件…"}
             </span> : null}
-            {state.runEventState.events.map((event) => <article className="path2-agent-event" key={event.event_id}><div><span>#{event.sequence}</span><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleTimeString()}</time></div><p>{eventSummary(event)}</p></article>)}
+            {state.runEventState.events.map((event) => <article className="path2-agent-event" key={event.event_id}><div><span>#{event.sequence}</span><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleTimeString()}</time></div><p>{eventSummary(event, replacedTurns)}</p></article>)}
           </div>
           {run.final_output ? <div className="path2-agent-output"><strong>持久化公开摘要</strong><p>{run.final_output}</p></div> : null}
         </>

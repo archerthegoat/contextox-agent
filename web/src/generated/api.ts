@@ -937,6 +937,89 @@ export interface components {
         ModelStartedPayload: {
             /** Turn Index */
             turn_index: number;
+            /**
+             * Transport
+             * @default stream
+             * @enum {string}
+             */
+            transport: "stream" | "non_stream";
+            /**
+             * Fallback Of Turn Index
+             * @default null
+             */
+            fallback_of_turn_index: number | null;
+        };
+        /** ProviderConfigSnapshot */
+        ProviderConfigSnapshot: {
+            /**
+             * Endpoint Id
+             * @constant
+             */
+            endpoint_id: "deepseek_chat_completions";
+            /**
+             * Model
+             * @enum {string}
+             */
+            model: "deepseek-v4-flash" | "deepseek-v4-pro";
+            /**
+             * Thinking
+             * @constant
+             */
+            thinking: "enabled";
+            /**
+             * Reasoning Effort
+             * @constant
+             */
+            reasoning_effort: "high";
+        };
+        /** ProviderReceipt */
+        ProviderReceipt: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Receipt Id */
+            receipt_id: string;
+            /** Attempt Id */
+            attempt_id: string | null;
+            /** Mission Id */
+            mission_id: string | null;
+            /** Run Id */
+            run_id: string | null;
+            /** Turn Index */
+            turn_index: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "blocked" | "failed" | "cancelled";
+            config: components["schemas"]["ProviderConfigSnapshot"];
+            /** P0 Sha256 */
+            p0_sha256: string;
+            /** Input Tokens */
+            input_tokens: number | null;
+            /** Output Tokens */
+            output_tokens: number | null;
+            /** Cache Hit Tokens */
+            cache_hit_tokens: number | null;
+            /** Cache Miss Tokens */
+            cache_miss_tokens: number | null;
+            /** Context Manifest Id */
+            context_manifest_id: string | null;
+            /** Context Manifest Sha256 */
+            context_manifest_sha256: string | null;
+            /** Tool Schema Sha256 */
+            tool_schema_sha256: string | null;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Usage Status
+             * @enum {string}
+             */
+            readonly usage_status: "known" | "missing";
         };
         /** ReadinessResponse */
         ReadinessResponse: {
@@ -1257,6 +1340,8 @@ export interface components {
             final_output: string | null;
             /** Error Code */
             error_code: string | null;
+            /** Provider Receipts */
+            provider_receipts?: components["schemas"]["ProviderReceipt"][];
         };
         /** RunStartRequest */
         RunStartRequest: {
@@ -1897,73 +1982,6 @@ export interface components {
             source_refs: components["schemas"]["EvidenceRef"][];
             /** Limitations */
             limitations: string[];
-        };
-        /** ProviderConfigSnapshot */
-        ProviderConfigSnapshot: {
-            /**
-             * Endpoint Id
-             * @constant
-             */
-            endpoint_id: "deepseek_chat_completions";
-            /**
-             * Model
-             * @enum {string}
-             */
-            model: "deepseek-v4-flash" | "deepseek-v4-pro";
-            /**
-             * Thinking
-             * @constant
-             */
-            thinking: "enabled";
-            /**
-             * Reasoning Effort
-             * @constant
-             */
-            reasoning_effort: "high";
-        };
-        /** ProviderReceipt */
-        ProviderReceipt: {
-            /** Workspace Id */
-            workspace_id: string;
-            /** Receipt Id */
-            receipt_id: string;
-            /** Attempt Id */
-            attempt_id: string | null;
-            /** Mission Id */
-            mission_id: string | null;
-            /** Run Id */
-            run_id: string | null;
-            /** Turn Index */
-            turn_index: number;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "succeeded" | "blocked" | "failed" | "cancelled";
-            config: components["schemas"]["ProviderConfigSnapshot"];
-            /** P0 Sha256 */
-            p0_sha256: string;
-            /** Input Tokens */
-            input_tokens: number | null;
-            /** Output Tokens */
-            output_tokens: number | null;
-            /** Cache Hit Tokens */
-            cache_hit_tokens: number | null;
-            /** Cache Miss Tokens */
-            cache_miss_tokens: number | null;
-            /** Context Manifest Id */
-            context_manifest_id: string | null;
-            /** Context Manifest Sha256 */
-            context_manifest_sha256: string | null;
-            /** Tool Schema Sha256 */
-            tool_schema_sha256: string | null;
-            /** Error Code */
-            error_code: string | null;
         };
         /** ToolReceipt */
         ToolReceipt: {

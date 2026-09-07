@@ -124,12 +124,15 @@ class ProviderCancelledError(ProviderError):
         )
 
 
+_BUDGET_STAGES = frozenset({"request_body", "http_headers", "sse_wire", "sse_event",
+                            "stream_content", "agent_public_output", "ipc_result"})
+
+
 class ProviderContextBudgetError(ProviderError):
     def __init__(self, *, stage: str | None = None, used_bytes: int | None = None,
                  limit_bytes: int | None = None) -> None:
         super().__init__("context_budget_exceeded", "blocked")
-        allowed = {"request_body", "http_headers", "sse_wire", "sse_event", "stream_content", "agent_public_output", "ipc_result"}
-        self.stage = stage if stage in allowed else None
+        self.stage = stage if stage in _BUDGET_STAGES else None
         self.used_bytes = min(max(used_bytes, 0), 2**31 - 1) if type(used_bytes) is int else None
         self.limit_bytes = min(max(limit_bytes, 0), 2**31 - 1) if type(limit_bytes) is int else None
         if self.stage is not None:
@@ -360,7 +363,10 @@ def _decode_ipc_message(
     event_type = value.get("event_type")
     if not isinstance(event_type, str) or event_type not in _IPC_EVENT_KEYS:
         raise _ProviderIpcProtocolError("IPC event type is not allowed")
-    if set(value) != _IPC_EVENT_KEYS[event_type]:
+    expected_keys = _IPC_EVENT_KEYS[event_type]
+    if event_type == "error" and value.get("code") == "context_budget_exceeded":
+        expected_keys = expected_keys | {"budget"}
+    if set(value) != expected_keys:
         raise _ProviderIpcProtocolError("IPC message fields are not exact")
     if value.get("call_id") != expected_call_id:
         raise _ProviderIpcProtocolError("IPC call identity is stale or unknown")
@@ -397,6 +403,8 @@ def _decode_ipc_message(
         if not isinstance(code, str) or code not in _IPC_ERROR_CODES:
             raise _ProviderIpcProtocolError("IPC error code is not allowed")
         _usage_from_ipc(value["usage"])
+        if code == "context_budget_exceeded":
+            _budget_from_ipc(value["budget"])
     return value
 
 
@@ -416,13 +424,31 @@ def _encode_bounded_json(value: object, *, max_bytes: int) -> bytes:
     return raw
 
 
-def _provider_error_from_code(code: str, *, usage: ProviderUsage | None = None) -> ProviderError:
+def _budget_from_ipc(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"stage", "used_bytes", "limit_bytes"}:
+        raise _ProviderIpcProtocolError("IPC budget fields are not exact")
+    stage = value["stage"]
+    if stage is not None and (not isinstance(stage, str) or stage not in _BUDGET_STAGES):
+        raise _ProviderIpcProtocolError("IPC budget stage is not allowed")
+    for key in ("used_bytes", "limit_bytes"):
+        number = value[key]
+        if number is not None and (type(number) is not int or not 0 <= number <= 2**31 - 1):
+            raise _ProviderIpcProtocolError("IPC budget number is not valid")
+    return value
+
+
+def _budget_to_ipc(error: ProviderContextBudgetError) -> dict[str, Any]:
+    return {"stage": error.stage, "used_bytes": error.used_bytes, "limit_bytes": error.limit_bytes}
+
+
+def _provider_error_from_code(code: str, *, usage: ProviderUsage | None = None,
+                              budget: object = None) -> ProviderError:
     if code == "cancelled":
         return ProviderCancelledError()
     if code == "provider_cancelled_outcome_unknown":
         return ProviderCancelledError(outcome_unknown=True)
     if code == "context_budget_exceeded":
-        return ProviderContextBudgetError()
+        return ProviderContextBudgetError(**_budget_from_ipc(budget))
     if code == "provider_auth_failed":
         return ProviderAuthError()
     if code == "provider_balance_insufficient":
@@ -1292,7 +1318,7 @@ class DeepSeekProvider:
                             raise ProviderTimeoutUnknownError()
                         if not request_started and code == "provider_unavailable":
                             raise ProviderUnreachableError()
-                        raise _provider_error_from_code(code, usage=usage)
+                        raise _provider_error_from_code(code, usage=usage, budget=message.get("budget"))
 
                 check_supervision()
                 if not process.is_alive():
@@ -1961,8 +1987,8 @@ class _ChildIpc:
             self._send_conn.send_bytes(raw)
         except _ProviderIpcProtocolError as exc:
             if event_type == "result":
-                ProviderContextBudgetError(stage="ipc_result", used_bytes=IPC_MAX_MESSAGE_BYTES + 1, limit_bytes=IPC_MAX_MESSAGE_BYTES)
-                self.send("error", code="context_budget_exceeded", usage=None)
+                error = ProviderContextBudgetError(stage="ipc_result", used_bytes=IPC_MAX_MESSAGE_BYTES + 1, limit_bytes=IPC_MAX_MESSAGE_BYTES)
+                self.send("error", code=error.code, usage=None, budget=_budget_to_ipc(error))
                 return
             raise _ChildIpcSendError() from exc
         except (EOFError, OSError, ValueError) as exc:
@@ -2130,7 +2156,8 @@ def _provider_child_main(send_conn: Any, packet_bytes: bytes) -> None:
     except ProviderError as exc:
         if ipc is not None:
             try:
-                ipc.send("error", code=exc.code, usage=_usage_to_ipc(exc.usage))
+                fields = {"budget": _budget_to_ipc(exc)} if isinstance(exc, ProviderContextBudgetError) else {}
+                ipc.send("error", code=exc.code, usage=_usage_to_ipc(exc.usage), **fields)
             except _ChildIpcSendError:
                 pass
     except Exception:

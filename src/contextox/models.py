@@ -20,6 +20,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     StrictStr,
+    computed_field,
     field_validator,
     model_validator,
 )
@@ -607,6 +608,7 @@ class RunSnapshot(ContextOxModel):
     terminal_receipt: TerminalReceipt | None
     final_output: FinalOutput | None
     error_code: Key | None
+    provider_receipts: list[ProviderReceipt] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_nested_scope(self) -> RunSnapshot:
@@ -629,6 +631,9 @@ class RunSnapshot(ContextOxModel):
             or self.terminal_receipt.run_id != self.run_id
         ):
             raise ValueError("Run terminal receipt identity does not match the Run")
+        if any(receipt.workspace_id != self.workspace_id or receipt.mission_id != self.mission_id
+               or receipt.run_id != self.run_id for receipt in self.provider_receipts):
+            raise ValueError("Run provider receipt identity does not match the Run")
         return self
 
 
@@ -868,6 +873,21 @@ class ProviderReceipt(ContextOxModel):
     tool_schema_sha256: Hash | None
     error_code: Key | None
 
+    @computed_field
+    @property
+    def usage_status(self) -> Literal["known", "missing"]:
+        return "known" if self.input_tokens is not None and self.output_tokens is not None else "missing"
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_derived_usage_status(cls, value: object) -> object:
+        if isinstance(value, dict) and "usage_status" in value:
+            expected = "known" if value.get("input_tokens") is not None and value.get("output_tokens") is not None else "missing"
+            if value["usage_status"] != expected:
+                raise ValueError("usage_status must agree with recorded token usage")
+            return {key: item for key, item in value.items() if key != "usage_status"}
+        return value
+
     @model_validator(mode="after")
     def validate_receipt_mode(self) -> ProviderReceipt:
         if (self.attempt_id is None) == (self.run_id is None):
@@ -894,10 +914,10 @@ class ProviderReceipt(ContextOxModel):
                 or self.tool_schema_sha256 is None
             ):
                 raise ValueError("run receipts require manifest and tool schema hashes")
-        if self.status == "succeeded" and (
-            self.input_tokens is None or self.output_tokens is None
-        ):
-            raise ValueError("succeeded ProviderReceipt requires input and output usage")
+        if self.status == "succeeded" and self.usage_status == "missing" and self.error_code not in {
+            "provider_usage_missing", "provider_fallback_usage_missing",
+        }:
+            raise ValueError("succeeded ProviderReceipt requires usage or an explicit missing-usage marker")
         if (self.context_manifest_id is None) != (self.context_manifest_sha256 is None):
             raise ValueError("context manifest id and hash must be paired")
         return self
@@ -1425,6 +1445,18 @@ class MessageCreatedPayload(ContextOxModel):
 
 class ModelStartedPayload(ContextOxModel):
     turn_index: PositiveInt
+    transport: Literal["stream", "non_stream"] = "stream"
+    fallback_of_turn_index: PositiveInt | None = None
+
+    @model_validator(mode="after")
+    def validate_fallback(self) -> "ModelStartedPayload":
+        if self.fallback_of_turn_index is not None and (
+            self.transport != "non_stream" or self.fallback_of_turn_index != self.turn_index - 1
+        ):
+            raise ValueError("Fallback must identify the immediately preceding stream request.")
+        if self.transport == "non_stream" and self.fallback_of_turn_index is None:
+            raise ValueError("Non-stream Run requests require a fallback origin.")
+        return self
 
 
 class ModelDeltaPayload(ContextOxModel):

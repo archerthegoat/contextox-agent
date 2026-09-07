@@ -4363,7 +4363,7 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
             or any(character not in "0123456789abcdef" for character in row[12])
         ):
             raise WorkspaceStoreUnavailableError()
-        return run
+        return RunSnapshot.model_validate(run.model_dump(exclude={"provider_receipts"}) | {"provider_receipts": provider_receipts})
     except WorkspaceStoreError:
         raise
     except (TypeError, ValueError) as exc:
@@ -4644,14 +4644,33 @@ def _check_message_start_state(connection: sqlite3.Connection, mission: Mission,
             "SELECT receipt_id FROM provider_receipts WHERE workspace_id=? AND mission_id=? AND run_id=?",
             (ws, mid, run_id),
         )]
-        started = {
-            _json_value(row[0])["turn_index"] for row in connection.execute(
+        starts = {
+            payload["turn_index"]: payload for (raw,) in connection.execute(
                 "SELECT public_payload_json FROM run_events WHERE workspace_id=? AND mission_id=? "
                 "AND run_id=? AND event_type='model_started'", (ws, mid, run_id),
-            )
+            ) for payload in [_json_value(raw)]
         }
-        if started - {receipt.turn_index for receipt in receipts} or any(
-            receipt.input_tokens is None or receipt.output_tokens is None or
-            "unknown" in (receipt.error_code or "") for receipt in receipts
-        ):
+        by_turn = {receipt.turn_index: receipt for receipt in receipts}
+
+        def reconciled(receipt: ProviderReceipt) -> bool:
+            if "unknown" in (receipt.error_code or ""):
+                return False
+            if receipt.input_tokens is not None and receipt.output_tokens is not None:
+                return True
+            if receipt.status == "succeeded" and receipt.error_code in {
+                "provider_usage_missing", "provider_fallback_usage_missing",
+            }:
+                return True
+            if receipt.error_code not in {"stream_fallback_sse_wire", "stream_fallback_interrupted"}:
+                return False
+            replacement = by_turn.get(receipt.turn_index + 1)
+            event = starts.get(receipt.turn_index + 1, {})
+            return bool(
+                replacement and replacement.status == "succeeded"
+                and replacement.error_code in {"provider_fallback_succeeded", "provider_fallback_usage_missing"}
+                and event.get("transport") == "non_stream"
+                and event.get("fallback_of_turn_index") == receipt.turn_index
+            )
+
+        if starts.keys() - by_turn.keys() or any(not reconciled(receipt) for receipt in receipts):
             raise Path2StateError("previous_outcome_unresolved")

@@ -730,7 +730,11 @@ def _rewrite_schema_refs(value: Any) -> Any:
 
 def _register_schema(schema: dict[str, Any], name: str, annotation: Any) -> None:
     raw = (
-        annotation.model_json_schema(ref_template="#/$defs/{model}")
+        annotation.model_json_schema(
+            ref_template="#/$defs/{model}",
+            # Receipts are output-only; include their derived usage status.
+            mode="serialization" if annotation is ProviderReceipt else "validation",
+        )
         if isinstance(annotation, type) and issubclass(annotation, BaseModel)
         else TypeAdapter(annotation).json_schema(ref_template="#/$defs/{model}")
     )

@@ -270,8 +270,45 @@ class PersistedAttemptTests(unittest.TestCase):
                 with self.assertRaises(Path2StateError):
                     restarted.confirm_mission_draft_attempt(workspace_id, attempt.attempt_id, version, digest, refs)
 
+    def test_receipt_usage_status_is_derived_and_cannot_mislabel_missing_as_zero(self):
+        provider = FakeProvider([])
+        receipt = agent._make_receipt(
+            provider=provider, workspace_id=_id(1), attempt_id=_id(2),
+            mission_id=None, run_id=None, turn_index=1, status="succeeded",
+            p0_sha256=agent.P0_DRAFT_SHA256, usage=None,
+            error_code="provider_usage_missing",
+        )
+        self.assertEqual(receipt.usage_status, "missing")
+        self.assertEqual(ProviderReceipt.model_validate(receipt.model_dump()), receipt)
+        self.assertEqual(ProviderReceipt.model_validate(receipt.model_dump(exclude={"usage_status"})), receipt)
+        with self.assertRaises(ValueError):
+            ProviderReceipt.model_validate(receipt.model_dump() | {"usage_status": "known"})
+        with self.assertRaises(ValueError):
+            ProviderReceipt.model_validate(receipt.model_dump() | {"error_code": None})
+        known = ProviderReceipt.model_validate(receipt.model_dump(exclude={"usage_status"}) | {
+            "input_tokens": 0, "output_tokens": 0, "error_code": None,
+        })
+        self.assertEqual(known.usage_status, "known")
+        fallback = ProviderReceipt.model_validate(receipt.model_dump() | {
+            "error_code": "provider_fallback_usage_missing",
+        })
+        self.assertEqual(fallback.usage_status, "missing")
+
+    def test_valid_draft_without_usage_is_ready_and_preserves_missing_receipt(self):
+        with self.store_case() as (store, workspace_id, attempt):
+            ready = self.generate(store, workspace_id, attempt, usage=False)
+            self.assertEqual(ready.status, "ready")
+            self.assertIsNotNone(ready.candidate)
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                row = connection.execute(
+                    "SELECT status, input_tokens, output_tokens, error_code FROM provider_receipts"
+                ).fetchone()
+            self.assertEqual(row, ("succeeded", None, None, "provider_usage_missing"))
+            self.assertEqual(WorkspaceStore.open(store.data_dir).get_mission_draft_attempt(
+                workspace_id, attempt.attempt_id), ready)
+
     def test_failure_and_cancellation_are_persisted_without_mission(self):
-        for content, usage, expected in (("invalid-json", True, "failed"), (None, False, "blocked")):
+        for content, usage, expected in (("invalid-json", True, "failed"), ("invalid-json", False, "failed")):
             with self.subTest(status=expected), self.store_case() as (store, workspace_id, attempt):
                 result = self.generate(store, workspace_id, attempt, content=content, usage=usage)
                 self.assertEqual(result.status, expected)
@@ -1067,7 +1104,10 @@ class PersistedRunTests(unittest.TestCase):
                     )
                 self.assertEqual(
                     restarted.get_run_snapshot(workspace_id, mission.mission_id, run.run_id),
-                    snapshot,
+                    snapshot.model_copy(update={"provider_receipts": [
+                        receipt.model_copy(update={"p0_sha256": known_p0, "tool_schema_sha256": known_hash})
+                        for receipt in snapshot.provider_receipts
+                    ]}),
                 )
             for invalid_p0 in (agent.P0_RUN_SHA256, "0" * 64):
                 with closing(sqlite3.connect(store.db_path)) as connection, connection:
@@ -1845,9 +1885,9 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(store.saved_attempts[0][3].status, "succeeded")
         self.assertIsNone(store.saved_attempts[0][3].mission_id)
 
-    def test_draft_missing_usage_blocks_without_candidate_and_invalid_json_fails(self) -> None:
+    def test_draft_invalid_candidate_fails_even_without_usage(self) -> None:
         for completion, expected_status, expected_code in (
-            (_completion("{}"), "blocked", "provider_usage_unknown"),
+            (ProviderCompletion(completion_id="missing-usage", content="{}", reasoning_content=None, tool_calls=(), finish_reason="stop", usage=None), "failed", "provider_protocol_error"),
             (
                 ProviderCompletion(
                     completion_id="completion-2",
@@ -1862,15 +1902,6 @@ class AgentTests(unittest.TestCase):
             ),
         ):
             store = FakeStore(attempt=_attempt())
-            if expected_status == "blocked":
-                completion = ProviderCompletion(
-                    completion_id="completion-3",
-                    content="{}",
-                    reasoning_content="hidden",
-                    tool_calls=(),
-                    finish_reason="stop",
-                    usage=None,
-                )
             provider = FakeProvider([completion])
             with patch.object(agent, "get_provider", return_value=provider):
                 agent.generate_mission_draft(store, _id(1), _id(2), Event())
@@ -2222,7 +2253,7 @@ class AgentTests(unittest.TestCase):
         self.assertFalse(store.failures)
         self.assertFalse(any(event.event_type == "run_partial" for event in store.events))
 
-    def test_run_missing_usage_is_blocked_without_tool_execution(self) -> None:
+    def test_run_missing_usage_allows_valid_tool_execution(self) -> None:
         completion = ProviderCompletion(
             completion_id="completion-4",
             content="",
@@ -2231,13 +2262,16 @@ class AgentTests(unittest.TestCase):
             finish_reason="tool_calls",
             usage=None,
         )
-        provider = FakeProvider([completion])
+        provider = FakeProvider([completion, _completion("No terminal")])
         store = FakeStore(context=_context_snapshot())
+        call = ListSourcesCall(call_id="call-list", name="list_sources", arguments={})
+        store.tool_results = {call.call_id: _tool_result(call)}
         with patch.object(agent, "get_provider", return_value=provider):
             run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
-        self.assertEqual(store.executed_calls, [])
-        self.assertEqual(store.failures[0][1:], ("blocked", "provider_usage_unknown"))
-        self.assertEqual(store.receipts[0].status, "blocked")
+        self.assertEqual(store.executed_calls, [call])
+        self.assertEqual(store.failures[0][1:], ("failed", "terminal_result_missing"))
+        self.assertEqual(store.receipts[0].status, "succeeded")
+        self.assertEqual(store.receipts[0].usage_status, "missing")
 
     def test_public_model_delta_total_bytes_are_bounded(self) -> None:
         provider = FakeProvider([_completion("x" * (262144 + 1))])

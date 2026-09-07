@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiRequestError } from "./api/client";
 import {
   Path2RunDetails,
+  RunUsageNotice,
   Path2Workbench,
   acceptRunEvent,
   buildConfirmRequest,
@@ -248,7 +249,7 @@ function event(sequence: number, eventId: string, workspace = workspaceId): RunE
     mission_id: missionId,
     run_id: runId,
     sequence,
-    public_payload: { turn_index: sequence },
+    public_payload: { turn_index: sequence, transport: "stream", fallback_of_turn_index: null },
   };
 }
 
@@ -670,5 +671,72 @@ describe("Path 2 Workbench state boundaries", () => {
     const markup = renderToStaticMarkup(createElement(Path2RunDetails, { state: cancelledState }));
     expect(markup).toContain("已取消");
     expect(markup).not.toContain("已完成");
+  });
+});
+
+
+describe("Run usage readback", () => {
+  const receipt = {
+    workspace_id: workspaceId, mission_id: missionId, run_id: runId,
+    receipt_id: "00000000-0000-4000-8000-000000000081", attempt_id: null,
+    turn_index: 1, created_at: "2026-09-03T10:00:00Z", status: "succeeded" as const,
+    config: { endpoint_id: "deepseek_chat_completions" as const, model: "deepseek-v4-flash" as const,
+      thinking: "enabled" as const, reasoning_effort: "high" as const },
+    p0_sha256: "0".repeat(64), input_tokens: null, output_tokens: null,
+    cache_hit_tokens: null, cache_miss_tokens: null, context_manifest_id: runId,
+    context_manifest_sha256: "0".repeat(64), tool_schema_sha256: "0".repeat(64),
+    error_code: "provider_usage_missing", usage_status: "missing" as const,
+  };
+  it("shows missing usage without presenting a zero total", () => {
+    const markup = renderToStaticMarkup(createElement(RunUsageNotice, { run: { ...run, provider_receipts: [receipt] } }));
+    expect(markup).toContain("1 次请求用量未返回");
+    expect(markup).not.toContain("输入 0");
+    expect(markup).not.toContain("已知用量小计");
+  });
+  it("separates a known subtotal from missing attempts and checks receipt scope", () => {
+    const snapshot = { ...run, provider_receipts: [receipt, { ...receipt,
+      receipt_id: "00000000-0000-4000-8000-000000000082", turn_index: 2,
+      input_tokens: 9, output_tokens: 5, usage_status: "known" as const, error_code: null,
+    }] };
+    const markup = renderToStaticMarkup(createElement(RunUsageNotice, { run: snapshot }));
+    expect(markup).toContain("已知用量小计：输入 9，输出 5 tokens");
+    expect(markup).toContain("总用量尚不完整");
+    expect(runSnapshotMatchesIdentity({ ...snapshot, provider_receipts: [{ ...receipt, workspace_id: "wrong" }] },
+      { workspaceId, missionId, runId })).toBe(false);
+  });
+});
+
+describe("non-stream fallback history", () => {
+  const first = event(1, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  const fallback: RunEventEnvelope = { ...first, sequence: 4,
+    event_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", event_type: "model_started",
+    public_payload: { turn_index: 2, transport: "non_stream", fallback_of_turn_index: 1 },
+  };
+  it("retains abandoned stream fragments as history distinct from the persisted answer", () => {
+    const events: RunEventEnvelope[] = [first, { ...first, sequence: 2,
+      event_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", event_type: "model_delta",
+      public_payload: { turn_index: 1, content: "abandoned fragment" },
+    }, { ...first, sequence: 3, event_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      event_type: "model_completed", public_payload: { turn_index: 1, provider_receipt_id: runId },
+    }, fallback];
+    const markup = renderToStaticMarkup(createElement(Path2RunDetails, { state: {
+      ...emptyState, workspaceId, runSnapshot: { ...run, final_output: "persisted replacement" },
+      runEventState: { events, lastSequence: 4, hasSequenceGap: false },
+    } }));
+    expect(markup).toContain("请求 2 开始非流式降级，替代流式请求 1");
+    expect(markup).toContain("已停止并降级，不作为结果");
+    expect(markup).toContain("此事件不表示原请求成功");
+    expect(markup).toContain("abandoned fragment");
+    expect(markup).toContain("persisted replacement");
+  });
+  it("accepts legacy stream events and validates fallback linkage", () => {
+    expect(parseRunEvent(JSON.stringify(first))).not.toBeNull();
+    expect(parseRunEvent(JSON.stringify(fallback))).not.toBeNull();
+    for (const payload of [
+      { turn_index: 2, transport: "non_stream" },
+      { turn_index: 2, transport: "non_stream", fallback_of_turn_index: 2 },
+      { turn_index: 3, transport: "non_stream", fallback_of_turn_index: 1 },
+      { turn_index: 2, transport: "stream", fallback_of_turn_index: 1 },
+    ]) expect(parseRunEvent(JSON.stringify({ ...fallback, public_payload: payload }))).toBeNull();
   });
 });

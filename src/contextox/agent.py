@@ -72,6 +72,7 @@ from contextox.provider import (
     ProviderCompletion,
     ProviderContextBudgetError,
     ProviderError,
+    ProviderStreamInterruptedError,
     ProviderTimeouts,
     ProviderUsage,
 )
@@ -128,8 +129,10 @@ is the complete current list. Use at most one draft update per batch and use its
 returned draft_token for the next write. Terminal tools must be alone in a batch.
 If a batch is explicitly rejected with effect=none, correct the reported shape;
 do not repeat a call_id. All proposals count toward the 24-tool budget and only
-two recovery attempts are allowed within eight model turns. There are no HTTP
-retries. Permission, protocol and unknown-effect failures do not permit recovery.
+two tool recovery attempts are allowed within eight Provider requests. The runtime
+may replace one interrupted or wire-limited stream with one non-stream request,
+counted within those eight requests. Do not retry tools for transport failures.
+Permission, protocol and unknown-effect failures do not permit tool recovery.
 Keep arguments and explanations concise within the per-call output budget.
 Save necessary relationship/field candidates, then create concrete clarifications
 with impact, owner role and needed evidence when business decisions are missing.
@@ -244,6 +247,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("ff73c255028ee367157aced3142ecf7fe8b375ba7b0ba7184384f9b396d39383", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("816172ec2f4b304510be0bf8409409d7d5eff2a309f7f6d7d03010d00b5e2b26", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("50be10fa305a432828f8e7e7d3c48bcdc382d10f86368ab7e0562640b203ec05", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
     ("f8676ae7c51efc3b9a776124c89801de2ec179c5f8f611137d6521af3bada4f7", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
@@ -585,30 +589,6 @@ def generate_mission_draft(
         )
         return
 
-    if completion.usage is None:
-        receipt = _make_receipt(
-            provider=provider,
-            workspace_id=workspace_id,
-            attempt_id=attempt_id,
-            mission_id=None,
-            run_id=None,
-            turn_index=1,
-            status="blocked",
-            p0_sha256=P0_DRAFT_SHA256,
-            usage=None,
-            error_code="provider_usage_unknown",
-        )
-        _attempt_failure(
-            store,
-            workspace_id=workspace_id,
-            attempt_id=attempt_id,
-            provider=provider,
-            status="blocked",
-            code="provider_usage_unknown",
-            receipt=receipt,
-        )
-        return
-
     try:
         candidate = _candidate_from_completion(completion)
     except _AgentFailure as failure:
@@ -650,6 +630,7 @@ def generate_mission_draft(
         status="succeeded",
         p0_sha256=P0_DRAFT_SHA256,
         usage=completion.usage,
+        error_code="provider_usage_missing" if completion.usage is None else None,
     )
     store.save_mission_draft_result(workspace_id, attempt_id, candidate, receipt)
 
@@ -797,6 +778,7 @@ def _append_model_started(
     mission_id: str,
     run_id: str,
     turn_index: int,
+    fallback_of_turn_index: int | None = None,
 ) -> None:
     _append_event(
         store,
@@ -805,7 +787,11 @@ def _append_model_started(
         run_id,
         ModelStartedEventInput(
             event_type="model_started",
-            public_payload=ModelStartedPayload(turn_index=turn_index),
+            public_payload=ModelStartedPayload(
+                turn_index=turn_index,
+                transport="non_stream" if fallback_of_turn_index is not None else "stream",
+                fallback_of_turn_index=fallback_of_turn_index,
+            ),
         ),
     )
 
@@ -1346,7 +1332,10 @@ def run_agent(
         {"role": "user", "content": context_text},
     ]
 
+    fallback_from: int | None = None
+    fallback_used = False
     for turn_index in range(1, budget.max_model_turns + 1):
+        is_fallback = fallback_from is not None
         failure_code = _check_turn_budget(
             budget=budget,
             started_at=started_at,
@@ -1361,7 +1350,24 @@ def run_agent(
             return
 
         if turn_index > 1:
-            snapshot = store.get_context_snapshot(workspace_id, mission_id, run_id)
+            previous_snapshot = snapshot
+            try:
+                snapshot = store.get_context_snapshot(workspace_id, mission_id, run_id)
+            except WorkspaceStoreError as exc:
+                status, code = _store_failure(exc)
+                _stop_run(store, workspace_id, mission_id, run_id, status, code)
+                return
+            if is_fallback and (
+                snapshot.mission != previous_snapshot.mission
+                or snapshot.sources != previous_snapshot.sources
+                or snapshot.draft != previous_snapshot.draft
+                or snapshot.clarifications != previous_snapshot.clarifications
+                or snapshot.message_context != previous_snapshot.message_context
+                or snapshot.run.budget != previous_snapshot.run.budget
+                or snapshot.run.source_refs != previous_snapshot.run.source_refs
+            ):
+                _stop_run(store, workspace_id, mission_id, run_id, "blocked", "context_manifest_invalid")
+                return
             if (
                 snapshot.mission.workspace_id != workspace_id
                 or snapshot.mission.mission_id != mission_id
@@ -1373,8 +1379,9 @@ def run_agent(
             if snapshot.run.status != "running":
                 return
             try:
-                messages[1] = {"role": "user", "content": json.dumps(
-                    adapter.context(snapshot), ensure_ascii=False, sort_keys=True, separators=(",", ":"))}
+                if not is_fallback:
+                    messages[1] = {"role": "user", "content": json.dumps(
+                        adapter.context(snapshot), ensure_ascii=False, sort_keys=True, separators=(",", ":"))}
             except HandleDenied:
                 _stop_run(store, workspace_id, mission_id, run_id, "blocked", "source_permission_denied")
                 return
@@ -1426,15 +1433,16 @@ def run_agent(
         logger.info("Agent request turn=%d packet_bytes=%d history_bytes=%d tools_bytes=%d.",
                     turn_index, wire_size(messages[1]), wire_size(messages[2:]), wire_size(TOOL_DEFINITIONS))
         request_started_at = time.monotonic()
-        _append_model_started(store, workspace_id, mission_id, run_id, turn_index)
+        public_checkpoint = (len(public_parts), public_bytes[0])
         remaining_ms = _remaining_run_ms(budget=budget, started_at=started_at)
         if remaining_ms <= 0:
             _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
             return
+        _append_model_started(store, workspace_id, mission_id, run_id, turn_index, fallback_from)
         try:
             completion = provider.complete(
                 messages,
-                stream=True,
+                stream=not is_fallback,
                 tools=[dict(definition) for definition in TOOL_DEFINITIONS],
                 max_tokens=budget.max_output_tokens,
                 user_id=_opaque_user_id(workspace_id, provider),
@@ -1471,6 +1479,14 @@ def run_agent(
             _cancel_run(store, workspace_id, mission_id, run_id)
             return
         except ProviderError as exc:
+            recoverable = isinstance(exc, ProviderStreamInterruptedError) or (
+                isinstance(exc, ProviderContextBudgetError) and exc.stage == "sse_wire"
+            )
+            retry_stream = (
+                recoverable and not fallback_used and not is_fallback
+                and not cancel_event.is_set() and turn_index < budget.max_model_turns
+                and _remaining_run_ms(budget=budget, started_at=started_at) > 0
+            )
             receipt = _make_receipt(
                 provider=provider,
                 workspace_id=workspace_id,
@@ -1482,10 +1498,17 @@ def run_agent(
                 p0_sha256=P0_RUN_SHA256,
                 usage=exc.usage,
                 context_manifest=manifest,
-                error_code=exc.code,
+                error_code=("stream_fallback_sse_wire" if isinstance(exc, ProviderContextBudgetError)
+                            else "stream_fallback_interrupted") if retry_stream else exc.code,
             )
             _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
-            if exc.run_status == "cancelled":
+            if retry_stream:
+                fallback_used = True
+                fallback_from = turn_index
+                del public_parts[public_checkpoint[0]:]
+                public_bytes[0] = public_checkpoint[1]
+                continue
+            if exc.run_status == "cancelled" or cancel_event.is_set():
                 _cancel_run(store, workspace_id, mission_id, run_id)
                 return
             _stop_run(store, workspace_id, mission_id, run_id, exc.run_status, exc.code)
@@ -1527,28 +1550,25 @@ def run_agent(
             _cancel_run(store, workspace_id, mission_id, run_id)
             return
 
+        if is_fallback and len(public_parts) == public_checkpoint[0]:
+            try:
+                _append_model_delta(store, workspace_id, mission_id, run_id, turn_index,
+                                    completion.content, public_parts, public_bytes, budget.max_context_bytes)
+            except ProviderContextBudgetError as exc:
+                receipt = _make_receipt(
+                    provider=provider, workspace_id=workspace_id, attempt_id=None,
+                    mission_id=mission_id, run_id=run_id, turn_index=turn_index,
+                    status=exc.run_status, p0_sha256=P0_RUN_SHA256, usage=completion.usage,
+                    context_manifest=manifest, error_code=exc.code,
+                )
+                _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
+                _stop_run(store, workspace_id, mission_id, run_id, exc.run_status, exc.code)
+                return
+
         logger.info("Agent response turn=%d elapsed_ms=%d finish_reason=%s provider_id_observed=%s usage=%s.",
                     turn_index, max(0, int((time.monotonic() - request_started_at) * 1000)),
                     completion.finish_reason if completion.finish_reason in {"stop", "tool_calls", "length"} else "other",
                     bool(completion.completion_id), "known" if completion.usage is not None else "unknown")
-
-        if completion.usage is None:
-            receipt = _make_receipt(
-                provider=provider,
-                workspace_id=workspace_id,
-                attempt_id=None,
-                mission_id=mission_id,
-                run_id=run_id,
-                turn_index=turn_index,
-                status="blocked",
-                p0_sha256=P0_RUN_SHA256,
-                usage=None,
-                context_manifest=manifest,
-                error_code="provider_usage_unknown",
-            )
-            _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
-            _stop_run(store, workspace_id, mission_id, run_id, "blocked", "provider_usage_unknown")
-            return
 
         receipt = _make_receipt(
             provider=provider,
@@ -1561,9 +1581,12 @@ def run_agent(
             p0_sha256=P0_RUN_SHA256,
             usage=completion.usage,
             context_manifest=manifest,
+            error_code=("provider_fallback_usage_missing" if is_fallback else "provider_usage_missing")
+                       if completion.usage is None else ("provider_fallback_succeeded" if is_fallback else None),
         )
         receipt = _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
         _append_model_completed(store, workspace_id, mission_id, run_id, turn_index, receipt)
+        fallback_from = None
 
         if (time.monotonic() - started_at) * 1000 >= budget.max_elapsed_ms:
             _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
