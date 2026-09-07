@@ -156,6 +156,30 @@ class FakeProvider:
 
 
 class PersistedAttemptTests(unittest.TestCase):
+    def test_draft_list_fields_reject_scalar_values_without_coercion_or_retry(self):
+        payload = {
+            "title": "Synthetic draft", "goal": "Define synthetic fields",
+            "completion_criteria": ["Return a candidate"], "scope_notes": [],
+        }
+        for field in ("completion_criteria", "scope_notes"):
+            for invalid in ("A scalar is not an array", {"note": "Not an array"}):
+                with self.subTest(field=field, value_type=type(invalid).__name__):
+                    with self.store_case() as (store, workspace_id, attempt):
+                        with self.assertLogs("contextox.agent", level="WARNING") as logs:
+                            failed = self.generate(
+                                store, workspace_id, attempt,
+                                content=json.dumps({**payload, field: invalid}),
+                            )
+                        self.assertEqual((failed.status, failed.error_code),
+                                         ("failed", "provider_protocol_error"))
+                        self.assertIsNone(failed.candidate)
+                        self.assertIsNotNone(failed.provider_receipt_id)
+                        self.assertIn(f"{field}:list_type", "\n".join(logs.output))
+                        self.assertEqual(store.list_missions(workspace_id), [])
+                        restarted = WorkspaceStore.open(store.data_dir)
+                        self.assertEqual(restarted.get_mission_draft_attempt(
+                            workspace_id, attempt.attempt_id), failed)
+
     def test_invalid_candidate_logs_only_the_safe_failure_stage(self):
         with self.store_case() as (store, workspace_id, attempt):
             private_marker = "private-provider-content-must-not-be-logged"

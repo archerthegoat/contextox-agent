@@ -84,8 +84,14 @@ _MISSION_DRAFT_FIELDS = frozenset({
 
 
 P0_DRAFT = """ContextOx Path 2 MissionDraftAttempt.
-Return exactly one JSON object with only title, goal, completion_criteria, and
-scope_notes.  Produce a candidate task draft from the user's current input;
+Return exactly one JSON object with only these four required fields:
+- title: a string of 1 to 160 characters.
+- goal: a string of at most 4096 characters.
+- completion_criteria: an array of 1 to 20 strings, each at most 4096 characters.
+- scope_notes: an array of 0 to 20 strings, each at most 4096 characters; use []
+  when there are no scope notes.
+Use JSON arrays for both list fields, never a single string or an object.
+Produce a candidate task draft from the user's current input;
 do not invent sources, business facts, approvals, tools, or a Mission.  The
 candidate is not an approval and cannot complete a Mission."""
 
