@@ -568,7 +568,7 @@ class PersistedRunTests(unittest.TestCase):
                     }),
                 ),))])
                 with patch.object(agent, "get_provider", return_value=provider):
-                    agent.run_agent(store, ws, mission.mission_id, run.run_id, Event())
+                    run_legacy_fixture_agent(store, ws, mission.mission_id, run.run_id, Event())
                 self.assertEqual(len(provider.calls), 1)
                 self.assertEqual(provider.calls[0]["kwargs"]["max_tokens"], output_limit)
                 final = store.get_run_snapshot(ws, mission.mission_id, run.run_id)
@@ -633,7 +633,7 @@ class PersistedRunTests(unittest.TestCase):
 
             provider = IncrementalProvider([])
             with patch.object(agent, "get_provider", return_value=provider):
-                agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
+                run_legacy_fixture_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
             snapshot = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
             self.assertEqual(snapshot.status, "waiting_for_human")
             self.assertEqual(len(provider.calls), 4)
@@ -706,7 +706,7 @@ class PersistedRunTests(unittest.TestCase):
                     )])
                     with self.assertLogs("contextox.agent", level="WARNING") as logs:
                         with patch.object(agent, "get_provider", return_value=provider):
-                            agent.run_agent(store, workspace_id, mission.mission_id,
+                            run_legacy_fixture_agent(store, workspace_id, mission.mission_id,
                                             run.run_id, Event())
                     rendered = "\n".join(logs.output)
                     self.assertEqual(len(logs.output), 1)
@@ -747,7 +747,7 @@ class PersistedRunTests(unittest.TestCase):
             ),))])
             with self.assertNoLogs("contextox.agent", level="WARNING"):
                 with patch.object(agent, "get_provider", return_value=provider):
-                    agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
+                    run_legacy_fixture_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
             snapshot = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
             self.assertEqual(snapshot.status, "partial")
             self.assertIsNone(snapshot.error_code)
@@ -777,7 +777,7 @@ class PersistedRunTests(unittest.TestCase):
                     )])
                     with self.assertLogs("contextox.agent", level="WARNING") as logs:
                         with patch.object(agent, "get_provider", return_value=provider):
-                            agent.run_agent(store, workspace_id, mission.mission_id,
+                            run_legacy_fixture_agent(store, workspace_id, mission.mission_id,
                                             run.run_id, Event())
                     rendered = "\n".join(logs.output)
                     self.assertIn(f"stage={stage} finish_reason={safe_reason} turn_index=1", rendered)
@@ -999,7 +999,7 @@ class PersistedRunTests(unittest.TestCase):
                 _completion("Public partial summary.", (finish,)),
             ])
             with patch.object(agent, "get_provider", return_value=provider):
-                agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
+                run_legacy_fixture_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
 
             snapshot = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
             self.assertEqual(snapshot.status, "partial")
@@ -1052,7 +1052,7 @@ class PersistedRunTests(unittest.TestCase):
                 )
             self.assertEqual(raised.exception.code, "state_conflict")
             for known_p0, known_hash in (
-                ("a38eb1fb6abd111cd9e112b2498ffeb69bfd159f4c90a779039f21aede5cf241", agent.TOOL_SCHEMA_SHA256),
+                ("a38eb1fb6abd111cd9e112b2498ffeb69bfd159f4c90a779039f21aede5cf241", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
                 *[("6bad3f797fa92d421cfd83c77d597e691c932ec7800369e765ce420872c225fe", schema_hash) for schema_hash in (
                 "029c655c34a5ec4dbd64bb4d477093f29110dc8a95955965231d7d80caa5b993",
                 "9ff54495474aec898efe1921ae3ad206e4d9606c165afe530478faf0448ef4c9",
@@ -1185,7 +1185,7 @@ class PersistedRunTests(unittest.TestCase):
             ])
 
             with patch.object(agent, "get_provider", return_value=provider):
-                agent.run_agent(
+                run_legacy_fixture_agent(
                     store, workspace_id, mission.mission_id, run.run_id, Event()
                 )
 
@@ -1283,7 +1283,7 @@ class PersistedRunTests(unittest.TestCase):
                     '{"outcome":"partial","reason":"Business definition needs approval.","source_refs":[]}'),)),
             ])
             with patch.object(agent, "get_provider", return_value=provider):
-                agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
+                run_legacy_fixture_agent(store, workspace_id, mission.mission_id, run.run_id, Event())
             result = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
             self.assertEqual(result.status, "partial")
             self.assertEqual(len(result.terminal_receipt.tool_receipt_ids), 3)
@@ -1496,7 +1496,7 @@ class PersistedRunTests(unittest.TestCase):
             event = Event()
             provider = FakeProvider([], cancel_event=event)
             with patch.object(agent, "get_provider", return_value=provider):
-                agent.run_agent(store, workspace_id, mission.mission_id, run.run_id, event)
+                run_legacy_fixture_agent(store, workspace_id, mission.mission_id, run.run_id, event)
             cancelled = store.get_run_snapshot(
                 workspace_id, mission.mission_id, run.run_id
             )
@@ -1907,7 +1907,7 @@ class AgentTests(unittest.TestCase):
                 "call-list": _tool_result(list_domain_call),
                 "call-finish": _tool_result(finish_domain_call, terminal=True, ordinal=2),
             }
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
 
         self.assertEqual(len(provider.calls), 2)
         self.assertEqual(len(provider.calls[0]["kwargs"]["tools"]), 7)
@@ -1929,7 +1929,7 @@ class AgentTests(unittest.TestCase):
         with patch.object(agent, "get_provider", return_value=provider), patch.object(
             agent.time, "monotonic", side_effect=clock.monotonic
         ):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
 
         timeouts = provider.calls[0]["kwargs"]["timeouts"]
         self.assertEqual(
@@ -1966,7 +1966,7 @@ class AgentTests(unittest.TestCase):
         with patch.object(agent, "get_provider", return_value=provider), patch.object(
             agent.time, "monotonic", side_effect=clock.monotonic
         ):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
 
         self.assertEqual([call.call_id for call in store.executed_calls], ["call-1"])
         self.assertEqual(store.failures[0][1:], ("blocked", "elapsed_budget_exceeded"))
@@ -1986,7 +1986,7 @@ class AgentTests(unittest.TestCase):
             eight_store.tool_results[call_id] = _tool_result(domain_call, ordinal=index)
         eight_provider = FakeProvider(eight_completions)
         with patch.object(agent, "get_provider", return_value=eight_provider):
-            agent.run_agent(eight_store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(eight_store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(len(eight_provider.calls), 8)
         self.assertEqual(len(eight_store.executed_calls), 8)
         self.assertEqual(eight_store.failures[0][1:], ("blocked", "model_turn_budget_exceeded"))
@@ -2003,7 +2003,7 @@ class AgentTests(unittest.TestCase):
             )
         tool_provider = FakeProvider([_completion("", tuple(tool_calls))])
         with patch.object(agent, "get_provider", return_value=tool_provider):
-            agent.run_agent(tool_store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(tool_store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(len(tool_provider.calls), 1)
         self.assertEqual(len(tool_store.executed_calls), 24)
         self.assertEqual(tool_store.failures[0][1:], ("blocked", "tool_call_budget_exceeded"))
@@ -2020,7 +2020,7 @@ class AgentTests(unittest.TestCase):
         provider = FakeProvider([_completion("", calls)])
         store = FakeStore(context=_context_snapshot())
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(store.executed_calls, [])
         self.assertEqual(store.failures[0][1:], ("failed", "terminal_tool_mixed_batch"))
 
@@ -2035,7 +2035,7 @@ class AgentTests(unittest.TestCase):
         store.tool_results = {raw_call.call_id: result.model_copy(update={"tool_receipt": bad_receipt})}
         provider = FakeProvider([_completion("", (raw_call,))])
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual([call.call_id for call in store.executed_calls], ["call-list"])
         self.assertEqual(store.failures[0][1:], ("failed", "tool_result_invalid"))
 
@@ -2057,7 +2057,7 @@ class AgentTests(unittest.TestCase):
         store.tool_results = {raw_call.call_id: result}
         provider = FakeProvider([_completion("", (raw_call,))])
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(len(provider.calls), 1)
         self.assertEqual(store.saved_outputs, [])
         self.assertEqual(store.failures[0][1:], ("failed", "terminal_result_invalid"))
@@ -2096,7 +2096,7 @@ class AgentTests(unittest.TestCase):
         store.tool_results = {raw_call.call_id: _clarification_result(domain_call)}
         provider = FakeProvider([_completion("Need a decision.", (raw_call,))])
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(store.saved_outputs, [])
         self.assertEqual(store.failures[0][1:], ("failed", "terminal_result_invalid"))
 
@@ -2135,7 +2135,7 @@ class AgentTests(unittest.TestCase):
             ]
         )
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(len(provider.calls), 2)
         self.assertEqual(store.saved_outputs, ["The terminal precondition is not met.Partial."])
         self.assertFalse(store.failures)
@@ -2164,7 +2164,7 @@ class AgentTests(unittest.TestCase):
             [_completion("The source precondition is not met.", (list_call,)), _completion("Partial.", (finish_call,))]
         )
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
 
         self.assertEqual([call.call_id for call in store.executed_calls], ["call-list", "call-finish"])
         completed = [event for event in store.events if event.event_type == "tool_completed"]
@@ -2180,7 +2180,7 @@ class AgentTests(unittest.TestCase):
             call = ProviderToolCall("call-list", "list_sources", "{}")
             provider = FakeProvider([_completion("", (call,))])
             with patch.object(agent, "get_provider", return_value=provider):
-                agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+                run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
             self.assertEqual(store.executed_calls, [])
             self.assertEqual(store.failures[0][1:], (expected_status, code))
 
@@ -2217,7 +2217,7 @@ class AgentTests(unittest.TestCase):
         store = FakeStore(context=_context_snapshot())
         store.tool_results = {call.call_id: _clarification_result(normalized)}
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(store.saved_outputs, ["Need an owner decision."])
         self.assertFalse(store.failures)
         self.assertFalse(any(event.event_type == "run_partial" for event in store.events))
@@ -2234,7 +2234,7 @@ class AgentTests(unittest.TestCase):
         provider = FakeProvider([completion])
         store = FakeStore(context=_context_snapshot())
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(store.executed_calls, [])
         self.assertEqual(store.failures[0][1:], ("blocked", "provider_usage_unknown"))
         self.assertEqual(store.receipts[0].status, "blocked")
@@ -2243,7 +2243,7 @@ class AgentTests(unittest.TestCase):
         provider = FakeProvider([_completion("x" * (262144 + 1))])
         store = FakeStore(context=_context_snapshot())
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(store.failures[0][1:], ("blocked", "context_budget_exceeded"))
         self.assertEqual(store.receipts[0].status, "blocked")
         deltas = [event for event in store.events if event.event_type == "model_delta"]
@@ -2255,7 +2255,7 @@ class AgentTests(unittest.TestCase):
         provider = FakeProvider([_completion("No terminal.")])
         store = FakeStore(context=_context_snapshot())
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(store.saved_outputs, [])
         self.assertEqual(store.failures[0][1:], ("failed", "terminal_result_missing"))
 
@@ -2263,7 +2263,7 @@ class AgentTests(unittest.TestCase):
         cancelled_store = FakeStore(context=_context_snapshot(status="cancelled"))
         cancelled_provider = FakeProvider([])
         with patch.object(agent, "get_provider", return_value=cancelled_provider):
-            agent.run_agent(cancelled_store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(cancelled_store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(cancelled_provider.calls, [])
         self.assertEqual(cancelled_store.mark_calls, 0)
 
@@ -2272,7 +2272,7 @@ class AgentTests(unittest.TestCase):
         queued_store = FakeStore(context=_context_snapshot())
         queued_provider = FakeProvider([])
         with patch.object(agent, "get_provider", return_value=queued_provider):
-            agent.run_agent(queued_store, _id(1), _id(3), _id(4), event)
+            run_legacy_fixture_agent(queued_store, _id(1), _id(3), _id(4), event)
         self.assertEqual(queued_provider.calls, [])
         self.assertEqual(queued_store.mark_calls, 0)
         self.assertEqual(queued_store.cancel_calls, 1)
@@ -2282,7 +2282,7 @@ class AgentTests(unittest.TestCase):
         provider = FakeProvider([], cancel_event=event)
         store = FakeStore(context=_context_snapshot())
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), event)
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), event)
         self.assertEqual(len(store.receipts), 1)
         self.assertEqual(store.receipts[0].status, "cancelled")
         self.assertEqual(store.receipts[0].error_code, "cancelled")
@@ -2299,7 +2299,7 @@ class AgentTests(unittest.TestCase):
         store = WaitingMarkStore(context=_context_snapshot())
         provider = FakeProvider([])
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(provider.calls, [])
         self.assertEqual(store.events, [])
 
@@ -2336,9 +2336,34 @@ class AgentTests(unittest.TestCase):
         store.tool_results = {raw_call.call_id: _tool_result(domain_call, ordinal=1)}
         provider = FakeProvider([_completion("Evidence.", (raw_call,))])
         with patch.object(agent, "get_provider", return_value=provider):
-            agent.run_agent(store, _id(1), _id(3), _id(4), Event())
+            run_legacy_fixture_agent(store, _id(1), _id(3), _id(4), Event())
         self.assertEqual(len(provider.calls), 1)
         self.assertEqual(store.failures, [])
+
+
+class LegacyFixtureAdapter:
+    """Retain existing domain-loop regression cases, not G1 model-quality evidence.
+
+    These fixtures predate the model-only protocol and intentionally hand-build
+    domain arguments. G1 tests exercise the unpatched public adapter separately.
+    """
+    def __init__(self, snapshot, store):
+        self.receipts = []
+
+    def context(self, snapshot):
+        return json.loads(agent._context_message(snapshot, self.receipts))
+
+    def normalize(self, completion, decode):
+        return agent._normalize_tool_calls(completion)
+
+    def output(self, result, call):
+        self.receipts.append(result.tool_receipt.receipt_id)
+        return agent._jsonable(result.output)
+
+
+def run_legacy_fixture_agent(*args, **kwargs):
+    with patch.object(agent, "ToolAdapter", LegacyFixtureAdapter):
+        return agent.run_agent(*args, **kwargs)
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ class AnswerProvider:
         self.packets.append(messages)
         return ProviderCompletion(completion_id="synthetic", content="Transient thinking is not the final answer", reasoning_content="",
             tool_calls=(ProviderToolCall(call_id="call_answer", name="finish_run", arguments=json.dumps(
-                {"outcome": "partial", "reason": "A bounded public answer", "source_refs": []})),),
+                {"outcome": "partial", "reason": "A bounded public answer", "evidence_handles": []})),),
             finish_reason="tool_calls", usage=ProviderUsage(1, 1, 0, 1))
 
 

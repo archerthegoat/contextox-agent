@@ -97,7 +97,7 @@ class SourceBoundsTests(unittest.TestCase):
 
             provider = BoundsProvider([])
             with patch.object(agent, 'get_provider', return_value=provider):
-                agent.run_agent(store, ws, mission.mission_id, run.run_id, Event())
+                fixtures.run_legacy_fixture_agent(store, ws, mission.mission_id, run.run_id, Event())
             snapshot = store.get_run_snapshot(ws, mission.mission_id, run.run_id)
             self.assertEqual(snapshot.status, 'partial')
             self.assertEqual(len(provider.calls), 3)

@@ -3935,7 +3935,12 @@ function eventSummary(event: RunEventEnvelope): string {
     case "tool_requested": return `请求工具 ${event.public_payload.name}`;
     case "tool_started": return `开始工具 ${event.public_payload.name}`;
     case "tool_completed": return `工具 ${event.public_payload.call_id} ${event.public_payload.status}`;
-    case "tool_failed": return `工具 ${event.public_payload.call_id} 失败：${event.public_payload.error_code}`;
+    case "tool_failed":
+      if (event.public_payload.error_code === "tool_arguments_invalid_no_effect"
+          || event.public_payload.error_code === "batch_rejected_no_effect") {
+        return `调用 ${event.public_payload.call_id} 已拒绝，未执行`;
+      }
+      return `工具 ${event.public_payload.call_id} 失败：${event.public_payload.error_code}`;
     case "draft_updated": return `定义草案更新至 version ${event.public_payload.version}`;
     case "clarification_requested": return `产生澄清请求，draft version ${event.public_payload.draft_version}`;
     case "run_completed":

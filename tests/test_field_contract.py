@@ -42,7 +42,7 @@ class FieldContractFailureTests(unittest.TestCase):
                         return super().complete(messages, **kwargs)
                 provider = P([])
                 with patch.object(agent, 'get_provider', return_value=provider):
-                    agent.run_agent(store, ws, mission.mission_id, run.run_id, Event())
+                    t.run_legacy_fixture_agent(store, ws, mission.mission_id, run.run_id, Event())
                 final = store.get_run_snapshot(ws, mission.mission_id, run.run_id)
                 valid = variant == 'valid_unknown'
                 assert final.status == ('partial' if valid else 'failed')
