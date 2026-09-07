@@ -3655,7 +3655,7 @@ class WorkspaceStore:
                     schema_check = StoreDiagnostic(
                         key="workspace_store_schema",
                         status="ready",
-                        detail="The Workspace database uses schema version 3.",
+                        detail=f"The Workspace database uses schema version {version}.",
                         actual=f"user_version={version}",
                         expected=f"user_version={SCHEMA_VERSION}; exact v3 or v4 table set",
                     )

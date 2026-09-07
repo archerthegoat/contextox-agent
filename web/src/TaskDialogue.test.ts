@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { dialogueSources } from "./TaskDialogue";
+import { dialogueError, dialogueSources } from "./TaskDialogue";
 
 const source = {workspace_id:"workspace-a", source_id:"source-a", revision_id:"revision-a", sha256:"a".repeat(64)};
 
 describe("dialogue source authorization preflight", () => {
+  it("does not label an incomplete read as an unknown send outcome", () => {
+    const error = new Error("task readback failed");
+    expect(dialogueError(error, "read")).toContain("对话读取尚未核对完成");
+    expect(dialogueError(error, "read")).not.toContain("不要重复发送");
+    expect(dialogueError(error, "send")).toContain("不要重复发送");
+  });
   it("includes sources in the existing packet even when no new citation is selected", () => {
     const draft = {fields:[{source_columns:[{source_ref:source}]}], relationships:[]};
     const historyRunSources = [{...source, revision_id:"revision-b"}];

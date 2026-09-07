@@ -18,6 +18,8 @@ import {
   missionDraftAttemptMatchesIdentity,
   missionDraftAttemptIsMonotonic,
   missionSnapshotIsMonotonic,
+  missionStatusLabel,
+  sourceParseLabel,
   mergeRunSnapshot,
   parseRunEvent,
   replayTerminalRunEvents,
@@ -251,6 +253,43 @@ function event(sequence: number, eventId: string, workspace = workspaceId): RunE
 }
 
 describe("Path 2 Workbench state boundaries", () => {
+  it("keeps resumable, waiting, unknown and failed task status distinct", () => {
+    const terminal: RunSnapshot = {
+      ...run, status: "partial", final_output: "Synthetic saved answer",
+      terminal_receipt: {
+        workspace_id: workspaceId, mission_id: missionId, run_id: runId,
+        receipt_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        created_at: "2026-09-03T10:00:03Z", terminal_tool: "finish_run", outcome: "partial",
+        draft_id: null, draft_version: null, draft_sha256: null,
+        clarification_ids: [], provider_receipt_ids: [], tool_receipt_ids: [], source_refs: [],
+      },
+    };
+    const state: Path2WorkbenchState = {
+      ...emptyState, workspaceId, selectedMission: { ...mission, status: "blocked" },
+      missionSnapshotState: { status: "ready", items: [mission], issue: null },
+      runSnapshot: terminal,
+    };
+    expect(missionStatusLabel(state)).toBe("待继续分析");
+    expect(missionStatusLabel({ ...state, runSnapshot: { ...terminal, final_output: null } })).not.toBe("待继续分析");
+    expect(missionStatusLabel({ ...state, runSnapshot: { ...terminal, terminal_receipt: null } })).not.toBe("待继续分析");
+    expect(missionStatusLabel({ ...state, clarifications: [clarification] })).toBe("待回答澄清");
+    expect(missionStatusLabel({ ...state, latestDraft: draft })).toBe("待审核定义");
+    expect(missionStatusLabel({ ...state, runSnapshot: { ...terminal, status: "failed", error_code: "table_not_found" } })).toBe("分析失败");
+    for (const error_code of ["provider_cancelled_outcome_unknown", "interrupted_without_receipt"]) {
+      expect(missionStatusLabel({ ...state, runSnapshot: { ...terminal, status: "blocked", error_code } })).toBe("需核对上次结果");
+    }
+    expect(missionStatusLabel({ ...state, runAction: { status: "unknown", issue: null } })).toBe("需核对上次结果");
+    const markup = renderToStaticMarkup(createElement(Path2Workbench, { state, activeArea: "mission" }));
+    expect(markup).toContain("待继续分析");
+    expect(markup).toContain("任务版本与身份");
+  });
+
+  it("labels source readiness as parsing evidence rather than business approval", () => {
+    expect(sourceParseLabel("ready")).toBe("解析完成");
+    expect(sourceParseLabel("failed")).toBe("失败");
+    expect(sourceParseLabel("blocked")).toBe("已阻塞");
+  });
+
   it("replays terminal events once and closes without rerunning the task", () => {
     const listeners = new Map<string, (event: Event) => void>();
     const source: RunEventSource = {
@@ -619,7 +658,7 @@ describe("Path 2 Workbench state boundaries", () => {
       sourceState: { status: "ready", items: [source], issue: null },
       missionState: { status: "ready", items: [mission], issue: null },
       missionSnapshotState: { status: "ready", items: [mission], issue: null },
-    })).toEqual({ status: "ready", label: "来源与 Mission 已回读" });
+    })).toEqual({ status: "ready", label: "来源与任务已读取" });
   });
 
   it("keeps a cancelled Run visible as cancelled in the Agent panel", () => {

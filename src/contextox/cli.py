@@ -35,7 +35,7 @@ def _doctor(static_dir: Path, data_dir: Path | None = None) -> DoctorReport:
             key="python",
             status="ready" if python_actual == EXPECTED_PYTHON else "blocked",
             detail=(
-                "The managed Python runtime matches the N1 pin."
+                "The managed Python runtime matches the approved pin."
                 if python_actual == EXPECTED_PYTHON
                 else "Use UV with the repository's .python-version before starting."
             ),
@@ -74,9 +74,9 @@ def _doctor(static_dir: Path, data_dir: Path | None = None) -> DoctorReport:
             key="schema",
             status="ready" if schema_ready else "blocked",
             detail=(
-                "OpenAPI includes the N2a public seams."
+                "OpenAPI includes the local Workspace public seams."
                 if schema_ready
-                else "The generated API schema is missing an N2a public seam."
+                else "The generated API schema is missing a required public seam."
             ),
             actual=str(len(paths)),
             expected=str(len(required_paths)),
@@ -101,7 +101,7 @@ def _doctor(static_dir: Path, data_dir: Path | None = None) -> DoctorReport:
             DoctorCheck(
                 key=key,
                 status="not_run",
-                detail="Pass --data-dir to inspect the N2a Workspace store.",
+                detail="Pass --data-dir to inspect the Workspace store.",
             )
             for key in (
                 "workspace_store_configured",
@@ -126,13 +126,13 @@ def _doctor(static_dir: Path, data_dir: Path | None = None) -> DoctorReport:
         + [
             DoctorCheck(
                 key="provider",
-                status="not_implemented",
-                detail="No model provider is configured or called in N2a.",
+                status="not_run",
+                detail="The Provider boundary is implemented. Doctor does not inspect credentials or make model calls; configuration and real execution remain unverified.",
             ),
             DoctorCheck(
                 key="customer_data",
-                status="not_implemented",
-                detail="N2a accepts no customer files or private payloads.",
+                status="not_run",
+                detail="Authorized local source import and parsing are implemented. Doctor does not import or verify customer data; model sending requires a separate explicit scope.",
             ),
         ]
     )
@@ -162,7 +162,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command")
 
-    doctor = commands.add_parser("doctor", help="Inspect N2a local readiness.")
+    doctor = commands.add_parser("doctor", help="Inspect local runtime readiness.")
     doctor.add_argument("--json", action="store_true", help="Print JSON output.")
     doctor.add_argument(
         "--static-dir",

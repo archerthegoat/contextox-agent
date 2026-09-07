@@ -1,6 +1,19 @@
 # ContextOx Workbench
 
-> 当前增量：任务对话 A–D 已实现，见 [交付与验收记录](docs/任务对话A-D交付与验收.md)。下文的 N1 能力表和区域介绍保留为首阶段记录，不代表当前完整能力；当前行为与证据以增量交付记录和已批准契约为准。
+数契（ContextOx）是面向 FDE 的本地业务定义助手。目前可在 Workspace 中导入授权资料、创建任务、对话分析并保存带证据的字段、关系与澄清候选。业务回答、批准、正式 Contract 和批准 Context 的闭环仍待实现。
+
+当前实现与证据分层如下。任务对话详情见 [A–D 交付记录](docs/任务对话A-D交付与验收.md)。
+
+| 能力或证据层 | 当前边界 |
+| --- | --- |
+| 本地 Python API、React/TypeScript Workbench、SQLite Workspace | 已实现 |
+| 授权本地资料导入、来源版本、确定性解析与证据读取 | 已实现；只处理明确授权材料 |
+| 任务草案确认、持久对话、有限历史与引用、执行历史 | 已实现 |
+| 有预算的 Agent Loop、领域工具、取消、事件与收据 | 已实现；真实 Provider 可用性需要独立运行证据 |
+| 字段与关系草案、生成澄清、提交候选审核 | 已实现；候选不代表业务事实获批 |
+| 澄清回答与批准后续接、正式 Contract、批准 Context 复用 | 尚未实现 |
+| 本批真实 Provider、私有资料迁移 | `NOT RUN` |
+| 人工验收与用户价值 | `PENDING` / `NOT VERIFIED`；不能从测试、构建或 fake Provider 推导 |
 
 ## 任务对话增量
 
@@ -23,17 +36,17 @@ ContextOx Workbench 是一个面向 FDE 的本地业务定义助手：把客户�
 
 它要解决的不是“再做一个会写代码的 Agent”。FDE 真正容易卡住的地方，是文档、样例数据、表结构和不同角色的说法无法稳定对齐：粒度、身份、时间、口径、例外和责任人常常藏在资料之间，也常常没有被明确回答。ContextOx 的任务是把这些缺口显出来，让问题能交给合适的人回答，再把获批定义留在 Workspace Context 中。
 
-N1 是这个方向的本地 Workbench 壳层。它提供可运行的 Python API、React/TypeScript 界面、OpenAPI 类型链路和 SSE 连接骨架；它还没有读取客户资料、调用模型或完成业务定义闭环。
+N1 首阶段只交付了本地 Workbench 壳层；其历史能力与验证记录保留在下表，当前增量能力以上文为准。
 
-## 闭环
+## 产品闭环
 
 ```text
 授权资料 → 确定性证据 → 结构化澄清 → 人的裁决 → Contract → 批准 Context
 ```
 
-这条链路是产品目标，不是 N1 已完成的能力声明。N1 只把入口、状态边界和后续可验证的界面放在一起。
+这条链路是产品目标。目前已覆盖资料、证据与澄清候选，人的回答与批准及其后续闭环仍待实现。
 
-## 当前状态
+## N1 历史能力与验证记录
 
 | 能力或证据层 | 状态 |
 | --- | --- |
@@ -50,9 +63,9 @@ N1 是这个方向的本地 Workbench 壳层。它提供可运行的 Python API�
 
 `PASS` 只表示对应自动化或运行证据通过，不代表产品完成、真实模型可用或人已验收。Human acceptance 仍由人针对精确 commit/build 记录。
 
-## N1 快速开始
+## 本地快速开始
 
-需要 Python `3.14.7`、UV 和 Node.js/npm。依赖版本已锁定；安装前后的依赖审查记录属于本次 N1 交付证据。
+需要 Python `3.14.7`、UV 和 Node.js/npm。依赖版本已锁定；安装前核对项目中的依赖审查记录。
 
 ```bash
 uv sync --locked
@@ -70,7 +83,7 @@ uv run contextox doctor
 uv run contextox start
 ```
 
-然后打开 <http://127.0.0.1:8787>。服务只绑定本机回环地址；默认运行目录 `.contextox-agent/` 仅用于本地启动准备，N1 不写入客户资料。
+然后打开 <http://127.0.0.1:8787>。服务只绑定本机回环地址；默认数据目录为 `.contextox-agent/`。用于验收时请明确指定仓库外的临时数据目录；已有资料目录的迁移需要单独授权。
 
 也可以导出当前 API 合同：
 
@@ -78,16 +91,26 @@ uv run contextox start
 uv run contextox openapi --output /tmp/contextox-openapi.json
 ```
 
-`doctor` 显示 `partial` 是预期的：它会明确列出尚未实现的 Workspace、来源和 provider 能力，而不是把它们伪装成 ready。
+`doctor` 核对 Python、锁定依赖、公开接口与构建资源；传入 `--data-dir` 时还会检查现有资料库。它不读取凭据、不发起模型请求、不导入业务资料，因此 Provider 与 customer_data 检查保持 `not_run`，整体可以是 `partial`。输出的 `scope: n2a` 是兼容现有接口的诊断范围标识，不是当前产品版本或能力清单。
+
+如果旧虚拟环境指向已经失效的临时 Python 目录，先保存 `.venv/pyvenv.cfg` 和解释器链接，再用 UV 在原位置修复，保留现有包：
+
+```bash
+uv venv --allow-existing --no-python-downloads --python /absolute/path/to/installed/python3.14 .venv
+uv sync --locked
+uv run python --version
+```
+
+选定的解释器必须是已批准的 `3.14.7`；不要修改系统 Python。
 
 ## Workbench 里的四个区域
 
-- **Sources**：未来的授权资料、来源版本和证据入口。N1 尚未读取或枚举文件。
-- **Mission**：未来的任务阶段、领域工具收据和结构化事件。N1 只有公开的 SSE 连接骨架。
-- **Clarifications**：未来把未知变成可回答、可路由的问题。N1 尚未生成或提交澄清表单。
-- **Contract**：未来保存有来源、版本、哈希和审批边界的业务定义。N1 尚未提供审批或持久化。
+- **资料来源**：导入授权材料，查看解析结果、来源版本与证据；导入不等于允许向模型发送。
+- **任务**：选择实际任务，在右侧发送问题，中间查看结果与执行历史。
+- **待澄清**：查看模型生成的问题及依据；回答、批准和续接入口尚未开放。
+- **业务契约**：查看字段与关系草案、未知项和版本；正式 Contract 审批尚未实现。
 
-N1 不提供 provider SDK、真实模型调用、任意文件/SQL/shell 执行、通用 `read/write/edit` 工具、客户数据导入、远程同步、SSO、多用户协作、云端部署或发布能力。它也不把聊天、模型推断或未批准的表单回答提升为公司事实。
+运行范围限本机回环服务，不提供任意文件/SQL/shell 执行、远程同步、SSO、多用户协作、云端部署或发布。聊天与模型推断不会自动成为获批的公司事实。
 
 ## 技术边界
 
@@ -104,6 +127,6 @@ N1 不提供 provider SDK、真实模型调用、任意文件/SQL/shell 执行�
 
 ## 隐私与许可证
 
-客户资料、公司私有资料、运行数据库、凭证、原始 provider payload、敏感日志和私有评测数据不得进入 Git、普通日志或测试。只处理明确授权的本地材料；N1 当前不接收客户文件，也不调用 provider。具体边界以 [`AGENTS.md`](AGENTS.md) 和上述架构报告为准。
+客户资料、公司私有资料、运行数据库、凭证、原始 provider payload、敏感日志和私有评测数据不得进入 Git、普通日志或测试。只处理明确授权的本地材料；发送给 Provider 前必须确认本次输入与资料范围。具体边界以 [`AGENTS.md`](AGENTS.md) 和上述架构报告为准。
 
 本项目采用 [MIT License](LICENSE)。

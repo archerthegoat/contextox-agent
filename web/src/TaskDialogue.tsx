@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { components } from "./generated/api";
 import { ApiRequestError, fetchTaskMessages, fetchTaskRuns, fetchRunSnapshot, sendTaskMessage, fetchMessageSubmission, readSourceExcerpt, fetchSourceArtifact } from "./api/client";
-import { Path2RunDetails, replayTerminalRunEvents, browserRunEventSourceFactory, createRunEventState, statusLabel, sourceIdentityEquals, type Path2WorkbenchState, type RunSnapshot } from "./Path2Workbench";
+import { Path2RunDetails, replayTerminalRunEvents, browserRunEventSourceFactory, createRunEventState, statusLabel, missionStatusLabel, sourceIdentityEquals, type Path2WorkbenchState, type RunSnapshot } from "./Path2Workbench";
 
 type Message = components["schemas"]["TaskMessage"];
 export type MessageReference = Message["references"][number];
@@ -38,7 +38,7 @@ export function referenceLabel(ref: MessageReference): string {
   }
 }
 
-export function dialogueError(error: unknown): string {
+export function dialogueError(error: unknown, operation: "read" | "send" = "send"): string {
   const code = error instanceof ApiRequestError ? error.code : null;
   return ({
     task_dialogue_not_implemented: "当前资料库尚未启用任务对话写入。已有历史仍可查看。",
@@ -50,7 +50,7 @@ export function dialogueError(error: unknown): string {
     message_context_scope_mismatch: "所选历史或草案包含本轮未选资料，请调整范围。",
     message_context_too_large: "携带的历史过长，请减少所选消息。",
     message_submission_not_found: "尚未查到本次发送记录；这不能证明先前请求未被接受。请继续核对，或用保留的原请求重提。",
-  } as Record<string, string>)[code ?? ""] ?? (code ? `读取或发送未完成（${code}），草稿已保留。` : "连接中断，结果尚未确认。请核对原请求，不要重复发送。");
+  } as Record<string, string>)[code ?? ""] ?? (code ? `读取或发送未完成（${code}），草稿已保留。` : operation === "read" ? "对话读取尚未核对完成，请刷新。已有执行结果可在任务与执行历史中核对。" : "连接中断，结果尚未确认。请核对原请求，不要重复发送。");
 }
 
 export function useTaskDialogue(state: Path2WorkbenchState) {
@@ -89,7 +89,7 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
       setMessages(mp.items); setRuns(rp.items);
       setMessageCursor(mp.next_before_message_id); setRunCursor(rp.next_before_run_id);
       setLoaded(scope); setError("");
-    } catch (e) { if (current.current === scope && gen === generation.current) setError(dialogueError(e)); }
+    } catch (e) { if (current.current === scope && gen === generation.current) setError(dialogueError(e, "read")); }
     finally { if (current.current === scope && gen === generation.current) setLoading(false); }
   }, [ws, mid, scope]);
   useEffect(() => {
@@ -118,7 +118,7 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
       if (disposed) return;
       if (snapshots.some((snapshot, i) => snapshot.workspace_id !== ws || snapshot.mission_id !== mid || snapshot.run_id !== historyRunIds[i])) throw new Error("scope mismatch");
       setHistoryScope({key:historyKey, sources:dialogueSources(snapshots.map(snapshot => snapshot.source_refs)), issue:""});
-    }).catch(e => {if (!disposed) setHistoryScope({key:historyKey, sources:[], issue:dialogueError(e)});});
+    }).catch(e => {if (!disposed) setHistoryScope({key:historyKey, sources:[], issue:dialogueError(e, "read")});});
     return () => {disposed = true;};
   }, [historyKey, loaded, runs]);
   const scopeReady = loaded === scope && historyScope.key === historyKey && !historyScope.issue;
@@ -182,7 +182,7 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
         if (page.items.some(item => item.workspace_id !== ws || item.mission_id !== mid)) throw new Error("scope");
         setRuns(old => [...page.items, ...old]); setRunCursor(page.next_before_run_id);
       }
-    } catch (e) { if (current.current === scope) setError(dialogueError(e)); }
+    } catch (e) { if (current.current === scope) setError(dialogueError(e, "read")); }
     finally { if (current.current === scope) setLoading(false); }
   };
   const addReference = (ref: MessageReference) => {
@@ -214,7 +214,7 @@ export function TaskConversation({ state, dialogue: d, onReference, onHistory, o
   const blocked = !mission || !d.ready || d.loading || !d.scopeReady || d.missingSources.length > 0 || active || finalizing || waiting || mission.status === "cancelled" || mission.status === "completed" || !sourceAllowed;
   if (!mission) return <div className="conversation-empty"><h3>围绕一个任务展开分析</h3><p>先在任务工作区描述目标并确认任务，再在这里提问、查看答复与引用。</p></div>;
   return <div className="task-conversation">
-    <div className="conversation-context"><strong>{mission.title}</strong><span>任务：{mission.status === "blocked" && run?.status === "partial" && !waiting ? "待继续" : statusLabel(mission.status)}</span><button onClick={onHistory}>执行历史</button></div>
+    <div className="conversation-context"><strong>{mission.title}</strong><span>任务：{d.pendingId ? "需核对发送结果" : missionStatusLabel(state)}</span><button onClick={onHistory}>执行历史</button></div>
     <div className="conversation-messages" ref={messageList} onScroll={e => {const el = e.currentTarget; nearEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;}} aria-label="当前任务对话" aria-busy={d.loading}>
       {d.messageCursor && <button disabled={d.loading} onClick={() => void d.more("messages")}>加载更早消息</button>}
       {!d.ready && d.loading && <p role="status">正在读取任务对话…</p>}
@@ -271,15 +271,15 @@ export function TaskExecutionHistory({ state, dialogue: d }: {state: Path2Workbe
     try {
       const next = await fetchRunSnapshot(state.workspaceId, state.selectedMission.mission_id, id);
       if (current.current === scope && generation === selection.current && next.workspace_id === state.workspaceId && next.mission_id === state.selectedMission.mission_id && next.run_id === id) setDetail(next);
-    } catch (e) {if (current.current === scope && generation === selection.current) setError(dialogueError(e));}
+    } catch (e) {if (current.current === scope && generation === selection.current) setError(dialogueError(e, "read"));}
   };
   return <section className="task-history"><h2>执行历史</h2><p>每次明确发送对应一轮分析。任务对话保留在右侧。</p>
     {d.error && <p role="alert">{d.error}</p>}{d.loading && <p role="status">正在读取…</p>}
     {d.runCursor && <button onClick={() => void d.more("runs")}>加载更早执行</button>}
     {d.ready && !d.runs.length && <p>这个任务还没有执行记录。</p>}
-    {[...d.runs].reverse().map((run, index) => <button className="history-run" key={run.run_id} onClick={() => void show(run.run_id)}><strong>{new Date(run.created_at).toLocaleString()} · {statusLabel(run.status)}</strong><span>{run.has_final_output ? "已保存公开答复" : "未保存公开答复"}{run.error_code ? ` · ${run.error_code}` : ""}</span><small>执行 {d.runs.length - index} · {run.run_id.slice(0, 8)}</small></button>)}
+    {[...d.runs].reverse().map((run, index) => <button className="history-run" key={run.run_id} onClick={() => void show(run.run_id)}><strong>{new Date(run.created_at).toLocaleString()} · {statusLabel(run.status)}</strong><span>{run.has_final_output ? "已保存公开答复" : run.status === "waiting_for_human" ? "已产生待回应事项" : "未保存公开答复"}{run.error_code ? ` · ${run.error_code}` : ""}</span><small>执行 {d.runs.length - index} · {run.run_id.slice(0, 8)}</small></button>)}
     {error && <p role="alert">{error}</p>}
-    {detail && <article className="history-detail"><h3>本轮执行详情</h3><p>{statusLabel(detail.status)} · {detail.run_id}</p><p>{detail.final_output ?? "本轮没有已保存的公开答复。"}</p><details><summary>终止收据与结构化结果</summary><pre>{JSON.stringify({receipt:detail.terminal_receipt, draft:detail.draft, clarifications:detail.clarifications}, null, 2)}</pre></details>
+    {detail && <article className="history-detail"><h3>本轮执行详情</h3><p>{statusLabel(detail.status)} · {detail.run_id}</p><p>{detail.final_output ?? (detail.status === "waiting_for_human" ? "本轮已产生待回应事项，可展开结构化结果核对。" : "本轮没有已保存的公开答复。")}</p><details><summary>终止收据与结构化结果</summary><pre>{JSON.stringify({receipt:detail.terminal_receipt, draft:detail.draft, clarifications:detail.clarifications}, null, 2)}</pre></details>
       {<details><summary>公开执行事件</summary><RunHistoryDetails key={detail.run_id} state={state} run={detail}/></details>}
     </article>}
   </section>;
@@ -320,7 +320,7 @@ export function ReferenceInspector({ state, reference, onClose, onQuote }: {
             if (!disposed) setPreview(JSON.stringify(item, null, 2));
           }
         }
-      } catch (e) { if (!disposed) setError(dialogueError(e)); }
+      } catch (e) { if (!disposed) setError(dialogueError(e, "read")); }
       finally {if (!disposed) setLoading(false);}
     };
     void read(); return () => {disposed = true;};

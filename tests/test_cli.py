@@ -36,7 +36,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["status"], "partial")
         statuses = {check["key"]: check["status"] for check in report["checks"]}
         self.assertEqual(statuses["python"], "ready")
-        self.assertEqual(statuses["provider"], "not_implemented")
+        self.assertEqual(statuses["provider"], "not_run")
+        self.assertEqual(statuses["customer_data"], "not_run")
         self.assertEqual(statuses["workbench_assets"], "not_run")
         self.assertEqual(statuses["workspace_store_configured"], "ready")
         self.assertEqual(statuses["workspace_store_open"], "not_run")

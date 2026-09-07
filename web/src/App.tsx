@@ -63,28 +63,28 @@ export const AREA_CONTENT: Record<AreaId, AreaContent> = {
     title: "资料来源",
     description: "查看已授权的资料与它们在定义工作中的位置。",
     emptyTitle: "暂无资料来源",
-    emptyBody: "来源导入将在下一阶段开放。",
+    emptyBody: "选择工作区后，可导入明确授权的本地资料。",
   },
   mission: {
     label: "任务",
-    title: "高潜客户定义",
+    title: "任务工作区",
     description: "围绕一个清晰目标，把来源、实体、冲突和确认串成可回看的工作链。",
     emptyTitle: "暂无任务",
-    emptyBody: "任务入口将在下一阶段开放。",
+    emptyBody: "描述目标并确认任务，即可开始分析。",
   },
   clarifications: {
     label: "待澄清",
     title: "待澄清问题",
     description: "把定义中的未知交给合适的人确认，再回到同一个工作对象。",
     emptyTitle: "暂无澄清请求",
-    emptyBody: "澄清入口将在下一阶段开放。",
+    emptyBody: "分析产生的待澄清问题会显示在这里；回答与批准入口尚未开放。",
   },
   contract: {
     label: "业务契约",
     title: "业务契约草案",
     description: "让已经确认的定义保留来源、版本和责任边界。",
     emptyTitle: "暂无业务契约",
-    emptyBody: "业务契约入口将在下一阶段开放。",
+    emptyBody: "分析产生的定义草案会显示在这里；正式契约审批尚未开放。",
   },
 };
 
@@ -304,7 +304,7 @@ function ObjectPane({
           <span className="object-type-tag" aria-hidden="true">
             <Icon name="mix" />
           </span>
-          <span className="tree-row-label">客户粒度关系</span>
+          <span className="tree-row-label">关系与字段</span>
         </button>
       </div>
     </aside>
@@ -372,7 +372,7 @@ function RelationshipGraph({ path2, onReference }: {
   const draft = path2.latestDraft;
   const sourceName = (table: RelationshipCandidate["left"]) => path2.sourceState.items.find(s =>
     sourceIdentityEquals(table.source_ref, sourceIdentityFromRevision(s)))?.original_name ?? "来源未匹配";
-  return <section className="task-results" aria-label="客户粒度关系图">
+  return <section className="task-results" aria-label="关系与字段结果">
     <p>关系连接来自当前任务草案。基数是观测或候选结果，业务含义仍待确认。</p>
     {!draft?.relationships.length && <div className="conversation-empty"><h3>尚无关系候选</h3><p>导入资料并分析后，在这里查看实际表与表之间的关系。</p></div>}
     {draft?.relationships.map((relationship, index) => <article className="relationship-result" key={relationship.relationship_key}>
@@ -409,7 +409,9 @@ function CenterPanel({
   path2: Path2WorkbenchState;
 }) {
   const content = AREA_CONTENT[activeArea];
-  const title = activeArea === "mission" && activeTab === "relationship" ? "客户粒度关系" : content.title;
+  const title = activeTab === "history" ? "执行历史"
+    : activeArea === "mission" && activeTab === "relationship" ? "关系与字段"
+    : activeArea === "mission" ? (path2.selectedMission?.title ?? content.title) : content.title;
 
   return (
     <main className="center-panel" aria-labelledby="center-title">

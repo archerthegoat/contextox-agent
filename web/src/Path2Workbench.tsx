@@ -1181,7 +1181,7 @@ export function workbenchSurfaceSummary(state: Pick<
   if (statuses.includes("empty")) {
     return { status: "partial", label: "部分对象已回读" };
   }
-  return { status: "ready", label: "来源与 Mission 已回读" };
+  return { status: "ready", label: "来源与任务已读取" };
 }
 
 const ATTEMPT_POLL_LIMIT = 5;
@@ -2970,9 +2970,13 @@ const STATUS_LABELS: Record<string, string> = {
   success: "已完成",
   queued: "排队中",
   running: "运行中",
-  ready: "可确认",
+  ready: "已就绪",
+  active: "进行中",
+  draft: "草案",
+  in_review: "待审核",
+  awaiting_answer: "待回答",
   confirmed: "已确认",
-  waiting_for_human: "等待人工",
+  waiting_for_human: "待业务裁决",
   partial: "部分完成",
   completed: "已完成",
   blocked: "已阻塞",
@@ -2991,6 +2995,31 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function statusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status;
+}
+
+export function sourceParseLabel(status: string): string {
+  return status === "ready" ? "解析完成" : statusLabel(status);
+}
+
+// Descriptive status only: action guards and persisted state remain authoritative.
+export function missionStatusLabel(state: Path2WorkbenchState): string {
+  const mission = state.missionSnapshot?.mission ?? state.selectedMission;
+  const run = state.runSnapshot;
+  if (!mission) return "先创建或选择任务";
+  if (state.runAction.status === "unknown" || state.cancelAction.status === "unknown" ||
+      run?.error_code?.includes("unknown") || run?.error_code === "interrupted_without_receipt" || state.runReadbackIssue || state.runEventIssue) {
+    return "需核对上次结果";
+  }
+  if (run?.status === "queued" || run?.status === "running") return "分析中";
+  if (state.latestDraft?.status === "in_review") return "待审核定义";
+  if (state.clarifications.length > 0) return "待回答澄清";
+  if (run?.status === "failed") return "分析失败";
+  if (run?.status === "cancelled") return "本轮已取消";
+  if (mission.status === "blocked" && run?.status === "partial" && !run.error_code &&
+      run.terminal_receipt && run.final_output && state.missionSnapshotState.status === "ready") {
+    return "待继续分析";
+  }
+  return statusLabel(mission.status);
 }
 
 function StatusPill({ status, children }: { status: string; children?: string }) {
@@ -3022,12 +3051,12 @@ function WorkspaceContext({ state }: { state: Path2WorkbenchState }) {
   return (
     <div className="path2-context-strip">
       <div>
-        <span className="path2-eyebrow">PATH 2 WORKBENCH</span>
-        <strong>{state.workspaceId ? "当前 Workspace 工作区" : "等待 Workspace"}</strong>
+        <span className="path2-eyebrow">当前工作区</span>
+        <strong>{state.workspaceId ? "资料与任务" : "等待 Workspace"}</strong>
       </div>
       <div className="path2-context-meta">
         <StatusPill status={summary.status}>{summary.label}</StatusPill>
-        {state.workspaceId ? <code title={state.workspaceId}>{state.workspaceId}</code> : null}
+        {state.workspaceId ? <details><summary>工作区身份</summary><code>{state.workspaceId}</code></details> : null}
       </div>
     </div>
   );
@@ -3105,7 +3134,7 @@ function SourceSelection({
                 />
                 <span className="path2-source-option-copy">
                   <strong>{revision.original_name}</strong>
-                  <small>{statusLabel(revision.parse_status)} · {revision.byte_size.toLocaleString()} bytes</small>
+                  <small>{sourceParseLabel(revision.parse_status)} · {revision.byte_size.toLocaleString()} bytes</small>
                 </span>
                 <code title={revision.sha256}>{revision.sha256.slice(0, 10)}…</code>
               </label>
@@ -3241,7 +3270,7 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
         <div>
           <span className="path2-eyebrow">SOURCE ADMISSION</span>
           <h2>来源与证据</h2>
-          <p>本地读取、来源版本和 Provider 外发分别确认。当前正式 API 仍返回真实不可用状态，不显示预置资料。</p>
+          <p>导入明确授权的本地资料，查看解析结果与证据。导入仅允许本地读取；发送给模型时需另行确认范围。</p>
         </div>
         <StatusPill status={state.sourceState.status}>{statusLabel(state.sourceState.status)}</StatusPill>
       </div>
@@ -3335,7 +3364,7 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
                     <button type="button" className="path2-source-name" onClick={() => state.selectSource(revision.revision_id)}>
                       {revision.original_name}
                     </button>
-                    <small>{statusLabel(revision.parse_status)} · {revision.permission_status === "read_allowed" ? "本地读取已允许" : statusLabel(revision.permission_status)}</small>
+                    <small>{sourceParseLabel(revision.parse_status)} · {revision.permission_status === "read_allowed" ? "本地读取已允许" : statusLabel(revision.permission_status)}</small>
                   </div>
                   <code title={revision.sha256}>{revision.sha256.slice(0, 12)}…</code>
                   <button type="button" className="path2-secondary-button" onClick={() => void state.loadSourceArtifact(revision.revision_id)}>
@@ -3346,7 +3375,7 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
                     <div className="path2-artifact-preview">
                       <div className="path2-artifact-meta">
                         <span>parser: {artifactState.artifact.parser_version}</span>
-                        <StatusPill status={artifactState.artifact.parse_status}>{statusLabel(artifactState.artifact.parse_status)}</StatusPill>
+                        <StatusPill status={artifactState.artifact.parse_status}>{sourceParseLabel(artifactState.artifact.parse_status)}</StatusPill>
                       </div>
                       {artifactState.artifact.tables.map((table) => (
                         <div className="path2-table-preview" key={table.table_id}>
@@ -3539,11 +3568,11 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
     <div className="path2-panel-stack">
       <div className="path2-panel-intro">
         <div>
-          <span className="path2-eyebrow">MISSION FLOW</span>
+          <span className="path2-eyebrow">当前任务</span>
           <h2>{mission ? mission.title : "定义一个新任务"}</h2>
           <p>{mission ? "在右侧提问，查看中间的资料、关系与字段。分析结果保持候选，业务含义由你裁决。" : "描述目标和范围，确认任务后即可开始对话分析。"}</p>
         </div>
-        <StatusPill status={state.missionState.status}>{statusLabel(state.missionState.status)}</StatusPill>
+        {state.missionState.status !== "ready" && <StatusPill status={state.missionState.status} />}
       </div>
       <details open={!mission} className="task-create-details"><summary>{mission ? "创建另一个任务" : "任务目标与来源"}</summary>
       <form className="path2-card" onSubmit={handleSubmit}>
@@ -3592,7 +3621,7 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
               <span className="path2-eyebrow">ATTEMPT</span>
               <h3>当前任务草案 Attempt</h3>
             </div>
-            <StatusPill status={attempt.status}>{statusLabel(attempt.status)}</StatusPill>
+            <StatusPill status={attempt.status}>{attempt.status === "ready" ? "待确认任务" : statusLabel(attempt.status)}</StatusPill>
           </div>
           <div className="path2-attempt-meta">
             <span>attempt <code>{attempt.attempt_id}</code></span>
@@ -3633,17 +3662,17 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
         <div className="path2-card">
           <div className="path2-card-heading">
             <div>
-              <span className="path2-eyebrow">MISSION</span>
+              <span className="path2-eyebrow">任务目标</span>
               <h3>{mission.title}</h3>
             </div>
-            <StatusPill status={mission.status}>{statusLabel(mission.status)}</StatusPill>
+            <StatusPill status={missionStatusLabel(state) === "待继续分析" ? "partial" : mission.status}>{missionStatusLabel(state)}</StatusPill>
           </div>
           <p className="path2-body-copy">{mission.goal}</p>
-          <div className="path2-attempt-meta"><span>state version <code>{mission.state_version}</code></span><span>mission <code>{mission.mission_id}</code></span></div>
+          <details><summary>任务版本与身份</summary><div className="path2-attempt-meta"><span>state version <code>{mission.state_version}</code></span><span>mission <code>{mission.mission_id}</code></span></div></details>
           {state.missionSnapshotState.issue ? <IssueCallout issue={state.missionSnapshotState.issue} title="Mission 快照不可用" /> : null}
           <SourceSelection state={state} idPrefix="run-source" title="对话使用的资料" description="选择本轮可用资料；右侧发送时会显示这一范围。" />
-          <p className="path2-body-copy">在右侧发送具体问题，开始或继续分析。</p>
-          <details><summary>原有整任务分析入口</summary>
+          <p className="path2-body-copy">{state.clarifications.length > 0 ? "请在待澄清中核对问题；回答与批准入口尚未开放。" : state.latestDraft?.status === "in_review" ? "定义草案已提交审核；正式审批入口尚未开放。" : "在右侧发送具体问题，开始或继续分析。"}</p>
+          <details><summary>整任务分析入口</summary>
           <label className="path2-confirmation-row">
             <input type="checkbox" checked={runSendConfirmed} onChange={(event) => setRunSendConfirmed(event.target.checked)} />
             <span>我明确确认本次 Run 可以向 Provider 发送所选来源及任务上下文。</span>

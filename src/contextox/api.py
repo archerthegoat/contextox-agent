@@ -407,19 +407,19 @@ def _areas() -> list[WorkbenchArea]:
         WorkbenchArea(
             id="mission",
             label="Mission",
-            description="任务阶段、工具收据与公开事件。",
-            status="not_implemented",
+            description="任务对话、工具收据与公开事件；分析结果仍为候选。",
+            status="ready",
         ),
         WorkbenchArea(
             id="clarifications",
             label="Clarifications",
-            description="把未知变成可回答、可路由的问题。",
-            status="not_implemented",
+            description="查看分析生成的澄清问题；回答与批准入口尚未开放。",
+            status="ready",
         ),
         WorkbenchArea(
             id="contract",
             label="Contract",
-            description="有来源、版本与审批边界的业务定义。",
+            description="可查看定义草案；正式 Contract 审批与批准 Context 尚未实现。",
             status="not_implemented",
         ),
     ]
