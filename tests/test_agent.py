@@ -536,6 +536,49 @@ def _start_request(mission: Mission, refs: list[SourceIdentity], client: int = 9
 
 
 class PersistedRunTests(unittest.TestCase):
+    def test_protocol_diagnostics_preserve_failure_receipts_and_exclude_payloads(self):
+        marker = "synthetic-private-marker"
+        cases = [
+            ("length", [], "finish_reason_rejected", "length"),
+            (marker, [], "finish_reason_rejected", "other"),
+            (None, [], "finish_reason_rejected", "missing"),
+            ("stop", [ProviderToolCall("call-list", "list_sources", "{}")],
+             "calls_finish_reason_mismatch", "stop"),
+            ("tool_calls", [], "tool_calls_missing", "tool_calls"),
+        ]
+        for reason, calls, stage, safe_reason in cases:
+            with self.subTest(stage=stage, reason=safe_reason):
+                with self.store_case() as (store, workspace_id, mission, refs):
+                    run = store.start_run(
+                        workspace_id, mission.mission_id, _start_request(mission, refs)
+                    )
+                    provider = FakeProvider([ProviderCompletion(
+                        completion_id=marker, content=marker, reasoning_content=marker,
+                        tool_calls=calls, finish_reason=reason, usage=_usage(),
+                    )])
+                    with self.assertLogs("contextox.agent", level="WARNING") as logs:
+                        with patch.object(agent, "get_provider", return_value=provider):
+                            agent.run_agent(store, workspace_id, mission.mission_id,
+                                            run.run_id, Event())
+                    rendered = "\n".join(logs.output)
+                    self.assertIn(f"stage={stage} finish_reason={safe_reason} turn_index=1", rendered)
+                    self.assertNotIn(marker, rendered)
+                    snapshot = store.get_run_snapshot(workspace_id, mission.mission_id, run.run_id)
+                    self.assertEqual((snapshot.status, snapshot.error_code),
+                                     ("failed", "provider_protocol_error"))
+                    self.assertIsNone(snapshot.draft)
+                    self.assertIsNone(snapshot.final_output)
+                    self.assertIsNone(snapshot.terminal_receipt)
+                    self.assertEqual(len(provider.calls), 1)
+                    with closing(sqlite3.connect(store.db_path)) as connection:
+                        self.assertEqual(connection.execute(
+                            "SELECT status, input_tokens, output_tokens FROM provider_receipts WHERE run_id=?",
+                            (run.run_id,),
+                        ).fetchall(), [("succeeded", 9, 5)])
+                        self.assertEqual(connection.execute(
+                            "SELECT count(*) FROM tool_receipts"
+                        ).fetchone()[0], 0)
+
     def test_draft_upserts_preserve_omitted_candidates_and_immutable_versions(self):
         with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
             run = store.start_run(workspace_id, mission.mission_id, _start_request(mission, refs))

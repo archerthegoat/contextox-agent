@@ -1006,6 +1006,20 @@ def _check_turn_budget(
     return None
 
 
+def _log_run_protocol_failure(stage: str, completion: ProviderCompletion, turn_index: int) -> None:
+    safe_stage = stage if stage in {
+        "finish_reason_rejected", "calls_finish_reason_mismatch", "tool_calls_missing",
+    } else "unknown"
+    reason = completion.finish_reason
+    safe_reason = reason if reason in {"stop", "tool_calls", "length", "content_filter"} else (
+        "missing" if reason is None else "other"
+    )
+    logger.warning(
+        "Agent Run protocol rejected stage=%s finish_reason=%s turn_index=%d.",
+        safe_stage, safe_reason, turn_index,
+    )
+
+
 def _normalize_tool_calls(completion: ProviderCompletion) -> list[DomainToolCall]:
     calls: list[DomainToolCall] = []
     seen_ids: set[str] = set()
@@ -1419,6 +1433,7 @@ def run_agent(
             return
 
         if completion.finish_reason not in {"stop", "tool_calls"}:
+            _log_run_protocol_failure("finish_reason_rejected", completion, turn_index)
             _stop_run(store, workspace_id, mission_id, run_id, "failed", "provider_protocol_error")
             return
 
@@ -1429,9 +1444,11 @@ def run_agent(
             return
 
         if calls and completion.finish_reason != "tool_calls":
+            _log_run_protocol_failure("calls_finish_reason_mismatch", completion, turn_index)
             _stop_run(store, workspace_id, mission_id, run_id, "failed", "provider_protocol_error")
             return
         if not calls and completion.finish_reason == "tool_calls":
+            _log_run_protocol_failure("tool_calls_missing", completion, turn_index)
             _stop_run(store, workspace_id, mission_id, run_id, "failed", "provider_protocol_error")
             return
         if not calls:
