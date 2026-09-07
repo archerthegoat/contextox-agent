@@ -512,6 +512,72 @@ def _start_request(mission: Mission, refs: list[SourceIdentity], client: int = 9
 
 
 class PersistedRunTests(unittest.TestCase):
+    def test_draft_upserts_preserve_omitted_candidates_and_immutable_versions(self):
+        with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):
+            run = store.start_run(workspace_id, mission.mission_id, _start_request(mission, refs))
+            store.mark_run_running(workspace_id, mission.mission_id, run.run_id)
+
+            def field(key, rule="initial"):
+                return dict(field_key=key, name=key, meaning="Synthetic definition",
+                            value_type="number", grain="row", source_columns=[], rule=rule,
+                            time_basis="synthetic period", null_handling="unknown",
+                            evidence_status="candidate", source_refs=[], unknowns=[])
+
+            artifacts = [store.get_source_artifact(workspace_id, ref.revision_id) for ref in refs]
+            relationship = dict(
+                relationship_key="c",
+                left=dict(source_ref=refs[0], table_id=artifacts[0].tables[0].table_id, columns=["id"]),
+                right=dict(source_ref=refs[1], table_id=artifacts[1].tables[0].table_id, columns=["id"]),
+                observed_cardinality="one_to_one", join_rule="left.id = right.id",
+                grain_notes="Synthetic rows", evidence_status="candidate",
+                source_refs=[], risks=[], unknowns=[],
+            )
+
+            def update(call_id, previous=None, fields=(), relationships=(), unresolved=()):
+                call = UpdateDefinitionDraftCall(call_id=call_id, name="update_definition_draft", arguments={
+                    "expected_version": previous.version if previous else 0,
+                    "expected_sha256": previous.sha256 if previous else None,
+                    "fields": list(fields), "relationships": list(relationships),
+                    "unresolved_items": list(unresolved),
+                })
+                store.validate_run_tool_batch(workspace_id, mission.mission_id, run.run_id, [call])
+                return store.execute_run_tool(workspace_id, mission.mission_id, run.run_id, call)
+
+            first = update("first", fields=[field("a"), field("b")],
+                           relationships=[relationship], unresolved=["Check meaning"]).output
+            second = update("second", first, fields=[field("a", "revised"), field("d")]).output
+            self.assertEqual([item.field_key for item in second.fields], ["a", "b", "d"])
+            self.assertEqual(second.fields[0].rule, "revised")
+            self.assertEqual(second.fields[1], first.fields[1])
+            self.assertEqual(second.relationships, first.relationships)
+            self.assertEqual(second.unresolved_items, [])
+            third = update("third", second, relationships=[dict(relationship, grain_notes="Revised grain")]).output
+            self.assertEqual(third.fields, second.fields)
+            self.assertEqual(len(third.relationships), 1)
+            self.assertEqual(third.relationships[0].grain_notes, "Revised grain")
+            empty = update("empty", third).output
+            self.assertEqual(empty.fields, third.fields)
+            self.assertEqual(empty.relationships, third.relationships)
+            stale = update("stale", first, fields=[field("lost")])
+            self.assertEqual(stale.status, "rejected")
+            self.assertEqual(stale.output.code, "state_conflict")
+            with self.assertRaises(Path2StateError) as caught:
+                update("overflow", empty, fields=[field(f"new_{i}") for i in range(100)])
+            self.assertEqual(caught.exception.code, "tool_arguments_invalid")
+            with self.assertRaises(Path2StateError) as caught:
+                update("relationship-overflow", empty, relationships=[
+                    dict(relationship, relationship_key=f"new_{i}") for i in range(100)
+                ])
+            self.assertEqual(caught.exception.code, "tool_arguments_invalid")
+            with closing(sqlite3.connect(store.db_path)) as connection:
+                versions = connection.execute(
+                    "SELECT version, fields_json FROM definition_drafts WHERE workspace_id=? AND mission_id=? ORDER BY version",
+                    (workspace_id, mission.mission_id),
+                ).fetchall()
+            self.assertEqual([row[0] for row in versions], [1, 2, 3, 4])
+            self.assertEqual(json.loads(versions[0][1]), [item.model_dump(mode="json") for item in first.fields])
+            self.assertEqual(json.loads(versions[-1][1]), [item.model_dump(mode="json") for item in empty.fields])
+
     @contextmanager
     def store_case(self, *, with_sources: bool = False):
         with tempfile.TemporaryDirectory(prefix="contextox-run-", dir="/private/tmp") as directory:

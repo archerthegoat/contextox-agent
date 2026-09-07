@@ -2676,10 +2676,22 @@ class WorkspaceStore:
                             reason="The definition draft version or hash is stale.",
                         )
                     else:
+                        # Each submitted key replaces that whole candidate. Omitted
+                        # keys survive; only unresolved_items is a complete list.
+                        fields = {item.field_key: item for item in latest.fields} if latest else {}
+                        relationships = {
+                            item.relationship_key: item for item in latest.relationships
+                        } if latest else {}
+                        fields.update({item.field_key: item for item in call.arguments.fields})
+                        relationships.update({
+                            item.relationship_key: item for item in call.arguments.relationships
+                        })
+                        if len(fields) > 100 or len(relationships) > 100:
+                            raise Path2StateError("tool_arguments_invalid")
                         payload = {
-                            "fields": [item.model_dump(mode="json") for item in call.arguments.fields],
+                            "fields": [item.model_dump(mode="json") for item in fields.values()],
                             "relationships": [
-                                item.model_dump(mode="json") for item in call.arguments.relationships
+                                item.model_dump(mode="json") for item in relationships.values()
                             ],
                             "unresolved_items": call.arguments.unresolved_items,
                         }
