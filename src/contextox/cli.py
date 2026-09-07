@@ -219,13 +219,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("data-dir must resolve to a directory")
         import uvicorn
 
-        uvicorn.run(
-            create_app(static_dir=args.static_dir.resolve(), data_dir=data_dir, migrate_dialogue=args.migrate_task_dialogue),
+        app = create_app(static_dir=args.static_dir.resolve(), data_dir=data_dir, migrate_dialogue=args.migrate_task_dialogue)
+
+        class LocalServer(uvicorn.Server):
+            async def shutdown(self, sockets=None):
+                # End owned SSE responses before Uvicorn waits for connections.
+                # Lifespan still owns Run cancellation and persisted receipts.
+                app.state.stream_stop.set()
+                app.state.global_stream_stop.set()
+                runtime = getattr(app.state, "path2_runtime", None)
+                if runtime is not None:
+                    runtime.wake_event_waiters()
+                await super().shutdown(sockets=sockets)
+
+        server = LocalServer(uvicorn.Config(
+            app,
             host="127.0.0.1",
             port=args.port,
             log_level="info",
             access_log=False,
-        )
-        return 0
+        ))
+        try:
+            server.run()
+        except KeyboardInterrupt:
+            pass
+        return 0 if server.started else 3
     parser.print_help()
     return 0

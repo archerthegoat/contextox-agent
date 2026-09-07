@@ -283,8 +283,11 @@ class Path2Runtime:
     def wait_for_change(
         self, workspace_id: str, mission_id: str, run_id: str,
         after_sequence: int, timeout: float = 15.0,
+        stop_event: Event | None = None,
     ) -> None:
         with self._event_condition:
+            if stop_event is not None and stop_event.is_set():
+                return
             if any(
                 event.root.workspace_id == workspace_id
                 and event.root.mission_id == mission_id
@@ -294,6 +297,11 @@ class Path2Runtime:
             ):
                 return
             self._event_condition.wait(timeout=timeout)
+
+    def wake_event_waiters(self) -> None:
+        """Wake SSE readers after the server sets its stream-stop event."""
+        with self._event_condition:
+            self._event_condition.notify_all()
 
     def shutdown(self, timeout: float = 5.0) -> bool:
         with self._slot_lock:

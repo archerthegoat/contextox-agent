@@ -93,12 +93,12 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
     finally { if (current.current === scope && gen === generation.current) setLoading(false); }
   }, [ws, mid, scope]);
   useEffect(() => {
-    setLoaded(""); setMessages([]); setRuns([]); setText(""); setReferences([]); setHistoryIds([]);
+    setError(""); setLoaded(""); setMessages([]); setRuns([]); setText(""); setReferences([]); setHistoryIds([]);
     setPendingId(null); pendingRequest.current = null; sendingRef.current = false; setSending(false);
     try { setPendingId(sessionStorage.getItem(storageKey)); } catch { setError("浏览器无法保留请求标识，发送已暂停。"); }
-    void refresh();
-  }, [scope, storageKey, refresh]);
+  }, [scope, storageKey]);
   const run = state.runSnapshot;
+  // One effect covers both scope changes and Run transitions.
   useEffect(() => { void refresh(); }, [refresh, run?.run_id, run?.status, run?.final_output]);
   const [historyTouched, setHistoryTouched] = useState(false);
   useEffect(() => { setHistoryTouched(false); }, [scope]);
@@ -182,8 +182,8 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
         if (page.items.some(item => item.workspace_id !== ws || item.mission_id !== mid)) throw new Error("scope");
         setRuns(old => [...page.items, ...old]); setRunCursor(page.next_before_run_id);
       }
-    } catch (e) { if (current.current === scope) setError(dialogueError(e, "read")); }
-    finally { if (current.current === scope) setLoading(false); }
+    } catch (e) { if (current.current === scope && gen === generation.current) setError(dialogueError(e, "read")); }
+    finally { if (current.current === scope && gen === generation.current) setLoading(false); }
   };
   const addReference = (ref: MessageReference) => {
     if (references.length >= 8 || references.some(item => JSON.stringify(item) === JSON.stringify(ref))) return;

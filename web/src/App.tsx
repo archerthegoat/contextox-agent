@@ -366,7 +366,7 @@ export function relationshipGraphResolution(
   };
 }
 
-function RelationshipGraph({ path2, onReference }: {
+export function RelationshipGraph({ path2, onReference }: {
   path2: Path2WorkbenchState; onReference: (ref: MessageReference) => void;
 }) {
   const draft = path2.latestDraft;
@@ -391,7 +391,14 @@ function RelationshipGraph({ path2, onReference }: {
       <button onClick={() => onReference({kind:"draft_relationship", draft_id:draft.draft_id, draft_version:draft.version, draft_sha256:draft.sha256, relationship_key:relationship.relationship_key})}>引用关系继续讨论</button>
       {relationship.source_refs.map((ref, i) => <button className="reference-chip" key={i} onClick={() => onReference({kind:"source_excerpt", evidence_ref:ref})}>引用证据 {i + 1}</button>)}
     </article>)}
-    {draft && <section aria-label="字段定义"><h2>字段定义</h2>{draft.fields.map(field => <article className="field-result" key={field.field_key}><h3>{field.name}</h3><p>{field.meaning ?? "含义待确认"}</p><p>{field.rule ?? "计算规则待确认"}</p><button onClick={() => onReference({kind:"draft_field", draft_id:draft.draft_id, draft_version:draft.version, draft_sha256:draft.sha256, field_key:field.field_key})}>引用字段继续讨论</button></article>)}</section>}
+    {draft && <section aria-label="字段定义"><h2>字段定义</h2>{draft.fields.map(field => <article className="field-result" key={field.field_key}><h3>{field.name}</h3><p>{statusLabel(field.evidence_status)} · 业务语义待批准</p>
+      <dl className="path2-detail-grid">{([
+        ["meaning", "含义"], ["value_type", "值类型"], ["grain", "粒度"],
+        ["rule", "规则"], ["time_basis", "时间基准"], ["null_handling", "缺失值处理"],
+      ] as const).map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{field[key] ?? "未知"}
+        {field.unknowns.filter(item => item.property_path === key).map((item, i) => <p key={i}>未知原因：{item.reason}</p>)}
+      </dd></div>)}</dl>
+      {field.source_refs.map((ref, i) => <button className="reference-chip" key={i} onClick={() => onReference({kind:"source_excerpt", evidence_ref:ref})}>引用证据 {i + 1}</button>)}<button onClick={() => onReference({kind:"draft_field", draft_id:draft.draft_id, draft_version:draft.version, draft_sha256:draft.sha256, field_key:field.field_key})}>引用字段继续讨论</button></article>)}</section>}
   </section>;
 }
 function CenterPanel({

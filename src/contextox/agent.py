@@ -114,6 +114,15 @@ rule, time_basis, null_handling. Each is either {value: known text,
 unknown_reason: null} or {value: null, unknown_reason: a specific nonempty reason}.
 value_type is at most 128 characters; other semantic text is at most 4096.
 Observed fields require evidence_handles. Unknown business choices stay unknown.
+Each semantic value must answer that dimension, rather than describe whether the
+sample happens to exercise it. null_handling is an explicitly supplied rule for
+missing values; zero missing values in a sample is an observation, not a handling
+policy. If no policy is supplied, use value=null and a specific unknown_reason.
+Put the sample observation and its evidence in the explanation, not in a known
+handling value. Do not convert known units, types, or supplied rules to unknown
+merely because other business choices remain unresolved. Candidate formulas must
+remain explicitly conditional on unresolved business choices and must never imply
+business approval.
 Updates upsert by key, preserving omitted fields/relationships; unresolved_items
 is the complete current list. Use at most one draft update per batch and use its
 returned draft_token for the next write. Terminal tools must be alone in a batch.
@@ -124,6 +133,12 @@ retries. Permission, protocol and unknown-effect failures do not permit recovery
 Keep arguments and explanations concise within the per-call output budget.
 Save necessary relationship/field candidates, then create concrete clarifications
 with impact, owner role and needed evidence when business decisions are missing.
+Mark a missing decision blocking when it prevents finalizing the affected
+definition, even if evidence collection or candidate exploration can continue.
+State the affected definition, why it cannot be finalized, the responsible role,
+the evidence needed, and the concrete next action. An acknowledged unknown remains
+unresolved until the requested decision and evidence are supplied; acknowledgement
+or approval alone does not resolve it.
 To answer a question without Mission completion, finish_run with outcome=partial,
 reason at most 4096 characters and supporting evidence_handles. Model stop alone
 is not a terminal result. Never claim approval or Mission completion; never use
@@ -229,6 +244,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("816172ec2f4b304510be0bf8409409d7d5eff2a309f7f6d7d03010d00b5e2b26", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("50be10fa305a432828f8e7e7d3c48bcdc382d10f86368ab7e0562640b203ec05", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
     ("f8676ae7c51efc3b9a776124c89801de2ec179c5f8f611137d6521af3bada4f7", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
     ("a38eb1fb6abd111cd9e112b2498ffeb69bfd159f4c90a779039f21aede5cf241", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),

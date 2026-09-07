@@ -987,6 +987,27 @@ export function issueFromError(error: unknown): ApiIssue {
   };
 }
 
+// Supersession is not failure: join the latest same-scope read, even if it
+// settled first. Existing operation tokens still guard all state writes.
+export function createLatestScopedRead<T>() {
+  let latest: { scope: string; promise: Promise<T> } | null = null;
+  return async (scope: string, read: () => Promise<T>): Promise<T> => {
+    let request = { scope, promise: read() };
+    latest = request;
+    for (;;) {
+      let result: T;
+      try { result = await request.promise; }
+      catch (error) {
+        if (latest.scope !== scope || latest === request) throw error;
+        request = latest;
+        continue;
+      }
+      if (latest.scope !== scope || latest === request) return result;
+      request = latest;
+    }
+  };
+}
+
 export async function executeExplicitRequest<T>(operation: () => Promise<T>): Promise<T> {
   return operation();
 }
@@ -1427,7 +1448,7 @@ export function usePath2Workbench(
     return true;
   }, [storeRunSnapshot, updateRunEventState]);
 
-  const loadMissionSnapshot = useCallback(
+  const readMissionSnapshot = useCallback(
     async (currentWorkspaceId: string, missionId: string): Promise<MissionSnapshot | null> => {
       const token = beginOperation("mission_snapshot", {
         workspaceId: currentWorkspaceId,
@@ -1510,6 +1531,12 @@ export function usePath2Workbench(
       storeMissionSnapshot,
       storeRunSnapshot,
     ]);
+
+  const joinMissionRead = useRef(createLatestScopedRead<MissionSnapshot | null>());
+  const loadMissionSnapshot = useCallback(
+    (ws: string, mid: string) => joinMissionRead.current(`${ws}/${mid}`, () => readMissionSnapshot(ws, mid)),
+    [readMissionSnapshot],
+  );
 
   const refreshSources = useCallback(async (): Promise<void> => {
     if (!workspaceId) {

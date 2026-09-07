@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 
 import {
+  RelationshipGraph,
   AGENT_COPY,
   AREA_CONTENT,
   AREA_NAV,
@@ -173,5 +174,24 @@ describe("ContextOx Workbench v3 content boundaries", () => {
       mode: "任务对话",
       composerPlaceholder: "围绕当前任务继续提问",
     });
+  });
+});
+
+
+describe("field semantic review", () => {
+  it("shows a supplied missing-value policy and a separate unknown dimension without claiming approval", () => {
+    const field: DefinitionDraft["fields"][number] = {field_key:"amount", name:"金额", meaning:"金额（元）", value_type:"decimal", grain:"每订单",
+      rule:"源金额", time_basis:null, null_handling:"缺失金额行排除",
+      unknowns:[{property_path:"time_basis", reason:"尚未提供统计窗口"}], evidence_status:"candidate",
+      source_columns:[], source_refs:[]};
+    const draft = {draft_id:"draft",version:1,sha256:"a".repeat(64),fields:[field],relationships:[]};
+    const path2 = {latestDraft:draft,sourceState:{items:[]}} as unknown as import("./Path2Workbench").Path2WorkbenchState;
+    const html = renderToStaticMarkup(createElement(RelationshipGraph, {path2,onReference:()=>{}}));
+    for (const text of ["含义","值类型","粒度","规则","时间基准","缺失值处理","金额（元）","缺失金额行排除","未知原因：","尚未提供统计窗口","业务语义待批准"]) expect(html).toContain(text);
+    field.null_handling = null;
+    field.unknowns.push({property_path:"null_handling",reason:"仅观察到样本无缺失，业务规则未提供"});
+    const unknownHtml = renderToStaticMarkup(createElement(RelationshipGraph, {path2,onReference:()=>{}}));
+    expect(unknownHtml).toContain("仅观察到样本无缺失，业务规则未提供");
+    expect(unknownHtml).not.toContain("缺失金额行排除");
   });
 });

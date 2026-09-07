@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 from typing import Any
 from uuid import RFC_4122, UUID, uuid4
 
@@ -319,11 +320,15 @@ def _format_sse(event: EventEnvelope | RunEventEnvelope) -> str:
     )
 
 
-async def _event_stream() -> AsyncIterator[str]:
+async def _event_stream(stop_event: asyncio.Event) -> AsyncIterator[str]:
     yield _format_sse(_event())
     try:
-        while True:
-            await asyncio.sleep(15)
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=15)
+                return
+            except TimeoutError:
+                pass
             yield ": contextox-sse-heartbeat\n\n"
     except asyncio.CancelledError:
         return
@@ -336,13 +341,15 @@ async def _run_event_stream(
     mission_id: str,
     run_id: str,
     after_sequence: int,
+    stop_event: Event | None = None,
 ) -> AsyncIterator[str]:
+    stop_event = stop_event or Event()
     sequence = after_sequence
     terminal_statuses = {
         "waiting_for_human", "partial", "blocked", "failed", "cancelled", "completed"
     }
     try:
-        while True:
+        while not stop_event.is_set():
             # A terminal tool receipt may precede the saved answer and final event.
             # Observe worker completion before reading its final persisted state.
             worker_active = runtime.is_run_active(workspace_id, mission_id, run_id)
@@ -389,8 +396,10 @@ async def _run_event_stream(
                     continue
                 await asyncio.to_thread(
                     runtime.wait_for_change,
-                    workspace_id, mission_id, run_id, sequence, 15.0,
+                    workspace_id, mission_id, run_id, sequence, 15.0, stop_event,
                 )
+                if stop_event.is_set():
+                    return
                 yield ": contextox-sse-heartbeat\n\n"
     except asyncio.CancelledError:
         return
@@ -880,6 +889,9 @@ def create_app(
     @app.get("/api/readiness", response_model=ReadinessResponse, tags=["system"])
     def readiness() -> ReadinessResponse:
         return _readiness(app)
+
+    app.state.stream_stop = Event()
+    app.state.global_stream_stop = asyncio.Event()
 
     @app.get(
         "/api/workbench",
@@ -1434,7 +1446,7 @@ def create_app(
             return _workspace_store_error_response(request, error)
         return StreamingResponse(
             _run_event_stream(
-                store, runtime, workspace_id, mission_id, run_id, after_sequence
+                store, runtime, workspace_id, mission_id, run_id, after_sequence, app.state.stream_stop
             ),
             media_type="text/event-stream",
             headers={
@@ -1460,7 +1472,7 @@ def create_app(
     )
     def events() -> StreamingResponse:
         return StreamingResponse(
-            _event_stream(),
+            _event_stream(app.state.global_stream_stop),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
