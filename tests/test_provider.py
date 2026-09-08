@@ -1660,6 +1660,44 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(completion.usage, ProviderUsage(7, 4, 2, 5))
         self.assertTrue(response.closed)
 
+    def test_fragmented_content_over_four_mib_preserves_completion_and_usage(self) -> None:
+        # Synthetic usage is declared by the fixture, not measured by a tokenizer.
+        count = 16000
+        usage = {"prompt_tokens": 1, "completion_tokens": count,
+                 "total_tokens": count + 1, "prompt_cache_hit_tokens": 0,
+                 "prompt_cache_miss_tokens": 1}
+
+        def event(content, finish=None, usage=None):
+            payload = {
+                "id": "synthetic-completion-000000000001",
+                "object": "chat.completion.chunk", "created": 0,
+                "model": "deepseek-v4-flash", "system_fingerprint": "fp_synthetic",
+                "choices": [{"index": 0,
+                             "delta": {"role": "assistant", "content": content},
+                             "finish_reason": finish, "logprobs": None}],
+                "usage": usage,
+            }
+            return b"data: " + json.dumps(payload).encode() + b"\n\n"
+
+        chunks = [event("x")] * count + [event("", "stop", usage), b"data: [DONE]\n\n"]
+        self.assertGreater(sum(map(len, chunks)), 4 * 1024 * 1024)
+        self.assertLess(sum(map(len, chunks)), 8 * 1024 * 1024)
+        self.assertLess(max(map(len, chunks)), provider_module.MAX_CONTEXT_BYTES)
+        response = FakeResponse(chunks=chunks)
+        transport = FakeTransport(response)
+        provider = DeepSeekProvider(transport=transport)
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "synthetic-offline-only"}):
+            completion = provider.complete(
+                [{"role": "user", "content": "Synthetic fragmented response"}],
+                stream=True, tools=[], max_tokens=16384, user_id="ws-offline",
+            )
+        self.assertEqual(completion.content, "x" * count)
+        self.assertEqual(completion.finish_reason, "stop")
+        self.assertEqual(completion.usage, ProviderUsage(1, count, 0, 1))
+        self.assertEqual(len(transport.requests), 1)
+        self.assertEqual(json.loads(transport.requests[0].data)["max_tokens"], 16384)
+        self.assertTrue(response.closed)
+
     def test_sse_wire_event_and_aggregate_limits_remain_independent(self) -> None:
         limit = provider_module.MAX_CONTEXT_BYTES
         wire_limit = provider_module.MAX_SSE_WIRE_BYTES
