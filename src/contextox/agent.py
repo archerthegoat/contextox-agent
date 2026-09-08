@@ -96,8 +96,14 @@ Return exactly one JSON object with only these four required fields:
 - scope_notes: an array of 0 to 20 strings, each at most 4096 characters; use []
   when there are no scope notes.
 Use JSON arrays for both list fields, never a single string or an object.
-Produce a candidate task draft from the user's current input;
-do not invent sources, business facts, approvals, tools, or a Mission.  The
+Produce a candidate task draft from the user's current input.
+Preserve the requested scope and exclusions. Completion criteria must describe
+requested outcomes, not introduce new mandatory deliverables or extra scope.
+Do not invent minimum counts, deadlines, quotas, or other quantitative acceptance
+targets. Include such constraints only when explicit in the user's input, and
+preserve their values without increasing them. Leave unspecified details open;
+do not turn them into mandatory completion conditions.
+Do not invent sources, business facts, approvals, tools, or a Mission.  The
 candidate is not an approval and cannot complete a Mission."""
 
 P0_RUN = """ContextOx governed business-definition Run, model tool protocol G1.
@@ -194,6 +200,11 @@ def _sha256_text(value: str) -> str:
 
 
 P0_DRAFT_SHA256 = _sha256_text(P0_DRAFT)
+# Historical draft receipts are readable; new receipts must use the current P0.
+SUPPORTED_DRAFT_P0_HASHES = frozenset({
+    P0_DRAFT_SHA256,
+    "e588954b3d0d260327ef1ca503a1d4cba9f9044e60ec48d4055985ba5b1310ea",
+})
 P0_RUN_SHA256 = _sha256_text(P0_RUN)
 
 

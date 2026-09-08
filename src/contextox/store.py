@@ -3406,7 +3406,7 @@ class WorkspaceStore:
     ) -> MissionDraftAttempt:
         self._require_path2_workspace(workspace_id)
         candidate = MissionDraftPayload.model_validate(candidate.model_dump(mode="json"))
-        receipt = _validated_attempt_receipt(workspace_id, attempt_id, receipt)
+        receipt = _validated_attempt_receipt(workspace_id, attempt_id, receipt, allow_historical=True)
         if receipt.status != "succeeded":
             raise Path2StateError("provider_receipt_invalid")
         with self._write_transaction() as connection:
@@ -3420,6 +3420,7 @@ class WorkspaceStore:
                 return attempt
             if attempt.status != "running":
                 raise Path2StateError("state_conflict")
+            receipt = _validated_attempt_receipt(workspace_id, attempt_id, receipt)
             _insert_provider_receipt(connection, receipt)
             connection.execute(
                 """
@@ -3445,7 +3446,7 @@ class WorkspaceStore:
         if status not in {"blocked", "failed", "cancelled"}:
             raise Path2StateError("state_conflict")
         if receipt is not None:
-            receipt = _validated_attempt_receipt(workspace_id, attempt_id, receipt)
+            receipt = _validated_attempt_receipt(workspace_id, attempt_id, receipt, allow_historical=True)
             # A malformed candidate can fail after a successfully accounted call.
             if receipt.status not in {status, "succeeded"}:
                 raise Path2StateError("provider_receipt_invalid")
@@ -3469,6 +3470,7 @@ class WorkspaceStore:
                 "provider_receipt_id": receipt.receipt_id if receipt else None,
             })
             if receipt is not None:
+                receipt = _validated_attempt_receipt(workspace_id, attempt_id, receipt)
                 _insert_provider_receipt(connection, receipt)
             connection.execute(
                 """
@@ -3933,7 +3935,7 @@ def _load_attempt(
         if attempt.provider_receipt_id is not None:
             receipt = _load_provider_receipt(connection, workspace_id, attempt.provider_receipt_id)
             try:
-                _validated_attempt_receipt(workspace_id, attempt_id, receipt)
+                _validated_attempt_receipt(workspace_id, attempt_id, receipt, allow_historical=True)
             except Path2StateError as exc:
                 raise WorkspaceStoreUnavailableError() from exc
             if attempt.status in {"ready", "confirmed"} and receipt.status != "succeeded":
@@ -3956,8 +3958,11 @@ def _load_attempt(
 
 def _validated_attempt_receipt(
     workspace_id: str, attempt_id: str, receipt: ProviderReceipt,
+    *, allow_historical: bool = False,
 ) -> ProviderReceipt:
-    from contextox.agent import P0_DRAFT_SHA256
+    from contextox.agent import P0_DRAFT_SHA256, SUPPORTED_DRAFT_P0_HASHES
+
+    allowed_hashes = SUPPORTED_DRAFT_P0_HASHES if allow_historical else {P0_DRAFT_SHA256}
 
     try:
         validated = ProviderReceipt.model_validate(receipt.model_dump(mode="json"))
@@ -3966,7 +3971,7 @@ def _validated_attempt_receipt(
     if (
         validated.workspace_id != workspace_id
         or validated.attempt_id != attempt_id
-        or validated.p0_sha256 != P0_DRAFT_SHA256
+        or validated.p0_sha256 not in allowed_hashes
     ):
         raise Path2StateError("provider_receipt_invalid")
     return validated
