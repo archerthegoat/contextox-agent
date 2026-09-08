@@ -1553,10 +1553,14 @@ class DeepSeekProvider:
                 if len(body) + len(chunk_bytes) > max_context_bytes:
                     raise ProviderContextBudgetError(stage="stream_content", used_bytes=len(body) + len(chunk_bytes), limit_bytes=max_context_bytes)
                 body.extend(chunk_bytes)
-                saw_data = True
-                last_data_at = time.monotonic()
-                if on_activity is not None:
-                    on_activity()
+                # Leading JSON whitespace is not the response body starting.
+                # Keep its bytes and the absolute first/total deadlines; once
+                # JSON starts, every subsequent byte is normal idle activity.
+                if saw_data or chunk_bytes.strip(b" \t\r\n"):
+                    saw_data = True
+                    last_data_at = time.monotonic()
+                    if on_activity is not None:
+                        on_activity()
             raw = bytes(body)
         if cancel_event is not None and cancel_event.is_set():
             raise ProviderCancelledError()

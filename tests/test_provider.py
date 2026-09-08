@@ -1793,6 +1793,143 @@ class ProviderTests(unittest.TestCase):
             source.close()
         self.assertFalse(source.thread.is_alive())
 
+    def test_spawn_nonstream_leading_json_whitespace_keeps_first_response_deadline(self) -> None:
+        body = json.dumps({
+            "id": "synthetic-whitespace",
+            "choices": [{"index": 0, "finish_reason": "stop",
+                         "message": {"role": "assistant", "content": "{}"}}],
+            "usage": _usage(),
+        }).encode()
+        prefix = b" \t\r\n"
+        body_spacing_chunks = 6
+        requests: list[bool] = []
+
+        def callback(handler):
+            request = json.loads(handler.rfile.read(int(handler.headers["Content-Length"])))
+            requests.append(request["stream"])
+            handler.send_response(200)
+            handler.send_header("Content-Type", "application/json")
+            handler.send_header("Content-Length", str(len(prefix) + len(body) + body_spacing_chunks))
+            handler.end_headers()
+            handler.wfile.write(prefix)
+            handler.wfile.flush()
+            time.sleep(0.7)  # Longer than idle, safely within first/total.
+            try:
+                handler.wfile.write(body[:1])
+                handler.wfile.flush()
+                # After JSON begins, whitespace is body progress and keeps idle alive.
+                for _ in range(body_spacing_chunks):
+                    time.sleep(0.1)
+                    handler.wfile.write(b" ")
+                    handler.wfile.flush()
+                handler.wfile.write(body[1:])
+                handler.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        server, server_thread = _start_loopback_server(callback)
+        before_children = self._active_child_pids()
+        try:
+            with patch.object(provider_module, "DEEPSEEK_ENDPOINT",
+                              "http://127.0.0.1:%d/chat/completions" % server.server_port), \
+                    patch.dict(os.environ, {"DEEPSEEK_API_KEY": "synthetic-offline-only"}):
+                completion = DeepSeekProvider().complete(
+                    [{"role": "user", "content": "synthetic"}],
+                    stream=False, tools=None, user_id="ws-opaque",
+                    timeouts=ProviderTimeouts(connect_ms=2000, first_event_ms=3000,
+                                              idle_ms=250, total_ms=4000),
+                )
+            self.assertEqual(completion.content, "{}")
+            self.assertEqual(completion.usage, ProviderUsage(7, 4, 2, 5))
+            self.assertEqual(requests, [False])
+        finally:
+            server_thread.join(2.0)
+            server.server_close()
+        self.assertFalse(server_thread.is_alive())
+        self.assertEqual(self._active_child_pids(), before_children)
+
+    def test_spawn_nonstream_whitespace_keeps_deadlines_cancellation_and_byte_limit(self) -> None:
+        cases = (
+            ("first", b" \t\r\n", ProviderTimeouts(2000, 1000, 250, 3000),
+             ProviderTimeoutUnknownError, 262144),
+            ("total", b" \t\r\n", ProviderTimeouts(2000, 3000, 250, 1000),
+             ProviderTimeoutUnknownError, 262144),
+            ("idle", b" {", ProviderTimeouts(2000, 3000, 250, 4000),
+             ProviderTimeoutUnknownError, 262144),
+            ("cancel", b" \t\r\n", ProviderTimeouts(2000, 3000, 250, 4000),
+             ProviderCancelledError, 262144),
+            ("bytes", b" " * 513, ProviderTimeouts(2000, 3000, 250, 4000),
+             ProviderContextBudgetError, 512),
+        )
+        for name, prefix, timeouts, expected, byte_limit in cases:
+            with self.subTest(case=name):
+                release = Event()
+                cancelled = Event()
+                request_started = Event()
+                requests: list[bool] = []
+                original_decode = provider_module._decode_ipc_message
+
+                def decode_message(*args, **kwargs):
+                    message = original_decode(*args, **kwargs)
+                    if message["event_type"] == "request_started":
+                        request_started.set()
+                    return message
+
+                def callback(handler):
+                    request = json.loads(handler.rfile.read(int(handler.headers["Content-Length"])))
+                    requests.append(request["stream"])
+                    handler.send_response(200)
+                    handler.send_header("Content-Type", "application/json")
+                    handler.end_headers()
+                    try:
+                        handler.wfile.write(prefix)
+                        handler.wfile.flush()
+                        if name == "cancel":
+                            request_started.wait(1.0)
+                            cancelled.set()
+                        if name in {"first", "total"}:
+                            # Frequent whitespace cannot move the first/total deadlines.
+                            while not release.wait(0.05):
+                                handler.wfile.write(b" ")
+                                handler.wfile.flush()
+                        else:
+                            release.wait(3.0)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+
+                server, server_thread = _start_loopback_server(callback)
+                before_children = self._active_child_pids()
+                started = time.monotonic()
+                try:
+                    with patch.object(provider_module, "DEEPSEEK_ENDPOINT",
+                                      "http://127.0.0.1:%d/chat/completions" % server.server_port), \
+                            patch.object(provider_module, "_decode_ipc_message", side_effect=decode_message), \
+                            patch.dict(os.environ, {"DEEPSEEK_API_KEY": "synthetic-offline-only"}):
+                        with self.assertRaises(expected) as raised:
+                            DeepSeekProvider().complete(
+                                [{"role": "user", "content": "synthetic"}],
+                                stream=False, tools=None, user_id="ws-opaque",
+                                timeouts=timeouts, max_context_bytes=byte_limit,
+                                cancel_event=cancelled,
+                            )
+                    elapsed = time.monotonic() - started
+                    self.assertLess(elapsed, 2.0)
+                    if name in {"first", "total"}:
+                        self.assertGreater(elapsed, 0.6)
+                    if name == "cancel":
+                        self.assertTrue(request_started.is_set())
+                        self.assertEqual(raised.exception.code, "provider_cancelled_outcome_unknown")
+                    if name == "bytes":
+                        self.assertEqual(raised.exception.stage, "stream_content")
+                        self.assertEqual(raised.exception.limit_bytes, byte_limit)
+                    self.assertEqual(requests, [False])
+                finally:
+                    release.set()
+                    server_thread.join(2.0)
+                    server.server_close()
+                self.assertFalse(server_thread.is_alive())
+                self.assertEqual(self._active_child_pids(), before_children)
+
     def test_real_httpresponse_first_and_idle_deadlines_bound_partial_streams(self) -> None:
         cases = (
             (
