@@ -1,3 +1,4 @@
+import { AnswerImpactView } from "./ClarificationAnswers";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { components } from "./generated/api";
 import { ApiRequestError, fetchTaskMessages, fetchTaskRuns, fetchRunSnapshot, sendTaskMessage, fetchMessageSubmission, readSourceExcerpt, fetchSourceArtifact } from "./api/client";
@@ -197,8 +198,8 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
 }
 export type DialogueState = ReturnType<typeof useTaskDialogue>;
 
-export function TaskConversation({ state, dialogue: d, onReference, onHistory, onResults }:
-  {state: Path2WorkbenchState; dialogue: DialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onResults: () => void}) {
+export function TaskConversation({ state, dialogue: d, onReference, onHistory, onResults, onClarifications }:
+  {state: Path2WorkbenchState; dialogue: DialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onResults: () => void; onClarifications: () => void}) {
   const messageList = useRef<HTMLDivElement>(null);
   const nearEnd = useRef(true);
   useEffect(() => {
@@ -229,7 +230,8 @@ export function TaskConversation({ state, dialogue: d, onReference, onHistory, o
         {active ? <p>可以继续编辑草稿，当前分析结束后再发送。</p> : !run.final_output && <p>{finalizing ? "正在核对本轮答复与任务状态…" : waiting ? "本轮已产生待回应事项（系统状态）。" : "本轮未形成可读取的公开答复，可查看结构化结果。"}</p>}
         {run.error_code && <p>{run.error_code === "context_budget_exceeded" ? "本轮触及上下文预算，已停止；已有结果保留。" : `分析停止：${run.error_code}`}</p>}
         {state.latestDraft && <button onClick={onResults}>查看字段与关系草案 · v{state.latestDraft.version}</button>}
-        {waiting && <p>需要业务裁决。当前版本尚未提供回答与批准入口，普通消息不能代替批准。</p>}
+        {state.clarifications.length > 0 && <button onClick={onClarifications}>回答与批准</button>}
+        {waiting && <p>请打开左侧“待澄清”，完成整份回答与批准后继续分析。普通消息不能代替批准。</p>}
         {active && <button disabled={state.cancelAction.status === "submitting"} onClick={() => void state.cancelActiveRun()}>停止本轮分析</button>}
       </div>}
     </div>
@@ -280,7 +282,7 @@ export function TaskExecutionHistory({ state, dialogue: d }: {state: Path2Workbe
     {[...d.runs].reverse().map((run, index) => <button className="history-run" key={run.run_id} onClick={() => void show(run.run_id)}><strong>{new Date(run.created_at).toLocaleString()} · {statusLabel(run.status)}</strong><span>{run.has_final_output ? "已保存公开答复" : run.status === "waiting_for_human" ? "已产生待回应事项" : "未保存公开答复"}{run.error_code ? ` · ${run.error_code}` : ""}</span><small>执行 {d.runs.length - index} · {run.run_id.slice(0, 8)}</small></button>)}
     {error && <p role="alert">{error}</p>}
     {detail && <article className="history-detail"><h3>本轮执行详情</h3><p>{statusLabel(detail.status)} · {detail.run_id}</p><p>{detail.final_output ?? (detail.status === "waiting_for_human" ? "本轮已产生待回应事项，可展开结构化结果核对。" : "本轮没有已保存的公开答复。")}</p><details><summary>终止收据与结构化结果</summary><pre>{JSON.stringify({receipt:detail.terminal_receipt, draft:detail.draft, clarifications:detail.clarifications}, null, 2)}</pre></details>
-      {<details><summary>公开执行事件</summary><RunHistoryDetails key={detail.run_id} state={state} run={detail}/></details>}
+      <AnswerImpactView key={detail.run_id} workspaceId={detail.workspace_id} missionId={detail.mission_id} runId={detail.run_id}/>{<details><summary>公开执行事件</summary><RunHistoryDetails key={detail.run_id} state={state} run={detail}/></details>}
     </article>}
   </section>;
 }

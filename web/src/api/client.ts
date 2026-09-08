@@ -323,3 +323,34 @@ export async function fetchMessageSubmission(workspaceId: string, missionId: str
   if (!result.response.ok || !result.data) throwForResult(result);
   return result.data;
 }
+
+export async function fetchClarificationCases(workspaceId: string, missionId: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/missions/{mission_id}/clarification-cases", {params:{path:{workspace_id:workspaceId, mission_id:missionId}}});
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+export async function saveClarificationAnswer(workspaceId: string, missionId: string, originRunId: string, clarificationId: string, body: components["schemas"]["ClarificationAnswerSaveRequest"]) {
+  const result = await client.POST("/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers", {params:{path:{workspace_id:workspaceId, mission_id:missionId, origin_run_id:originRunId, clarification_id:clarificationId}}, body});
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+export async function approveClarificationAnswer(workspaceId: string, missionId: string, originRunId: string, clarificationId: string, version: number, body: components["schemas"]["ClarificationAnswerApproveRequest"]) {
+  const result = await client.POST("/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers/{version}/approve", {params:{path:{workspace_id:workspaceId, mission_id:missionId, origin_run_id:originRunId, clarification_id:clarificationId, version}}, body});
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+export async function fetchClarificationAnswer(workspaceId: string, missionId: string, originRunId: string, clarificationId: string, version: number) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers/{version}", {params:{path:{workspace_id:workspaceId, mission_id:missionId, origin_run_id:originRunId, clarification_id:clarificationId, version}}});
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+export async function fetchClarificationSubmission(workspaceId: string, missionId: string, requestId: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/missions/{mission_id}/clarification-submissions/{client_request_id}", {params:{path:{workspace_id:workspaceId, mission_id:missionId, client_request_id:requestId}}});
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+export async function fetchAnswerImpact(workspaceId: string, missionId: string, runId: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/answer-impact", {params:{path:{workspace_id:workspaceId, mission_id:missionId, run_id:runId}}});
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
