@@ -311,6 +311,10 @@ class RunReferences:
                 "draft_token": self.draft_token,
                 "draft": self.public(self.current_draft),
                 "clarifications": self.public(snapshot.clarifications),
+                "approved_answers": [{"origin_run_id": a.answer.origin_run_id, "clarification_id": a.answer.clarification_id,
+                    "answer_version": a.answer.version, "answer_sha256": a.answer.sha256,
+                    "questions": self.public(a.request.questions), "items": self.public(a.answer.items)}
+                    for a in snapshot.approved_answers],
                 "coverage": self.coverage,
                 "budget": _plain(snapshot.run.budget)}
 

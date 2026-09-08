@@ -646,6 +646,12 @@ class ApiTests(unittest.TestCase):
                     "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}",
                     "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/cancel",
                     "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/events",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarification-cases",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers/{version}",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers/{version}/approve",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarification-submissions/{client_request_id}",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/answer-impact",
                 },
                 set(paths) - {
                     "/api/health",

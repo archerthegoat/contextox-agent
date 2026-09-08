@@ -241,6 +241,8 @@ class DialogueTests(unittest.TestCase):
     def test_migration_validation_failure_rolls_back_and_backup_is_exact(self):
         import contextox.store as module
         with closing(sqlite3.connect(self.store.db_path)) as c, c:
+            from test_clarifications import strip_r2_fixture
+            strip_r2_fixture(c)
             c.execute("DROP TABLE run_message_inputs")
             c.execute("PRAGMA user_version=3")
         before = self.store.list_task_messages(self.ws, self.mid)

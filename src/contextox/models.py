@@ -23,6 +23,7 @@ from pydantic import (
     computed_field,
     field_validator,
     model_validator,
+    model_serializer,
 )
 
 
@@ -593,6 +594,7 @@ RunStatus = Literal[
 
 
 class RunSnapshot(ContextOxModel):
+    approved_answers: list[ApprovedAnswerSnapshot] = Field(default_factory=list, max_length=50)
     workspace_id: ID
     mission_id: ID
     run_id: ID
@@ -612,6 +614,8 @@ class RunSnapshot(ContextOxModel):
 
     @model_validator(mode="after")
     def validate_nested_scope(self) -> RunSnapshot:
+        if any((a.answer.workspace_id, a.answer.mission_id) != (self.workspace_id, self.mission_id) for a in self.approved_answers):
+            raise ValueError("approved answer Run scope mismatch")
         if any(reference.workspace_id != self.workspace_id for reference in self.source_refs):
             raise ValueError("Run source references must match workspace_id")
         if self.draft is not None and (
@@ -843,6 +847,198 @@ class ClarificationRequest(ContextOxModel):
         return self
 
 
+class DraftIdentity(ContextOxModel):
+    draft_id: ID
+    version: PositiveInt
+    sha256: Hash
+
+
+class FieldAnswerTarget(ContextOxModel):
+    kind: Literal["field"]
+    key: Key
+    property: Literal["meaning", "value_type", "grain", "rule", "time_basis", "null_handling"]
+
+
+class RelationshipAnswerTarget(ContextOxModel):
+    kind: Literal["relationship"]
+    key: Key
+    property: Literal["join_rule", "grain_notes"]
+
+
+DefinitionTarget = Annotated[FieldAnswerTarget | RelationshipAnswerTarget, Field(discriminator="kind")]
+AnswerText = Annotated[StrictStr, Field(min_length=1, max_length=2048)]
+
+
+class AnswerBlocker(ContextOxModel):
+    resolver: Key
+    evidence_needed: AnswerText
+    next_action: AnswerText
+
+    @model_validator(mode="after")
+    def nonblank(self) -> AnswerBlocker:
+        if not all(value.strip() for value in (self.resolver, self.evidence_needed, self.next_action)):
+            raise ValueError("blocker fields must be nonblank")
+        return self
+
+
+class AnswerItem(ContextOxModel):
+    question_index: Annotated[StrictInt, Field(ge=0, le=19)]
+    disposition: Literal["answered", "unknown"]
+    answer: AnswerText | None
+    respondent: Key
+    basis: AnswerText
+    evidence_refs: list[EvidenceRef] = Field(max_length=8)
+    targets: list[DefinitionTarget] = Field(max_length=20)
+    blocker: AnswerBlocker | None
+
+    @model_validator(mode="after")
+    def validate_answer(self) -> AnswerItem:
+        if not self.respondent.strip() or not self.basis.strip():
+            raise ValueError("answer provenance must be nonblank")
+        if self.disposition == "answered":
+            if self.answer is None or not self.answer.strip() or self.blocker is not None:
+                raise ValueError("answered requires a nonblank answer and no blocker")
+        elif self.answer is not None or self.blocker is None:
+            raise ValueError("unknown requires a blocker and no answer")
+        if len({canonical_sha256(t) for t in self.targets}) != len(self.targets):
+            raise ValueError("duplicate answer target")
+        return self
+
+
+class ClarificationAnswerVersion(ContextOxModel):
+    workspace_id: ID
+    mission_id: ID
+    origin_run_id: ID
+    clarification_id: ID
+    version: PositiveInt
+    request_sha256: Hash
+    review_draft: DraftIdentity
+    source_refs: list[SourceIdentity] = Field(max_length=8)
+    items: list[AnswerItem] = Field(min_length=1, max_length=20)
+    saved_by: Literal["local-owner"]
+    created_at: UTC
+    sha256: Hash
+
+    @model_validator(mode="after")
+    def validate_version(self) -> ClarificationAnswerVersion:
+        if [item.question_index for item in self.items] != list(range(len(self.items))):
+            raise ValueError("answers must contain each question index exactly once in order")
+        refs = self.source_refs + [ref for item in self.items for ref in item.evidence_refs]
+        if any(ref.workspace_id != self.workspace_id for ref in refs):
+            raise ValueError("answer source workspace mismatch")
+        if len({canonical_sha256(ref) for ref in self.source_refs}) != len(self.source_refs):
+            raise ValueError("duplicate source")
+        if self.sha256 != canonical_sha256(self.model_dump(mode="json", exclude={"created_at", "sha256"})):
+            raise ValueError("answer hash mismatch")
+        if len(self.model_dump_json().encode("utf-8")) > 131072:
+            raise ValueError("answer version exceeds byte limit")
+        return self
+
+
+class ApprovedAnswerRef(ContextOxModel):
+    origin_run_id: ID
+    clarification_id: ID
+    answer_version: PositiveInt
+    answer_sha256: Hash
+    approval_id: ID
+
+
+class ClarificationAnswerApproval(ApprovedAnswerRef):
+    workspace_id: ID
+    mission_id: ID
+    approved_by: Literal["local-owner"]
+    approved_at: UTC
+
+
+class ApprovedAnswerSnapshot(ContextOxModel):
+    request: ClarificationRequest
+    answer: ClarificationAnswerVersion
+    approval: ClarificationAnswerApproval
+
+    @model_validator(mode="after")
+    def validate_binding(self) -> ApprovedAnswerSnapshot:
+        a, p, q = self.answer, self.approval, self.request
+        if (a.workspace_id, a.mission_id, a.origin_run_id, a.clarification_id) != (
+            q.workspace_id, q.mission_id, q.run_id, q.clarification_id
+        ) or (p.workspace_id, p.mission_id, p.origin_run_id, p.clarification_id,
+              p.answer_version, p.answer_sha256) != (
+                  a.workspace_id, a.mission_id, a.origin_run_id, a.clarification_id, a.version, a.sha256
+              ) or a.request_sha256 != canonical_sha256(q) or len(a.items) != len(q.questions):
+            raise ValueError("approved answer identity mismatch")
+        return self
+
+
+class ClarificationCase(ContextOxModel):
+    request: ClarificationRequest
+    request_sha256: Hash
+    latest_answer: ClarificationAnswerVersion | None
+    latest_approval: ClarificationAnswerApproval | None
+    review_state: Literal["awaiting_answer", "awaiting_approval", "approved", "stale"]
+
+
+class ClarificationCasePage(ContextOxModel):
+    items: list[ClarificationCase] = Field(max_length=50)
+    mission_state_version: PositiveInt
+
+
+class ClarificationAnswerSaveRequest(ContextOxModel):
+    client_request_id: ID
+    expected_latest_version: Count
+    expected_state_version: PositiveInt
+    request_sha256: Hash
+    review_draft: DraftIdentity
+    source_refs: list[SourceIdentity] = Field(max_length=8)
+    items: list[AnswerItem] = Field(min_length=1, max_length=20)
+
+
+class ClarificationAnswerApproveRequest(ContextOxModel):
+    client_request_id: ID
+    expected_state_version: PositiveInt
+    expected_answer_sha256: Hash
+
+
+class ClarificationSubmissionReceipt(ContextOxModel):
+    operation: Literal["save", "approve"]
+    client_request_id: ID
+    answer: ClarificationAnswerVersion
+    approval: ClarificationAnswerApproval | None
+    mission_state_version: PositiveInt
+
+
+class ClarificationAnswerRead(ContextOxModel):
+    answer: ClarificationAnswerVersion
+    approval: ClarificationAnswerApproval | None
+
+
+class AnswerImpactChange(ContextOxModel):
+    kind: Literal["field", "relationship"]
+    key: Key
+    change: Literal["added", "changed", "removed"]
+    before: DefinitionField | RelationshipCandidate | None
+    after: DefinitionField | RelationshipCandidate | None
+    question_refs: list[AnswerQuestionRef]
+
+
+class AnswerQuestionRef(ContextOxModel):
+    origin_run_id: ID
+    clarification_id: ID
+    question_index: Annotated[StrictInt, Field(ge=0, le=19)]
+
+
+class RemainingAnswerBlocker(AnswerQuestionRef):
+    question: Text
+    blocker: AnswerBlocker
+
+
+class AnswerImpact(ContextOxModel):
+    approved_answers: list[ApprovedAnswerSnapshot] = Field(max_length=50)
+    before_draft: DefinitionDraft | None
+    after_draft: DefinitionDraft | None
+    changes: list[AnswerImpactChange]
+    remaining_blockers: list[RemainingAnswerBlocker]
+    result_state: Literal["no_result", "partial", "available"]
+
+
 class ProviderConfigSnapshot(ContextOxModel):
     endpoint_id: Literal["deepseek_chat_completions"]
     model: Literal["deepseek-v4-flash", "deepseek-v4-pro"]
@@ -990,6 +1186,15 @@ class TerminalReceipt(ContextOxModel):
 
 
 class ContextManifestInput(ContextOxModel):
+    approved_answer_refs: list[ApprovedAnswerRef] = Field(default_factory=list, max_length=50)
+
+    @model_serializer(mode="wrap")
+    def serialize_legacy(self, handler):
+        data = handler(self)
+        if not self.approved_answer_refs:
+            data.pop("approved_answer_refs", None)
+        return data
+
     mission_state_version: PositiveInt
     turn_index: PositiveInt
     draft_id: ID | None
@@ -1131,6 +1336,17 @@ class TaskRunPage(ContextOxModel):
 
 
 class TaskMessageSendRequest(ContextOxModel):
+    approved_answers: list[ApprovedAnswerRef] = Field(default_factory=list, max_length=50)
+    expected_draft: DraftIdentity | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_legacy(self, handler):
+        data = handler(self)
+        if not self.approved_answers and self.expected_draft is None:
+            data.pop("approved_answers", None)
+            data.pop("expected_draft", None)
+        return data
+
     kind: Literal["message"]
     client_request_id: ID
     expected_state_version: PositiveInt
@@ -1142,6 +1358,9 @@ class TaskMessageSendRequest(ContextOxModel):
 
     @model_validator(mode="after")
     def validate_send(self) -> TaskMessageSendRequest:
+        keys = [(r.origin_run_id, r.clarification_id) for r in self.approved_answers]
+        if keys != sorted(set(keys)) or bool(keys) != (self.expected_draft is not None):
+            raise ValueError("approved answers require unique ordered references and expected draft")
         if not self.content.strip() or self.provider_send_confirmed is not True:
             raise ValueError("explicit nonblank message and provider confirmation required")
         if len({ref.message_id for ref in self.history_messages}) != len(self.history_messages):
@@ -1181,6 +1400,7 @@ class MessageContext(ContextOxModel):
 
 
 class ContextSnapshot(ContextOxModel):
+    approved_answers: list[ApprovedAnswerSnapshot] = Field(default_factory=list, max_length=50)
     message_context: MessageContext | None = None
     mission: Mission
     run: RunSnapshot
@@ -1190,6 +1410,8 @@ class ContextSnapshot(ContextOxModel):
 
     @model_validator(mode="after")
     def validate_nested_scope(self) -> ContextSnapshot:
+        if self.approved_answers != self.run.approved_answers:
+            raise ValueError("context must use the exact Run approved answers")
         mission = self.mission
         run = self.run
         if self.message_context is not None and (
@@ -1889,6 +2111,7 @@ class CancelRunRequest(ContextOxModel):
 
 # Resolve the forward references used by the nested shared models at import
 # time so OpenAPI generation and direct model validation are deterministic.
+AnswerImpactChange.model_rebuild()
 RunSnapshot.model_rebuild()
 MissionSnapshot.model_rebuild()
 RunToolResult.model_rebuild()

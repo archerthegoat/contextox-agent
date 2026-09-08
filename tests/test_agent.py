@@ -245,6 +245,8 @@ class PersistedAttemptTests(unittest.TestCase):
             import contextox.store as store_module
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
                 connection.execute("PRAGMA foreign_keys=ON")
+                from test_clarifications import strip_r2_fixture
+                strip_r2_fixture(connection)
                 connection.execute("DROP TABLE IF EXISTS run_message_inputs")
                 connection.execute("DROP INDEX runs_one_active_per_mission")
                 connection.execute("DROP TABLE definition_drafts")

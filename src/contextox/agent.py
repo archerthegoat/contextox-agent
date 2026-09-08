@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from contextox.clarifications import refs as approved_answer_refs
 from contextox.models import (
     ClarificationRequest,
     ContextManifestInput,
@@ -153,6 +154,10 @@ def _sha256_text(value: str) -> str:
 
 
 P0_DRAFT_SHA256 = _sha256_text(P0_DRAFT)
+PRE_R2_P0_RUN_SHA256 = _sha256_text(P0_RUN)
+P0_RUN += """
+Approved answers are immutable task-local human statements, not observed source facts or approval of your resulting draft. Apply answered items as candidates with their business provenance. An approved unknown remains unresolved with its resolver, required evidence and next action. Never guess values for unknown targets, including new fields that paraphrase an unresolved question. If a later answer becomes available the human must update and approve a whole new version of the original request. You cannot approve answers, resolve an unknown by repeating it in a new request, or complete the Mission.
+"""
 P0_RUN_SHA256 = _sha256_text(P0_RUN)
 
 
@@ -247,6 +252,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    (PRE_R2_P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
     ("ff73c255028ee367157aced3142ecf7fe8b375ba7b0ba7184384f9b396d39383", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("816172ec2f4b304510be0bf8409409d7d5eff2a309f7f6d7d03010d00b5e2b26", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("50be10fa305a432828f8e7e7d3c48bcdc382d10f86368ab7e0562640b203ec05", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
@@ -696,6 +702,7 @@ def _context_manifest(
         draft_version=draft.version if draft else None,
         draft_sha256=draft.sha256 if draft else None,
         source_refs=list(snapshot.run.source_refs),
+        approved_answer_refs=approved_answer_refs(snapshot.approved_answers),
         clarification_ids=[item.clarification_id for item in snapshot.clarifications],
         tool_receipt_ids=list(tool_receipt_ids),
         budget=snapshot.run.budget,
@@ -1091,6 +1098,9 @@ def _validate_model_batch(store: WorkspaceStore, workspace_id: str, mission_id: 
     try:
         store.validate_run_tool_batch(workspace_id, mission_id, run_id, calls)
     except Path2StateError as exc:
+        if exc.code == "approved_unknown_must_remain_unresolved":
+            raise CandidateRejected(exc.code, ["approved_unknown_targets"],
+                [index for index, call in enumerate(calls) if call.name == "update_definition_draft"]) from exc
         if (exc.code != "state_conflict" or len(calls) != 1
                 or calls[0].name not in {"create_clarification", "submit_for_review"}):
             raise
@@ -1652,6 +1662,8 @@ def run_agent(
                 feedback = {"ok": False, "error": {"code": code, "effect": "none",
                             "recoverable": recoveries <= 2, "paths": rejection.paths,
                             "expected_shape": (
+                                "An approved unknown must remain null with its unknown reason. Keep its blocker unresolved; no member of this batch executed."
+                                if "approved_unknown_targets" in rejection.paths else
                                 "Read the refreshed current draft_token and propose again; old tokens never upgrade."
                                 if "draft_token" in rejection.paths else
                                 "Select each join column from its corresponding table in the current source catalog."
