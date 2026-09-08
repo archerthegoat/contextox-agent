@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from uuid import uuid4
 from pydantic import ValidationError
 from contextox.models import (
@@ -86,6 +87,17 @@ def load_version(connection, ws, mid, origin, cid, version):
         q = request_in(connection, ws, mid, origin, cid)
         if a.request_sha256 != canonical_sha256(q) or len(a.items) != len(q.questions):
             raise ValueError("question binding mismatch")
+        for source in a.source_refs:
+            revision, _ = db._load_source_in_connection(connection, ws, source.revision_id)
+            if revision.permission_status != "read_allowed":
+                raise db.Path2StateError("source_permission_denied")
+            if db._source_identity(revision) != source:
+                raise db.Path2StateError("source_revision_mismatch")
+            main_path = next((item[2] for item in connection.execute("PRAGMA database_list") if item[1] == "main"), None)
+            if not main_path:
+                raise db.WorkspaceStoreUnavailableError()
+            data_dir = db.canonical_data_dir(Path(main_path).parent)
+            db._read_validated_source_file(db._source_path(data_dir, revision), revision)
         return a
     except (ValueError, TypeError) as exc:
         raise db.WorkspaceStoreUnavailableError() from exc
@@ -251,10 +263,6 @@ def load_run_answers(connection, ws, mid, run_id):
         approval=load_approval(connection,answer)
         if approval is None or approval.approval_id != aid or answer.sha256 != sha:
             raise db.WorkspaceStoreUnavailableError()
-        for source in answer.source_refs:
-            revision, _ = db._load_source_in_connection(connection, ws, source.revision_id)
-            if revision.permission_status != "read_allowed" or db._source_identity(revision) != source:
-                raise db.Path2StateError("source_permission_denied")
         result.append(ApprovedAnswerSnapshot(request=request_in(connection,ws,mid,origin,cid),answer=answer,approval=approval))
     return result
 

@@ -426,7 +426,7 @@ def _areas() -> list[WorkbenchArea]:
         WorkbenchArea(
             id="clarifications",
             label="Clarifications",
-            description="查看分析生成的澄清问题；回答与批准入口尚未开放。",
+            description="整份回答、明确批准并继续分析；未知问题保留卡点与解决方。",
             status="ready",
         ),
         WorkbenchArea(

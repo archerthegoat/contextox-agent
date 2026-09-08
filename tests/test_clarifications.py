@@ -41,9 +41,9 @@ class ClarificationTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory(prefix="contextox-r2-",dir="/private/tmp")
         self.addCleanup(self.temp.cleanup)
         self.store=db.WorkspaceStore.open(self.temp.name)
-        self.ws,self.mission,_=_persisted_mission(self.store)
+        self.ws,self.mission,self.sources=_persisted_mission(self.store,with_sources=getattr(self,"with_sources",False))
         self.mid=self.mission.mission_id
-        run=self.store.start_run(self.ws,self.mid,_start_request(self.mission,[]))
+        run=self.store.start_run(self.ws,self.mid,_start_request(self.mission,self.sources))
         self.origin=run.run_id
         self.store.mark_run_running(self.ws,self.mid,run.run_id)
         result=self.update(run.run_id,[field()])
@@ -66,7 +66,7 @@ class ClarificationTests(unittest.TestCase):
         page=self.store.list_clarification_cases(self.ws,self.mid)
         latest=page.items[0].latest_answer
         data=dict(client_request_id=str(uuid4()),expected_latest_version=latest.version if latest else 0,
-            expected_state_version=snap.mission.state_version,request_sha256=canonical_sha256(self.q),review_draft=draft_ref(snap.draft),source_refs=[],
+            expected_state_version=snap.mission.state_version,request_sha256=canonical_sha256(self.q),review_draft=draft_ref(snap.draft),source_refs=self.sources,
             items=[dict(question_index=0,disposition="answered",answer="30 days",respondent="Business owner",basis="Current policy",evidence_refs=[],targets=[],blocker=None),
                    dict(question_index=1,disposition="unknown",answer=None,respondent="Business owner",basis="Policy not yet confirmed",evidence_refs=[],
                         targets=[dict(kind="field",key="window",property="null_handling")],blocker=dict(resolver="Data owner",evidence_needed="Missing value policy",next_action="Request signed policy"))])
@@ -86,7 +86,7 @@ class ClarificationTests(unittest.TestCase):
         approved=[db.r2.ApprovedAnswerSnapshot(request=c.request,answer=c.latest_answer,approval=c.latest_approval) for c in page.items]
         snap=self.store.get_mission_snapshot(self.ws,self.mid)
         req=TaskMessageSendRequest(kind="message",client_request_id=str(uuid4()),expected_state_version=snap.mission.state_version,
-            content="Apply the approved answer; preserve unknowns",references=[],history_messages=[],source_refs=[],provider_send_confirmed=True,
+            content="Apply the approved answer; preserve unknowns",references=[],history_messages=[],source_refs=self.sources,provider_send_confirmed=True,
             approved_answers=refs(approved),expected_draft=draft_ref(snap.draft))
         return self.store.send_task_message(self.ws,self.mid,req),req
 
@@ -254,3 +254,29 @@ class ClarificationTests(unittest.TestCase):
         self.assertEqual(self.store.get_run_snapshot(self.ws,self.mid,receipt.run.run_id).draft,before)
         self.update(receipt.run.run_id,[field(),field("unrelated")])
         self.assertIsNone(self.store.get_run_snapshot(self.ws,self.mid,receipt.run.run_id).draft.fields[0].null_handling)
+
+    def test_all_answer_reads_reject_missing_changed_or_revoked_sources(self):
+        for failure in ("missing","changed","revoked"):
+            with self.subTest(failure=failure):
+                case=ClarificationTests();case.with_sources=True;case.setUp()
+                self.addCleanup(case.doCleanups)
+                saved,_=case.save();case.approve(saved.answer)
+                (receipt,_),req=case.send()
+                # Cancel before dispatch, preserving the immutable historical input.
+                case.store.cancel_run(case.ws,case.mid,receipt.run.run_id)
+                revision=next(r for r in case.store.list_source_revisions(case.ws) if r.revision_id==case.sources[0].revision_id)
+                source_path=db._source_path(case.store.data_dir,revision)
+                if failure=="missing":source_path.unlink()
+                elif failure=="changed":source_path.write_bytes(b"changed synthetic bytes")
+                else:
+                    with closing(sqlite3.connect(case.store.db_path)) as c,c:
+                        c.execute("UPDATE source_revisions SET permission_status='denied' WHERE workspace_id=? AND revision_id=?",(case.ws,revision.revision_id))
+                for read in (
+                    lambda:case.store.get_run_snapshot(case.ws,case.mid,receipt.run.run_id),
+                    lambda:case.store.get_mission_snapshot(case.ws,case.mid),
+                    lambda:case.store.get_clarification_answer(case.ws,case.mid,case.origin,case.q.clarification_id,1),
+                    lambda:case.store.clarification_submission(case.ws,case.mid,saved.client_request_id),
+                    lambda:case.store.message_submission(case.ws,case.mid,req.client_request_id),
+                    lambda:case.store.get_answer_impact(case.ws,case.mid,receipt.run.run_id),
+                    lambda:case.store.list_clarification_cases(case.ws,case.mid)):
+                    with self.assertRaises(db.WorkspaceStoreError):read()

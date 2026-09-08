@@ -1059,7 +1059,7 @@ def _schema_is_exact_v2(connection: sqlite3.Connection) -> bool:
 
 
 def _schema_is_exact(connection: sqlite3.Connection) -> bool:
-    """Read exact v3 and v4 stores without silently migrating them."""
+    """Read exact v3, v4 and v5 stores without silently migrating them."""
     return _schema_matches(connection, 3, _EXPECTED_V3_TABLES, _EXPECTED_V3_INDEXES) or _schema_matches(
         connection, 4, _EXPECTED_V4_TABLES, _EXPECTED_V3_INDEXES
     ) or _schema_matches(connection, 5, _EXPECTED_V5_TABLES, _EXPECTED_V3_INDEXES)
@@ -1104,7 +1104,7 @@ def _create_v3_tables(
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
-    """Create a new empty database using the complete frozen v4 schema."""
+    """Create a new empty database using the complete approved v5 schema."""
 
     _create_v3_tables(connection, include_workspaces=True)
     connection.execute(_EXPECTED_MESSAGE_INPUTS_SQL)
