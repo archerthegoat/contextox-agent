@@ -92,6 +92,23 @@ class CoverageInputTests(unittest.TestCase):
         result = self.normalize([question([o["obligation_handle"] for o in obligations])])
         self.assertTrue(all(len(path) <= 128 for path in result["questions"][0]["related_definition_paths"]))
 
+    def test_relationship_qualified_property_does_not_repeat_object_key(self):
+        from contextox.models import RelationshipCandidate, SourceIdentity, TableKey, UnknownItem
+        source = SourceIdentity(workspace_id=self.snapshot.mission.workspace_id,
+            source_id=fixtures._id(20), revision_id=fixtures._id(21), sha256="a" * 64)
+        table = TableKey(source_ref=source, table_id="table", columns=[])
+        for property_path in ("rel.production_key_semantics", "production_key_semantics"):
+            with self.subTest(property_path=property_path):
+                relation = RelationshipCandidate(relationship_key="rel", left=table, right=table,
+                    observed_cardinality="unknown", join_rule=None, grain_notes=None, evidence_status="unknown",
+                    source_refs=[], risks=[], unknowns=[UnknownItem(property_path=property_path, reason="Not supplied")])
+                self.refs.current_draft = self.draft.model_copy(update={"fields": [], "relationships": [relation], "unresolved_items": []})
+                obligations = self.refs.clarification_obligations()
+                result = self.normalize([question([o["obligation_handle"] for o in obligations])])
+                self.assertEqual(result["questions"][0]["related_definition_paths"],
+                                 ["relationships.rel.production_key_semantics"])
+                self.assertEqual(relation.unknowns[0].property_path, property_path)
+
     def test_exact_historical_pair_remains_supported_without_cross_product(self):
         old = ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db",
                "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d")

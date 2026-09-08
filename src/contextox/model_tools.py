@@ -284,7 +284,12 @@ class RunReferences:
         for collection, key in (("fields", "field_key"), ("relationships", "relationship_key")):
             for index, obj in enumerate(getattr(draft, collection)):
                 for unknown_index, unknown in enumerate(obj.unknowns):
-                    path = f"{collection}.{getattr(obj, key)}.{unknown.property_path}"
+                    object_key = getattr(obj, key)
+                    property_path = unknown.property_path
+                    if collection == "relationships":
+                        # Relationship unknowns may already qualify their property by key.
+                        property_path = property_path.removeprefix(f"{object_key}.")
+                    path = f"{collection}.{object_key}.{property_path}"
                     # Domain paths are bounded Keys; indexes remain scoped to this exact draft.
                     if len(path) > 128:
                         path = f"{collection}.{index}.unknowns.{unknown_index}"
