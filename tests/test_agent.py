@@ -157,6 +157,66 @@ class FakeProvider:
 
 
 class PersistedAttemptTests(unittest.TestCase):
+    def test_draft_rejection_diagnoses_finish_and_cap_without_leaking_payload(self):
+        private_marker = "private-response-marker-must-not-be-logged"
+        cases = [
+            ("length", 4096, "length", "true", "finish_reason_not_stop"),
+            ("length", 100, "length", "false", "finish_reason_not_stop"),
+            ("content_filter", 4096, "content_filter", "true", "finish_reason_not_stop"),
+            ("insufficient_system_resource", 10, "insufficient_system_resource", "false", "finish_reason_not_stop"),
+            (private_marker + "\nforged-log", 10, "other", "false", "finish_reason_not_stop"),
+            ("length", None, "length", "unknown", "finish_reason_not_stop"),
+            ("stop", 10, "stop", "false", "json_invalid"),
+        ]
+        for reason, tokens, safe_reason, reached, stage in cases:
+            with self.subTest(reason=safe_reason, tokens=tokens):
+                with self.store_case() as (store, workspace_id, attempt):
+                    usage = None if tokens is None else ProviderUsage(input_tokens=9, output_tokens=tokens)
+                    provider = FakeProvider([ProviderCompletion(
+                        completion_id=private_marker, content=private_marker,
+                        reasoning_content=private_marker, tool_calls=[], finish_reason=reason, usage=usage,
+                    )])
+                    with self.assertLogs("contextox.agent", level="WARNING") as captured:
+                        with patch.object(agent, "get_provider", return_value=provider):
+                            agent.generate_mission_draft(store, workspace_id, attempt.attempt_id, Event())
+                            agent.generate_mission_draft(store, workspace_id, attempt.attempt_id, Event())
+                    rendered = "\n".join(captured.output)
+                    self.assertIn(f"safe_stage={stage}", rendered)
+                    self.assertIn(f"finish_reason={safe_reason}", rendered)
+                    self.assertIn(f"output_tokens={tokens if tokens is not None else 'unknown'}", rendered)
+                    self.assertIn("output_limit=4096", rendered)
+                    self.assertIn(f"output_limit_reached={reached}", rendered)
+                    self.assertNotIn(private_marker, rendered)
+                    self.assertNotIn("forged-log", rendered)
+                    self.assertEqual(captured.records[0].draft_diagnostic, {
+                        "safe_stage": stage, "finish_reason": safe_reason, "output_tokens": tokens,
+                        "output_limit": 4096, "output_limit_reached": None if tokens is None else tokens >= 4096,
+                    })
+                    self.assertEqual(len(provider.calls), 1)
+                    result = store.get_mission_draft_attempt(workspace_id, attempt.attempt_id)
+                    self.assertEqual((result.status, result.error_code), ("failed", "provider_protocol_error"))
+                    self.assertIsNone(result.candidate)
+                    self.assertEqual(store.list_missions(workspace_id), [])
+                    with closing(sqlite3.connect(store.db_path)) as connection:
+                        receipts = connection.execute("SELECT error_code, output_tokens FROM provider_receipts").fetchall()
+                    self.assertEqual(receipts, [("provider_protocol_error", tokens)])
+                    reopened = WorkspaceStore.open(store.data_dir)
+                    self.assertEqual(reopened.get_mission_draft_attempt(workspace_id, attempt.attempt_id), result)
+
+    def test_stop_at_output_cap_can_still_produce_valid_draft(self):
+        with self.store_case() as (store, workspace_id, attempt):
+            payload = {"title": "Synthetic task", "goal": "Inspect synthetic evidence",
+                       "completion_criteria": ["Return candidates"], "scope_notes": []}
+            provider = FakeProvider([ProviderCompletion(
+                completion_id="synthetic-cap", content=json.dumps(payload), reasoning_content=None,
+                tool_calls=[], finish_reason="stop", usage=ProviderUsage(input_tokens=9, output_tokens=4096),
+            )])
+            with self.assertNoLogs("contextox.agent", level="WARNING"):
+                with patch.object(agent, "get_provider", return_value=provider):
+                    agent.generate_mission_draft(store, workspace_id, attempt.attempt_id, Event())
+            self.assertEqual(store.get_mission_draft_attempt(workspace_id, attempt.attempt_id).status, "ready")
+            self.assertEqual(len(provider.calls), 1)
+
     def test_draft_list_fields_reject_scalar_values_without_coercion_or_retry(self):
         payload = {
             "title": "Synthetic draft", "goal": "Define synthetic fields",

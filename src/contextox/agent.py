@@ -470,6 +470,29 @@ def _candidate_from_completion(completion: ProviderCompletion) -> MissionDraftPa
         ) from exc
 
 
+def _log_draft_rejection(
+    completion: ProviderCompletion, *, safe_stage: str, output_limit: int,
+) -> None:
+    # Provider strings can contain arbitrary text. Never log an unknown value,
+    # content, reasoning, or completion identity, even at a failed boundary.
+    reason = completion.finish_reason
+    known_reasons = {"stop", "length", "tool_calls", "content_filter", "insufficient_system_resource"}
+    reason = reason if type(reason) is str and reason in known_reasons else "other"
+    tokens = completion.usage.output_tokens if completion.usage is not None else None
+    tokens = tokens if type(tokens) is int and tokens >= 0 else None
+    reached = "unknown" if tokens is None else str(tokens >= output_limit).lower()
+    logger.warning(
+        "Mission draft candidate rejected at safe_stage=%s finish_reason=%s "
+        "output_tokens=%s output_limit=%s output_limit_reached=%s.",
+        safe_stage, reason, tokens if tokens is not None else "unknown", output_limit, reached,
+        extra={"draft_diagnostic": {
+            "safe_stage": safe_stage, "finish_reason": reason, "output_tokens": tokens,
+            "output_limit": output_limit,
+            "output_limit_reached": None if tokens is None else tokens >= output_limit,
+        }},
+    )
+
+
 def _attempt_failure(
     store: WorkspaceStoreLike,
     *,
@@ -629,9 +652,9 @@ def generate_mission_draft(
         candidate = _candidate_from_completion(completion)
     except _AgentFailure as failure:
         if failure.safe_stage is not None:
-            logger.warning(
-                "Mission draft candidate rejected at safe_stage=%s.",
-                failure.safe_stage,
+            _log_draft_rejection(
+                completion, safe_stage=failure.safe_stage,
+                output_limit=budget.max_output_tokens,
             )
         receipt = _make_receipt(
             provider=provider,
