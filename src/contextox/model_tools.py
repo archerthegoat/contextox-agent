@@ -293,17 +293,21 @@ class RunReferences:
                     # Domain paths are bounded Keys; indexes remain scoped to this exact draft.
                     if len(path) > 128:
                         path = f"{collection}.{index}.unknowns.{unknown_index}"
-                    entries.append((path, unknown.reason))
-        entries.extend((f"unresolved_items.{index}", reason)
+                    entries.append((path, unknown.reason, collection == "fields"))
+        entries.extend((f"unresolved_items.{index}", reason, False)
                        for index, reason in enumerate(draft.unresolved_items))
         return [{"obligation_handle": self.register("obligation", {
                     "draft": self.draft_pair(draft), "ordinal": index, "path": path}),
-                 "related_definition_paths": [path], "reason": reason}
-                for index, (path, reason) in enumerate(entries)]
+                 "related_definition_paths": [path], "reason": reason,
+                 "required_blocking_impact": "blocking" if field_gap else None}
+                for index, (path, reason, field_gap) in enumerate(entries)]
 
     def clarification_arguments(self, value: ClarificationInput) -> dict[str, Any]:
         result = self.review_arguments(value)
         obligations = {item["obligation_handle"]: item for item in self.clarification_obligations()}
+        blocking_paths = {path for item in obligations.values()
+                          if item["required_blocking_impact"] == "blocking"
+                          for path in item["related_definition_paths"]}
         # Resolve against this exact draft, never arbitrary strings or historical requests.
         valid_paths = {path for item in obligations.values() for path in item["related_definition_paths"]}
         if self.current_draft is not None:
@@ -326,6 +330,8 @@ class RunReferences:
                 if handle not in obligations:
                     raise CandidateRejected("draft_version_conflict", ["draft_token"])
                 paths.extend(obligations[handle]["related_definition_paths"])
+            if question.blocking_impact != "blocking" and blocking_paths.intersection(paths):
+                raise CandidateRejected("clarification_impact_conflict", ["questions.blocking_impact"])
             if handles and (not question.suggested_owner_role
                             or not question.suggested_owner_role.strip()
                             or not question.question.strip() or not question.why_needed.strip()

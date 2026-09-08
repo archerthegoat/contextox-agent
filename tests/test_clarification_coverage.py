@@ -77,6 +77,25 @@ class CoverageInputTests(unittest.TestCase):
         result = self.normalize([q])
         self.assertEqual(result["questions"][0]["related_definition_paths"][:3], q["related_definition_paths"])
 
+    def test_unknown_dimensions_require_blocking_but_optional_questions_do_not(self):
+        obligations = self.public["clarification_obligations"]
+        self.assertEqual(sum(o["required_blocking_impact"] == "blocking" for o in obligations), 12)
+        self.assertTrue(all(o["required_blocking_impact"] is None for o in obligations[-2:]))
+        for obligation in obligations[:12]:
+            with self.subTest(path=obligation["related_definition_paths"]):
+                q = question([obligation["obligation_handle"]]); q["blocking_impact"] = "non_blocking"
+                with self.assertRaises(CandidateRejected) as caught:
+                    self.normalize([question(self.handles), q])
+                self.assertEqual(caught.exception.paths, ["questions.blocking_impact"])
+                q["covers_obligation_handles"] = []
+                q["related_definition_paths"] = obligation["related_definition_paths"]
+                with self.assertRaises(CandidateRejected):
+                    self.normalize([question(self.handles), q])
+        extra = question([]); extra["blocking_impact"] = "non_blocking"
+        extra["related_definition_paths"] = ["fields.a.name"]
+        result = self.normalize([question(self.handles), extra])
+        self.assertEqual(result["questions"][1]["blocking_impact"], "non_blocking")
+
     def test_duplicate_stale_forged_and_foreign_handles(self):
         with self.assertRaises(CandidateRejected):
             self.normalize([question(self.handles + self.handles[:1])])
@@ -128,6 +147,9 @@ class CoverageInputTests(unittest.TestCase):
                                  ["relationships.rel.production_key_semantics"])
                 self.assertEqual(relation.unknowns[0].property_path, property_path)
                 q = question([o["obligation_handle"] for o in obligations])
+                self.assertIsNone(obligations[0]["required_blocking_impact"])
+                q["blocking_impact"] = "non_blocking"
+                self.assertEqual(self.normalize([q])["questions"][0]["blocking_impact"], "non_blocking")
                 q["related_definition_paths"] = ["relationships.rel.rel.production_key_semantics"]
                 with self.assertRaises(CandidateRejected):
                     self.normalize([q])
@@ -143,6 +165,48 @@ class CoverageInputTests(unittest.TestCase):
 class CoverageRunTests(unittest.TestCase):
     def execute(self, script, verify):
         g1.G1RunTests().execute(script, verify)
+
+    def test_inconsistent_impact_rejects_then_corrects_without_changing_unknowns(self):
+        def script(n, p, history):
+            if n == 1:
+                # The public request carries the general evidence contract, not evaluator answers.
+                self.assertIn("A candidate label cannot qualify an embedded fact", history[0]["content"])
+                self.assertIn("population, aggregation", history[0]["content"])
+                return [update(p)]
+            if n == 3:
+                error = json.loads(history[-1]["content"])["error"]
+                self.assertEqual(error["effect"], "none")
+                self.assertEqual(error["paths"], ["questions.blocking_impact"])
+                self.assertIn("definition finalization", error["expected_shape"])
+                self.assertEqual(p["clarifications"], [])
+            q = question([o["obligation_handle"] for o in p["draft"]["clarification_obligations"]])
+            q["blocking_impact"] = "non_blocking" if n == 2 else "blocking"
+            return [call(f"clarify-{n}", "create_clarification", {"draft_token": p["draft_token"], "questions": [q]})]
+        def verify(r, calls, receipts):
+            self.assertEqual(r.status, "waiting_for_human")
+            self.assertEqual(receipts, [("update", 1), ("clarify-3", 2)])
+            self.assertEqual(len(r.clarifications), 1)
+            self.assertEqual(r.clarifications[0].questions[0].blocking_impact, "blocking")
+            self.assertEqual(len(r.draft.fields[0].unknowns), 6)
+            self.assertIsNone(r.draft.fields[0].null_handling)
+            self.assertEqual(len(calls), 3)
+        self.execute(script, verify)
+
+    def test_repeated_impact_conflicts_stop_with_no_clarification(self):
+        def script(n, p, h):
+            if n == 1:
+                return [update(p)]
+            q = question([o["obligation_handle"] for o in p["draft"]["clarification_obligations"]])
+            q["blocking_impact"] = "non_blocking"
+            return [call(f"clarify-{n}", "create_clarification", {"draft_token": p["draft_token"], "questions": [q]})]
+        def verify(r, calls, receipts):
+            self.assertEqual(r.status, "failed")
+            self.assertEqual(r.error_code, "tool_arguments_invalid")
+            self.assertEqual(r.clarifications, [])
+            self.assertIsNotNone(r.draft)
+            self.assertEqual(receipts, [("update", 1)])
+            self.assertEqual(len(calls), 4)
+        self.execute(script, verify)
 
     def test_historical_unresolved_path_stays_readable_without_rewrite(self):
         from threading import Event
@@ -196,10 +260,18 @@ class CoverageRunTests(unittest.TestCase):
         self.execute(script, verify)
 
     def test_old_pair_persisted_run_reopens_without_rewriting_receipts(self):
+        pairs = (
+            ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
+            ("fd4d113705de9c1bd504759f4d55454d88cf8d966287c9b41c34a83af923707a", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
+        )
+        for prompt, tools in pairs:
+            with self.subTest(prompt=prompt):
+                self.assertIn((prompt, tools), agent.SUPPORTED_RUN_HASH_PAIRS)
+                self._assert_historical_pair_reopens(prompt, tools)
+
+    def _assert_historical_pair_reopens(self, old_prompt, old_tools):
         from threading import Event
         from unittest.mock import patch
-        old_prompt = "d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db"
-        old_tools = "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"
         with fixtures.PersistedRunTests().store_case() as (store, ws, mission, refs):
             run = store.start_run(ws, mission.mission_id, fixtures._start_request(mission, refs))
             provider = fixtures.FakeProvider([fixtures._completion("Synthetic historical reply", (

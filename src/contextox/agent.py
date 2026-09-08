@@ -135,6 +135,13 @@ Do not convert known units, types, or supplied rules to unknown
 merely because other business choices remain unresolved. Candidate formulas must
 remain explicitly conditional on unresolved business choices and must never imply
 business approval.
+Apply the same evidence standard to names, unknown reasons, risks and questions,
+not only non-null dimension values. Use the source's neutral column name when its
+business event is unconfirmed. A candidate label cannot qualify an embedded fact.
+For a derived numeric observation, state the source population, aggregation and
+any filter/window; retain only values reproducible from the read evidence. If the
+scope or result is uncertain, omit the numeric assertion and keep the proposal
+conditional. A hypothetical filtered result is not an unfiltered sample fact.
 Updates upsert by key, preserving omitted fields/relationships; unresolved_items
 is the complete current list. Use at most one draft update per batch and use its
 returned draft_token for the next write. Terminal tools must be alone in a batch.
@@ -152,6 +159,11 @@ when appropriate, but do not omit any; additional questions may cover an empty l
 Use handles from the exact current draft, and provide a responsible role, requested
 evidence, impact and a concrete decision/next action for each covered question.
 A coverage link is not evidence that the question actually settles that issue.
+An obligation with required_blocking_impact=blocking lacks a required field
+dimension. Any question covering or directly linking that gap must be blocking
+for definition finalization. A null requirement leaves impact to your assessment;
+it is not evidence that the question is non_blocking. Optional questions may be
+non_blocking when they do not prevent finalizing the affected definition.
 Save necessary relationship/field candidates, then create concrete clarifications
 with impact, owner role and needed evidence when business decisions are missing.
 Mark a missing decision blocking when it prevents finalizing the affected
@@ -265,6 +277,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("fd4d113705de9c1bd504759f4d55454d88cf8d966287c9b41c34a83af923707a", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
     ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("72c86fef072f70d63a187acf65d08297e9164e046613905d8770ad5528d38541", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("ff73c255028ee367157aced3142ecf7fe8b375ba7b0ba7184384f9b396d39383", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
@@ -1683,6 +1696,8 @@ def run_agent(
                                 if "questions.covers_obligation_handles" in rejection.paths else
                                 "Use only existing objects/properties of the current draft or its clarification_obligations paths; omit optional extra paths if unnecessary."
                                 if "questions.related_definition_paths" in rejection.paths else
+                                "A linked unknown field dimension prevents definition finalization: mark this question blocking; exploration may continue. No question was saved."
+                                if "questions.blocking_impact" in rejection.paths else
                                 "Follow the supplied tool schema; no member of this batch executed.")}}
                 if rejection.missing_handles:
                     feedback["error"]["missing_obligation_handles"] = rejection.missing_handles
