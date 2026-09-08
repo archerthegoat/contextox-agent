@@ -1,7 +1,8 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
-import { AnswerForm, AnswerReadback, answerOmissions, blankAnswers, clarificationCaseMatches, approvedRefs, draftTargets } from "./ClarificationAnswers";
+import { describe, expect, it, vi } from "vitest";
+import * as api from "./api/client";
+import { type PendingClarificationSubmission, decodePendingSubmission, performPendingSubmission, AnswerForm, AnswerReadback, DefinitionBusinessSummary, answerOmissions, blankAnswers, clarificationCaseMatches, approvedRefs, draftTargets } from "./ClarificationAnswers";
 import type { components } from "./generated/api";
 
 type Answer = components["schemas"]["ClarificationAnswerVersion"];
@@ -43,5 +44,53 @@ describe("whole clarification answer", () => {
     expect(clarificationCaseMatches({...item,latest_approval:{...approval,answer_version:2}},"ws","mission")).toBe(false);
     expect(approvedRefs([item])).toEqual([{origin_run_id:"old-run",clarification_id:"clarification",answer_version:1,answer_sha256:hash,approval_id:"approval"}]);
     expect(approvedRefs([{...item,latest_answer:{...answer,version:2},review_state:"awaiting_approval"}])).toEqual([]);
+  });
+});
+
+
+describe("business-facing answer impact", () => {
+  it("shows six field dimensions and unknown reasons without engineering identities", () => {
+    const value: components["schemas"]["DefinitionField"] = {field_key:"window",name:"统计窗口",meaning:"订单统计时间范围",value_type:"整数",grain:"每笔订单",rule:"30天",time_basis:"下单时间",null_handling:null,source_columns:[],source_refs:[],evidence_status:"candidate",unknowns:[{property_path:"fields.window.null_handling",reason:"业务负责人尚未确认空值规则"}]};
+    const html=renderToStaticMarkup(createElement(DefinitionBusinessSummary,{value}));
+    for(const label of ["业务含义","值类型","业务粒度","业务规则","时间口径","空值规则"]) expect(html).toContain(label);
+    expect(html).toContain("30天");expect(html).toContain("业务负责人尚未确认空值规则");expect(html).toContain("尚未确认");expect(html).not.toContain("property_path");expect(html).not.toContain("source_refs");
+  });
+  it("shows actual relation tables and columns while keeping source identity out of the business summary", () => {
+    const source={workspace_id:"private-workspace",source_id:"private-source",revision_id:"private-revision",sha256:hash};
+    const value: components["schemas"]["RelationshipCandidate"] = {relationship_key:"customer_orders",left:{source_ref:source,table_id:"customers",columns:["customer_id"]},right:{source_ref:source,table_id:"orders",columns:["customer_id"]},observed_cardinality:"one_to_many",join_rule:"按客户编号关联",grain_notes:"客户到订单",evidence_status:"candidate",source_refs:[],unknowns:[],risks:["客户编号重复会扩大结果"]};
+    const html=renderToStaticMarkup(createElement(DefinitionBusinessSummary,{value}));
+    for(const text of ["customers","orders","customer_id","一对多","按客户编号关联","客户到订单","客户编号重复会扩大结果"]) expect(html).toContain(text);
+    expect(html).not.toContain("private-workspace");expect(html).not.toContain(hash);
+    expect(renderToStaticMarkup(createElement(DefinitionBusinessSummary,{value:null}))).toContain("无此字段或关系");
+  });
+});
+
+describe("explicit replay of the submitted request", () => {
+  const submission: PendingClarificationSubmission = {kind:"answer",id:"request-1",workspaceId:"ws",missionId:"mission",action:{operation:"save",originRunId:"old-run",clarificationId:"clarification",body:{client_request_id:"request-1",expected_state_version:7,expected_latest_version:0,request_sha256:hash,review_draft:answer.review_draft,source_refs:[],items}}};
+  const receipt: components["schemas"]["ClarificationSubmissionReceipt"]={operation:"save",client_request_id:"request-1",answer,approval:null,mission_state_version:8};
+  it("a not-arrived request and a 404 lookup do not write until explicit same-payload replay", async () => {
+    const saved=decodePendingSubmission(JSON.stringify(submission),"ws","mission");
+    const save=vi.fn<typeof api.saveClarificationAnswer>(async()=>receipt);
+    const lookup=vi.fn<typeof api.fetchClarificationSubmission>(async()=>{throw new api.ApiRequestError(404,{code:"clarification_submission_not_found",message:"missing",request_id:"lookup"});});
+    const transport={...api,saveClarificationAnswer:save,fetchClarificationSubmission:lookup};
+    await expect(performPendingSubmission(saved,"query",transport)).rejects.toMatchObject({status:404});
+    expect(save).not.toHaveBeenCalled();
+    await expect(performPendingSubmission(saved,"replay",transport)).resolves.toEqual({kind:"answer",receipt});
+    expect(save).toHaveBeenCalledExactlyOnceWith("ws","mission","old-run","clarification",submission.action!.body);
+    expect(saved.action!.body).toEqual(submission.action!.body);
+    expect(saved.action!.body).not.toBe(submission.action!.body);
+  });
+  it("an accepted request whose response was lost is only read back", async () => {
+    const save=vi.fn<typeof api.saveClarificationAnswer>(async()=>receipt);
+    const lookup=vi.fn<typeof api.fetchClarificationSubmission>(async()=>receipt);
+    const result=await performPendingSubmission(submission,"query",{...api,saveClarificationAnswer:save,fetchClarificationSubmission:lookup});
+    expect(result).toEqual({kind:"answer",receipt});expect(save).not.toHaveBeenCalled();
+    expect(lookup).toHaveBeenCalledExactlyOnceWith("ws","mission","request-1");
+  });
+  it("rejects another scope or changed request identity and cannot replay an old ID-only record", async () => {
+    expect(()=>decodePendingSubmission(JSON.stringify(submission),"other","mission")).toThrow("scope mismatch");
+    expect(()=>decodePendingSubmission(JSON.stringify({...submission,id:"different"}),"ws","mission")).toThrow("invalid pending body");
+    const old=decodePendingSubmission(JSON.stringify({kind:"answer",id:"old-request"}),"ws","mission");
+    await expect(performPendingSubmission(old,"replay",api)).rejects.toThrow("original payload unavailable");
   });
 });

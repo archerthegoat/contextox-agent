@@ -101,6 +101,22 @@ export function AnswerForm({request, latest, draft, disabled, onSave, onDirty}: 
   </form>;
 }
 
+type DefinitionValue = components["schemas"]["AnswerImpactChange"]["before"];
+export function DefinitionBusinessSummary({value}: {value: DefinitionValue}) {
+  if (!value) return <p>无此字段或关系</p>;
+  const rows: [string, string | null][] = "field_key" in value
+    ? [["字段名称", value.name], ...(["meaning", "value_type", "grain", "rule", "time_basis", "null_handling"] as const).map(property => [dimensions[property], value[property]] as [string, string | null])]
+    : [["左侧表及关联列", `${value.left.table_id || "根表"} · ${value.left.columns.join("、") || "尚未选择关联列"}`],
+       ["右侧表及关联列", `${value.right.table_id || "根表"} · ${value.right.columns.join("、") || "尚未选择关联列"}`],
+       ["观察到的对应关系", ({one_to_one:"一对一", one_to_many:"一对多", many_to_one:"多对一", many_to_many:"多对多", unknown:"尚未确认"})[value.observed_cardinality]],
+       [dimensions.join_rule, value.join_rule], [dimensions.grain_notes, value.grain_notes]];
+  return <div><dl>{rows.map(([label, text]) => <div key={label}><dt>{label}</dt><dd>{text ?? "尚未确认"}</dd></div>)}</dl>
+    <p>证据状态：{({observed:"资料观察", candidate:"候选，尚未批准", conflict:"存在冲突", unknown:"尚未确认"})[value.evidence_status]}</p>
+    {value.unknowns.length > 0 && <section><h6>未解决问题</h6><ul>{value.unknowns.map((item,index) => <li key={index}>{item.reason}</li>)}</ul></section>}
+    {"risks" in value && value.risks.length > 0 && <section><h6>关系风险</h6><ul>{value.risks.map((risk,index) => <li key={index}>{risk}</li>)}</ul></section>}
+  </div>;
+}
+
 export function AnswerImpactView({workspaceId, missionId, runId}: {workspaceId:string; missionId:string; runId:string}) {
   const [impact, setImpact] = useState<components["schemas"]["AnswerImpact"] | null>(null);
   const [error, setError] = useState("");
@@ -119,8 +135,9 @@ export function AnswerImpactView({workspaceId, missionId, runId}: {workspaceId:s
     {impact.approved_answers.map(snapshot => <details key={`${snapshot.answer.origin_run_id}/${snapshot.answer.clarification_id}`}><summary>已批回答 v{snapshot.answer.version} · {snapshot.request.questions.length} 题</summary><AnswerReadback answer={snapshot.answer} request={snapshot.request}/></details>)}
     {[true, false].map(related => <section key={String(related)}><h4>{related ? "与本次回答相关" : "其他分析变化"}</h4>
       {impact.changes.filter(change => Boolean(change.question_refs.length) === related).map(change => <details key={`${change.kind}/${change.key}`}><summary>{change.key} · {({added:"新增",changed:"变化",removed:"移除"})[change.change]}</summary>
-        {change.question_refs.length > 0 && <p>相关已批回答：{change.question_refs.map(ref => `${ref.clarification_id} 第 ${ref.question_index + 1} 题`).join("；")}。关联不代表该候选已获批准。</p>}
-        <div className="answer-diff"><div><h5>分析前</h5><pre>{JSON.stringify(change.before, null, 2)}</pre></div><div><h5>本轮结果</h5><pre>{JSON.stringify(change.after, null, 2)}</pre></div></div>
+        {change.question_refs.length > 0 && <p>相关已批回答：{change.question_refs.map(ref => impact.approved_answers.find(snapshot => snapshot.request.run_id===ref.origin_run_id && snapshot.request.clarification_id===ref.clarification_id)?.request.questions[ref.question_index]?.question ?? `第 ${ref.question_index + 1} 题（原问题待核对）`).join("；")}。关联不代表该候选已获批准。</p>}
+        <div className="answer-diff"><div><h5>分析前</h5><DefinitionBusinessSummary value={change.before}/></div><div><h5>本轮结果</h5><DefinitionBusinessSummary value={change.after}/></div></div>
+        <details><summary>诊断：完整对象与证据身份</summary><pre>{JSON.stringify(change,null,2)}</pre></details>
       </details>)}
     </section>)}
     <h4>剩余卡点 · {impact.remaining_blockers.length}</h4>
@@ -145,6 +162,38 @@ export function approvedRefs(cases: Case[]): components["schemas"]["ApprovedAnsw
   return cases.filter(item => item.review_state === "approved" && item.latest_approval && item.latest_answer && item.latest_approval.answer_version === item.latest_answer.version && item.latest_approval.answer_sha256 === item.latest_answer.sha256 && item.latest_approval.origin_run_id === item.request.run_id && item.latest_approval.clarification_id === item.request.clarification_id).map(item => ({origin_run_id:item.request.run_id, clarification_id:item.request.clarification_id, answer_version:item.latest_answer!.version, answer_sha256:item.latest_answer!.sha256, approval_id:item.latest_approval!.approval_id})).sort((a,b) => a.origin_run_id.localeCompare(b.origin_run_id) || a.clarification_id.localeCompare(b.clarification_id));
 }
 
+type SubmissionAction =
+  | {operation:"save"; originRunId:string; clarificationId:string; body:components["schemas"]["ClarificationAnswerSaveRequest"]}
+  | {operation:"approve"; originRunId:string; clarificationId:string; version:number; body:components["schemas"]["ClarificationAnswerApproveRequest"]}
+  | {operation:"continue"; body:components["schemas"]["TaskMessageSendRequest"]};
+export type PendingClarificationSubmission = {kind:"answer"|"continue"; id:string; workspaceId:string; missionId:string; action?:SubmissionAction};
+export function decodePendingSubmission(serialized:string, workspaceId:string, missionId:string): PendingClarificationSubmission {
+  const value = JSON.parse(serialized) as PendingClarificationSubmission;
+  if (!value || typeof value!=="object" || !["answer","continue"].includes(value.kind) || typeof value.id!=="string" || !value.id ||
+      (value.workspaceId!==undefined && value.workspaceId!==workspaceId) || (value.missionId!==undefined && value.missionId!==missionId)) throw new Error("pending scope mismatch");
+  // Older ID-only records remain queryable, but cannot manufacture a replay payload.
+  if (value.action) {
+    const a=value.action;
+    if (!a.body || a.body.client_request_id!==value.id || !Number.isInteger(a.body.expected_state_version) || a.body.expected_state_version<1) throw new Error("invalid pending body");
+    if (a.operation==="continue") {
+      if (value.kind!=="continue" || a.body.kind!=="message" || a.body.provider_send_confirmed!==true || !Array.isArray(a.body.approved_answers) || !a.body.expected_draft) throw new Error("invalid continuation");
+    } else if ((a.operation!=="save" && a.operation!=="approve") || value.kind!=="answer" || typeof a.originRunId!=="string" || typeof a.clarificationId!=="string" || (a.operation==="approve" && (!Number.isInteger(a.version)||a.version<1))) throw new Error("invalid answer route");
+  }
+  return {...value,workspaceId,missionId};
+}
+const submissionApi={saveClarificationAnswer,approveClarificationAnswer,sendTaskMessage,fetchClarificationSubmission,fetchMessageSubmission};
+type SubmissionResult = {kind:"answer"; receipt:Receipt} | {kind:"continue"; receipt:components["schemas"]["TaskMessageSendReceipt"]};
+export async function performPendingSubmission(pending:PendingClarificationSubmission, mode:"query"|"replay", api=submissionApi): Promise<SubmissionResult> {
+  const {workspaceId:ws,missionId:mid,id,action}=pending;
+  if (mode==="query") return pending.kind==="answer" ? {kind:"answer",receipt:await api.fetchClarificationSubmission(ws,mid,id)} : {kind:"continue",receipt:await api.fetchMessageSubmission(ws,mid,id)};
+  if (!action) throw new Error("original payload unavailable");
+  switch(action.operation) {
+    case "save": return {kind:"answer",receipt:await api.saveClarificationAnswer(ws,mid,action.originRunId,action.clarificationId,action.body)};
+    case "approve": return {kind:"answer",receipt:await api.approveClarificationAnswer(ws,mid,action.originRunId,action.clarificationId,action.version,action.body)};
+    case "continue": return {kind:"continue",receipt:await api.sendTaskMessage(ws,mid,action.body)};
+  }
+}
+
 export function ClarificationAnswers({state}: {state: Path2WorkbenchState}) {
   const ws = state.workspaceId, mid = state.selectedMission?.mission_id;
   const scope = `${ws}/${mid}`;
@@ -158,7 +207,8 @@ export function ClarificationAnswers({state}: {state: Path2WorkbenchState}) {
   const [storageReady, setStorageReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const mutex = useRef(false);
-  const [pending, setPending] = useState<{kind:"answer"|"continue"; id:string} | null>(null);
+  const [pending, setPending] = useState<PendingClarificationSubmission | null>(null);
+  const [checkedMissing, setCheckedMissing] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -177,8 +227,8 @@ export function ClarificationAnswers({state}: {state: Path2WorkbenchState}) {
     finally {if (current.current === scope && generation === loadGeneration.current) setLoading(false);}
   };
   useEffect(() => {
-    setPage(null); setEditing(null); setDirty(false); setHistory(null); setConfirmed(false); setPending(null); setBusy(false); mutex.current = false;
-    try {const stored = sessionStorage.getItem(storageKey); if (stored) {const value = JSON.parse(stored); if ((value.kind !== "answer" && value.kind !== "continue") || typeof value.id !== "string") throw new Error("invalid pending request"); setPending(value);}setStorageReady(true);}
+    setPage(null); setEditing(null); setDirty(false); setHistory(null); setConfirmed(false); setPending(null); setCheckedMissing(false); setBusy(false); mutex.current = false;
+    try {const stored = sessionStorage.getItem(storageKey); if (stored) {setPending(decodePendingSubmission(stored,ws!,mid!));}setStorageReady(true);}
     catch {setStorageReady(false);setError("浏览器无法回读请求标识，请先核对待提交结果。");}
     void load();
   }, [scope]);
@@ -190,7 +240,11 @@ export function ClarificationAnswers({state}: {state: Path2WorkbenchState}) {
     sessionStorage.removeItem(storageKey); setPending(null); setEditing(null); setDirty(false); setConfirmed(false);
     await state.refreshTask(); await load();
   };
-  const remember = (kind:"answer"|"continue", id:string) => {sessionStorage.setItem(storageKey, JSON.stringify({kind,id})); setPending({kind,id});};
+  const remember = (action:SubmissionAction) => {
+    const serialized=JSON.stringify({kind:action.operation==="continue"?"continue":"answer",id:action.body.client_request_id,workspaceId:ws,missionId:mid,action});
+    const saved=decodePendingSubmission(serialized,ws!,mid!);
+    sessionStorage.setItem(storageKey,serialized);setPending(saved);setCheckedMissing(false);return saved;
+  };
   const failed = (e:unknown) => {
     if (current.current !== scope) return;
     setError(clarificationError(e));
@@ -200,14 +254,14 @@ export function ClarificationAnswers({state}: {state: Path2WorkbenchState}) {
     if (!ws || !mid || !page || !readReady || !storageReady || !state.latestDraft || mutex.current || pending) throw new Error("not ready");
     mutex.current = true; setBusy(true); setError("");
     const draft = state.latestDraft;
-    try {const id = crypto.randomUUID(); remember("answer",id);
-      await finish(await saveClarificationAnswer(ws,mid,item.request.run_id,item.request.clarification_id,{client_request_id:id,expected_latest_version:item.latest_answer?.version ?? 0,expected_state_version:page.mission_state_version,request_sha256:item.request_sha256,review_draft:{draft_id:draft.draft_id,version:draft.version,sha256:draft.sha256}, source_refs:state.missionSnapshot?.mission.source_refs ?? state.selectedMission!.source_refs,items}));
+    try {const id = crypto.randomUUID(); const saved=remember({operation:"save",originRunId:item.request.run_id,clarificationId:item.request.clarification_id,body:{client_request_id:id,expected_latest_version:item.latest_answer?.version ?? 0,expected_state_version:page.mission_state_version,request_sha256:item.request_sha256,review_draft:{draft_id:draft.draft_id,version:draft.version,sha256:draft.sha256}, source_refs:state.missionSnapshot?.mission.source_refs ?? state.selectedMission!.source_refs,items}});
+      const result=await performPendingSubmission(saved,"replay");if(result.kind==="answer")await finish(result.receipt);
     } catch(e) {failed(e); throw e;} finally {if(current.current === scope){mutex.current=false;setBusy(false);}}
   };
   const approve = async (item:Case) => {
     if (!ws || !mid || !page || !readReady || !storageReady || !item.latest_answer || mutex.current || pending) return;
     mutex.current=true;setBusy(true);setError("");
-    try {const id=crypto.randomUUID();remember("answer",id);await finish(await approveClarificationAnswer(ws,mid,item.request.run_id,item.request.clarification_id,item.latest_answer.version,{client_request_id:id,expected_state_version:page.mission_state_version,expected_answer_sha256:item.latest_answer.sha256}));}
+    try {const id=crypto.randomUUID();const saved=remember({operation:"approve",originRunId:item.request.run_id,clarificationId:item.request.clarification_id,version:item.latest_answer.version,body:{client_request_id:id,expected_state_version:page.mission_state_version,expected_answer_sha256:item.latest_answer.sha256}});const result=await performPendingSubmission(saved,"replay");if(result.kind==="answer")await finish(result.receipt);}
     catch(e){failed(e);}finally{if(current.current===scope){mutex.current=false;setBusy(false);}}
   };
   const adopt = async (receipt: components["schemas"]["TaskMessageSendReceipt"]) => {
@@ -218,15 +272,15 @@ export function ClarificationAnswers({state}: {state: Path2WorkbenchState}) {
   const continueAnalysis = async () => {
     if(!ws||!mid||!page||!state.latestDraft||mutex.current||pending||!confirmed||!canContinue)return;
     mutex.current=true;setBusy(true);setError("");
-    try {const id=crypto.randomUUID();remember("continue",id);const draft=state.latestDraft;
-      await adopt(await sendTaskMessage(ws,mid,{kind:"message",client_request_id:id,expected_state_version:page.mission_state_version,content:"请依据本次批准的整份回答继续分析，保留尚未解决的卡点，并说明草案变化。",references:[],history_messages:[],source_refs:state.selectedSourceRefs,provider_send_confirmed:true,approved_answers:refs,expected_draft:{draft_id:draft.draft_id,version:draft.version,sha256:draft.sha256}}));
+    try {const id=crypto.randomUUID();const draft=state.latestDraft;
+      const saved=remember({operation:"continue",body:{kind:"message",client_request_id:id,expected_state_version:page.mission_state_version,content:"请依据本次批准的整份回答继续分析，保留尚未解决的卡点，并说明草案变化。",references:[],history_messages:[],source_refs:state.selectedSourceRefs,provider_send_confirmed:true,approved_answers:refs,expected_draft:{draft_id:draft.draft_id,version:draft.version,sha256:draft.sha256}}});const result=await performPendingSubmission(saved,"replay");if(result.kind==="continue")await adopt(result.receipt);
     }catch(e){failed(e);}finally{if(current.current===scope){mutex.current=false;setBusy(false);}}
   };
-  const reconcile = async () => {
-    if(!ws||!mid||!pending||mutex.current)return;
+  const reconcile = async (replay=false) => {
+    if(!ws||!mid||!pending||mutex.current||(replay&&(!checkedMissing||!pending.action)))return;
     mutex.current=true;setBusy(true);setError("");
-    try{if(pending.kind==="answer")await finish(await fetchClarificationSubmission(ws,mid,pending.id));else await adopt(await fetchMessageSubmission(ws,mid,pending.id));}
-    catch(e){if(current.current===scope)setError(clarificationError(e));}finally{if(current.current===scope){mutex.current=false;setBusy(false);}}
+    try{const result=await performPendingSubmission(pending,replay?"replay":"query");if(result.kind==="answer")await finish(result.receipt);else await adopt(result.receipt);}
+    catch(e){if(current.current===scope){if(replay)failed(e);else {setError(clarificationError(e));setCheckedMissing(e instanceof ApiRequestError && e.status===404 && ["clarification_submission_not_found","message_submission_not_found"].includes(e.code??""));}}}finally{if(current.current===scope){mutex.current=false;setBusy(false);}}
   };
   const latestStatus = state.missionSnapshot?.latest_run?.status;
   const active=terminal==="running"||terminal==="queued"||latestStatus==="running"||latestStatus==="queued";
@@ -239,9 +293,9 @@ export function ClarificationAnswers({state}: {state: Path2WorkbenchState}) {
   const conflicts = [...new Set(cases.flatMap(item => item.latest_answer?.items.filter(answer => answer.disposition === "answered").flatMap(answer => answer.targets.map(targetKey).filter(key => unknownTargets.has(key))) ?? []))];
   const blockers=cases.reduce((sum,item)=>sum+(item.latest_answer?.items.filter(answer=>answer.disposition==="unknown").length??0),0);
   if(!ws||!mid)return <p>选择任务后查看需要澄清的问题。</p>;
-  return <section className="path2-panel-stack"><header className="path2-panel-intro"><div><h2>回答与批准</h2><p>整份保存、整份批准，再明确继续分析。尚不能确认的问题始终保留为卡点。</p></div><button disabled={loading||busy} onClick={()=>void load()}>刷新并核对</button></header>
+  return <section className="path2-panel-stack"><header className="path2-panel-intro"><div><h2>回答与批准</h2><p>整份保存、整份批准，再明确继续分析。尚不能确认的问题始终保留为卡点。提交内容仅在本标签会话保留用于失败核对，成功或明确拒绝后清除；未提交输入不会自动保存。</p></div><button disabled={loading||busy} onClick={()=>void load()}>刷新并核对</button></header>
     {error&&<p role="alert">{error}</p>}{loading&&<p role="status">正在核对当前请求及批准…</p>}
-    {pending&&<div role="status"><p>操作结果待核对。原请求标识已保留，禁止新建请求自动重试。</p><button disabled={busy} onClick={()=>void reconcile()}>核对原请求结果</button></div>}
+    {pending&&<div role="status"><p>操作结果待核对。本标签会话保留原请求及已提交内容，供核对或按原内容重提；不会自动重发。</p><button disabled={busy} onClick={()=>void reconcile()}>核对原请求结果</button>{checkedMissing&&pending.action&&<button disabled={busy} onClick={()=>void reconcile(true)}>按原请求重提</button>}{checkedMissing&&!pending.action&&<p>此旧记录仅保留请求标识，原负载不可用；不能自动重建请求，请保留标识继续核对。</p>}</div>}
     {!loading&&page&&!cases.length&&<p>当前任务没有澄清请求。</p>}
     {!page && !error && state.clarifications.map(request => <article className="path2-card" key={`${request.run_id}/${request.clarification_id}`}><h3>原澄清请求 · 批准状态待回读</h3>{request.questions.map((question,index) => <section key={index}><h4>{index+1}. {question.question}</h4><p>{question.why_needed}</p><p>{question.suggested_owner_role}</p><p>{question.related_definition_paths.join("、")}</p><p>{question.evidence_requested.join("；")}</p><p>{question.examples_or_options.join("；")}</p><EvidenceRefs refs={question.source_refs}/></section>)}</article>)}
     {conflicts.length > 0 && <p role="alert">已回答与未知映射到同一维度：{conflicts.join("、")}。未知保护优先，需更新整份回答并重新批准才能解除。</p>}
