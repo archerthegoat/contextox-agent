@@ -145,6 +145,13 @@ may replace one interrupted or wire-limited stream with one non-stream request,
 counted within those eight requests. Do not retry tools for transport failures.
 Permission, protocol and unknown-effect failures do not permit tool recovery.
 Keep arguments and explanations concise within the per-call output budget.
+Every published draft includes clarification_obligations for all identified unknowns
+and unresolved items. Before create_clarification, cover every current obligation
+using questions.covers_obligation_handles. Group related obligations in one question
+when appropriate, but do not omit any; additional questions may cover an empty list.
+Use handles from the exact current draft, and provide a responsible role, requested
+evidence, impact and a concrete decision/next action for each covered question.
+A coverage link is not evidence that the question actually settles that issue.
 Save necessary relationship/field candidates, then create concrete clarifications
 with impact, owner role and needed evidence when business decisions are missing.
 Mark a missing decision blocking when it prevents finalizing the affected
@@ -258,6 +265,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("72c86fef072f70d63a187acf65d08297e9164e046613905d8770ad5528d38541", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("ff73c255028ee367157aced3142ecf7fe8b375ba7b0ba7184384f9b396d39383", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("816172ec2f4b304510be0bf8409409d7d5eff2a309f7f6d7d03010d00b5e2b26", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
@@ -1671,7 +1679,11 @@ def run_agent(
                                 if "draft_token" in rejection.paths else
                                 "Select each join column from its corresponding table in the current source catalog."
                                 if "left_column_handles" in rejection.paths else
+                                "Cover all clarification_obligations from the current draft; group related items and provide owner, evidence and decision."
+                                if "questions.covers_obligation_handles" in rejection.paths else
                                 "Follow the supplied tool schema; no member of this batch executed.")}}
+                if rejection.missing_handles:
+                    feedback["error"]["missing_obligation_handles"] = rejection.missing_handles
                 messages.append({"role": "tool", "tool_call_id": raw.call_id,
                                  "content": json.dumps(feedback, ensure_ascii=False)})
             logger.warning("Agent batch rejected turn=%s code=%s paths=%s.",

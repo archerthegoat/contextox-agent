@@ -58,6 +58,7 @@ class FieldInput(ContextOxModel):
 
 
 class QuestionInput(ContextOxModel):
+    covers_obligation_handles: list[Handle]
     question: Text
     why_needed: Text
     expected_answer_type: AnswerType
@@ -151,7 +152,9 @@ class HandleDenied(Exception):
 
 
 class CandidateRejected(Exception):
-    def __init__(self, code: str, paths: list[str] | None = None, indices: list[int] | None = None):
+    def __init__(self, code: str, paths: list[str] | None = None, indices: list[int] | None = None,
+                 missing_handles: list[str] | None = None):
+        self.missing_handles = (missing_handles or [])[:5]
         self.code = code
         self.paths = (paths or [])[:5]
         self.indices = indices or []
@@ -273,13 +276,57 @@ class RunReferences:
         pair = self.draft_version(value.draft_token)
         return {"draft_version": pair["version"], "draft_sha256": pair["sha256"]}
 
+    def clarification_obligations(self) -> list[dict[str, Any]]:
+        draft = self.current_draft
+        if draft is None:
+            return []
+        entries = []
+        for collection, key in (("fields", "field_key"), ("relationships", "relationship_key")):
+            for index, obj in enumerate(getattr(draft, collection)):
+                for unknown_index, unknown in enumerate(obj.unknowns):
+                    path = f"{collection}.{getattr(obj, key)}.{unknown.property_path}"
+                    # Domain paths are bounded Keys; indexes remain scoped to this exact draft.
+                    if len(path) > 128:
+                        path = f"{collection}.{index}.unknowns.{unknown_index}"
+                    entries.append((path, unknown.reason))
+        entries.extend((f"unresolved_items.{index}", reason)
+                       for index, reason in enumerate(draft.unresolved_items))
+        return [{"obligation_handle": self.register("obligation", {
+                    "draft": self.draft_pair(draft), "ordinal": index, "path": path}),
+                 "related_definition_paths": [path], "reason": reason}
+                for index, (path, reason) in enumerate(entries)]
+
     def clarification_arguments(self, value: ClarificationInput) -> dict[str, Any]:
         result = self.review_arguments(value)
+        obligations = {item["obligation_handle"]: item for item in self.clarification_obligations()}
+        covered: set[str] = set()
         questions = []
         for question in value.questions:
-            item = question.model_dump(mode="json", exclude={"evidence_handles"})
+            handles = question.covers_obligation_handles
+            if len(set(handles)) != len(handles):
+                raise CandidateRejected("duplicate_obligation", ["questions.covers_obligation_handles"])
+            paths = list(question.related_definition_paths)
+            for handle in handles:
+                self.resolve(handle, "obligation")  # Forged or cross-Run capabilities fail closed.
+                if handle not in obligations:
+                    raise CandidateRejected("draft_version_conflict", ["draft_token"])
+                paths.extend(obligations[handle]["related_definition_paths"])
+            if handles and (not question.suggested_owner_role
+                            or not question.suggested_owner_role.strip()
+                            or not question.question.strip() or not question.why_needed.strip()
+                            or not question.evidence_requested
+                            or any(not evidence.strip() for evidence in question.evidence_requested)):
+                raise CandidateRejected("incomplete_handoff", ["questions.suggested_owner_role",
+                                        "questions.evidence_requested", "questions.question", "questions.why_needed"])
+            covered.update(handles)
+            item = question.model_dump(mode="json", exclude={"evidence_handles", "covers_obligation_handles"})
+            item["related_definition_paths"] = list(dict.fromkeys(paths))
             item["source_refs"] = [_plain(self.resolve(h, "evidence")) for h in question.evidence_handles]
             questions.append(item)
+        missing = [handle for handle in obligations if handle not in covered]
+        if missing:
+            raise CandidateRejected("clarification_coverage_incomplete", ["questions.covers_obligation_handles"],
+                                    missing_handles=missing)
         return {**result, "questions": questions}
 
     def join_key(self, table_handle: str, columns: list[str]) -> TableKey:
@@ -370,7 +417,8 @@ class RunReferences:
             self.draft_token = self.register("draft", self.draft_pair(value))
             return {"draft_token": self.draft_token, "status": value.status,
                     "fields": self.public(value.fields), "relationships": self.public(value.relationships),
-                    "unresolved_items": value.unresolved_items}
+                    "unresolved_items": value.unresolved_items,
+                    "clarification_obligations": self.clarification_obligations()}
         if isinstance(value, DefinitionField):
             reasons = {item.property_path: item.reason for item in value.unknowns}
             return {"field_key": value.field_key, "name": value.name,
@@ -421,6 +469,7 @@ class ToolAdapter(RunReferences):
         calls = []
         errors: list[str] = []
         indices: list[int] = []
+        missing_handles: list[str] = []
         updates = sum(call.name == "update_definition_draft" for call in completion.tool_calls)
         if updates > 1:
             raise CandidateRejected("multiple_draft_updates", ["fields"],
@@ -462,13 +511,15 @@ class ToolAdapter(RunReferences):
                 indices.append(index)
                 if isinstance(exc, CandidateRejected):
                     errors.extend(exc.paths or ["arguments"])
+                    missing_handles.extend(exc.missing_handles)
                 elif isinstance(exc, ValidationError):
                     # Never echo untrusted keys, values, validator messages or reprs.
                     allowed = {"field_key", "name", "semantics", "meaning", "value_type", "grain",
                                "rule", "time_basis", "null_handling", "value", "unknown_reason",
                                "fields", "relationships", "questions", "draft_token", "locator",
                                "evidence_handles", "source_column_handles", "left_column_handles",
-                               "right_column_handles", "reason", "unresolved_items", "evidence_status"}
+                               "right_column_handles", "reason", "unresolved_items", "evidence_status",
+                               "covers_obligation_handles", "suggested_owner_role", "evidence_requested"}
                     for error in exc.errors(include_input=False, include_context=False)[:5]:
                         parts = [str(p) if type(p) is int else p if p in allowed else "item"
                                  for p in error["loc"]]
@@ -476,7 +527,7 @@ class ToolAdapter(RunReferences):
                 else:
                     errors.append("arguments")
         if indices:
-            raise CandidateRejected("tool_arguments_invalid_no_effect", errors, indices)
+            raise CandidateRejected("tool_arguments_invalid_no_effect", errors, indices, missing_handles)
         return calls
 
     def output(self, result: Any, call: Any) -> Any:
@@ -491,5 +542,6 @@ class ToolAdapter(RunReferences):
             self.current_draft = result.output
             self.draft_token = self.register("draft", self.draft_pair(result.output))
             return {"draft_token": self.draft_token, "updated_field_keys": [f.field_key for f in call.arguments.fields],
-                    "updated_relationship_keys": [r.relationship_key for r in call.arguments.relationships]}
+                    "updated_relationship_keys": [r.relationship_key for r in call.arguments.relationships],
+                    "clarification_obligations": self.clarification_obligations()}
         return self.public(result.output)

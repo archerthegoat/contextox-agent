@@ -154,10 +154,11 @@ class G1RunTests(unittest.TestCase):
                         return [update(p)]
                     args = {"draft_token": p["draft_token"]}
                     if terminal == "create_clarification":
-                        args["questions"] = [{"question": "Who owns the missing grain?",
+                        args["questions"] = [{"covers_obligation_handles": [o["obligation_handle"] for o in p["draft"]["clarification_obligations"]],
+                            "question": "Please provide decisions for each listed unknown dimension.",
                             "why_needed": "Source evidence does not define it.", "expected_answer_type": "text",
                             "suggested_owner_role": "Business owner", "related_definition_paths": [],
-                            "evidence_requested": [], "examples_or_options": [], "blocking_impact": "blocking",
+                            "evidence_requested": ["Approved definitions for the listed dimensions"], "examples_or_options": [], "blocking_impact": "blocking",
                             "evidence_handles": []}]
                     return [call("terminal", terminal, args)]
                 self.execute(script, lambda r, c, receipts: (
