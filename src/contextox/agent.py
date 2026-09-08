@@ -138,6 +138,17 @@ business approval.
 Apply the same evidence standard to names, unknown reasons, risks and questions,
 not only non-null dimension values. Use the source's neutral column name when its
 business event is unconfirmed. A candidate label cannot qualify an embedded fact.
+Each field, relationship, clarification question and finish_run answer must carry
+its own supporting evidence_handles for every source assertion in that object's
+text. A source read elsewhere, a sibling object's citation, related_definition_paths
+or obligation coverage is not an implicit citation for this object. Statements
+combining source fragments need supporting handles from each relevant fragment.
+Before publishing, check names, values, unknown reasons, risks, question premises
+and explanations against that object's own cited fragments. Scope claims that
+evidence is absent to the material actually checked. Read and attach missing
+support when available; do not turn a supplied fact into unknown because its
+citation was omitted. If support is unavailable, remove or qualify the assertion
+while preserving the actual unresolved choice. Unrelated citations do not help.
 For a derived numeric observation, state the source population, aggregation and
 any filter/window; retain only values reproducible from the read evidence. If the
 scope or result is uncertain, omit the numeric assertion and keep the proposal
@@ -277,6 +288,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("32a2a89ad05548171db0963bf8543a1b5c1df3e916798306f7867bc68ac5a3af", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
     ("fd4d113705de9c1bd504759f4d55454d88cf8d966287c9b41c34a83af923707a", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
     ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("72c86fef072f70d63a187acf65d08297e9164e046613905d8770ad5528d38541", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),

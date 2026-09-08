@@ -261,6 +261,7 @@ class CoverageRunTests(unittest.TestCase):
 
     def test_old_pair_persisted_run_reopens_without_rewriting_receipts(self):
         pairs = (
+            ("32a2a89ad05548171db0963bf8543a1b5c1df3e916798306f7867bc68ac5a3af", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
             ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
             ("fd4d113705de9c1bd504759f4d55454d88cf8d966287c9b41c34a83af923707a", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
         )
@@ -268,6 +269,55 @@ class CoverageRunTests(unittest.TestCase):
             with self.subTest(prompt=prompt):
                 self.assertIn((prompt, tools), agent.SUPPORTED_RUN_HASH_PAIRS)
                 self._assert_historical_pair_reopens(prompt, tools)
+
+    def test_question_citations_remain_explicit_across_sources_and_restart(self):
+        from threading import Event
+        from unittest.mock import patch
+        evidence = []
+
+        def script(turn, packet, history):
+            if turn == 1:
+                self.assertIn("its own supporting evidence_handles", history[0]["content"])
+                return [call(f"read-{i}", "read_source", {
+                    "source_handle": source["source_handle"],
+                    "locator": {"kind": "csv_rows", "row_start": 1,
+                                "row_end": source["tables"][0]["row_count"], "column": None},
+                }) for i, source in enumerate(packet["sources"])]
+            if turn == 2:
+                evidence.extend(json.loads(message["content"])["evidence_handle"]
+                                for message in history if message["role"] == "tool")
+                args = {"draft_token": packet["draft_token"],
+                        "fields": [unknown_field("candidate")],
+                        "relationships": [], "unresolved_items": []}
+                args["fields"][0]["evidence_handles"] = evidence
+                return [call("update", "update_definition_draft", args)]
+            complete = question([o["obligation_handle"]
+                                 for o in packet["draft"]["clarification_obligations"]])
+            complete["evidence_handles"] = list(reversed(evidence))
+            request = question([])
+            request["question"] = "Please identify the owner to review this candidate."
+            request["related_definition_paths"] = ["fields.candidate.name"]
+            request["evidence_handles"] = evidence[:1]
+            return [call("clarify", "create_clarification", {
+                "draft_token": packet["draft_token"], "questions": [complete, request]})]
+
+        with fixtures.PersistedRunTests().store_case(with_sources=True) as (store, ws, mission, refs):
+            run = store.start_run(ws, mission.mission_id, fixtures._start_request(mission, refs))
+            provider = g1.ScriptProvider(script)
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(store, ws, mission.mission_id, run.run_id, Event())
+            before = store.get_run_snapshot(ws, mission.mission_id, run.run_id)
+            self.assertEqual(before.status, "waiting_for_human")
+            field_refs = before.draft.fields[0].source_refs
+            self.assertEqual(len(field_refs), 2)
+            self.assertEqual(len({r.revision_id for r in field_refs}), 2)
+            published = before.clarifications[0].questions
+            self.assertEqual(published[0].source_refs, list(reversed(field_refs)))
+            self.assertEqual(published[1].source_refs, field_refs[:1])
+            self.assertEqual(len(before.terminal_receipt.source_refs), 2)
+            reopened = fixtures.WorkspaceStore.open(store.data_dir)
+            self.assertEqual(reopened.get_run_snapshot(ws, mission.mission_id, run.run_id), before)
+            self.assertEqual(len(provider.calls), 3)
 
     def _assert_historical_pair_reopens(self, old_prompt, old_tools):
         from threading import Event
