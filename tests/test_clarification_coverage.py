@@ -58,6 +58,25 @@ class CoverageInputTests(unittest.TestCase):
             self.normalize([question(self.handles[:-1])])
         self.assertEqual(caught.exception.missing_handles, self.handles[-1:])
 
+    def test_extra_paths_must_resolve_in_exact_current_draft(self):
+        for path in ("fields.nonexistent.rule", "fields.a.nonexistent", "Fields.a.rule",
+                     "unresolved_items.2", "relationships.nonexistent.join_rule",
+                     "fields.0.unknowns.99"):
+            with self.subTest(path=path):
+                q = question(self.handles)
+                q["related_definition_paths"] = [path]
+                with self.assertRaises(CandidateRejected) as caught:
+                    self.normalize([q])
+                self.assertEqual(caught.exception.paths, ["questions.related_definition_paths"])
+                self.assertNotIn(path, str(caught.exception))
+
+    def test_known_property_and_object_links_remain_valid(self):
+        q = question(self.handles)
+        # name is known and has no clarification obligation.
+        q["related_definition_paths"] = ["fields.a.name", "fields.b", "unresolved_items.0"]
+        result = self.normalize([q])
+        self.assertEqual(result["questions"][0]["related_definition_paths"][:3], q["related_definition_paths"])
+
     def test_duplicate_stale_forged_and_foreign_handles(self):
         with self.assertRaises(CandidateRejected):
             self.normalize([question(self.handles + self.handles[:1])])
@@ -108,6 +127,10 @@ class CoverageInputTests(unittest.TestCase):
                 self.assertEqual(result["questions"][0]["related_definition_paths"],
                                  ["relationships.rel.production_key_semantics"])
                 self.assertEqual(relation.unknowns[0].property_path, property_path)
+                q = question([o["obligation_handle"] for o in obligations])
+                q["related_definition_paths"] = ["relationships.rel.rel.production_key_semantics"]
+                with self.assertRaises(CandidateRejected):
+                    self.normalize([q])
 
     def test_exact_historical_pair_remains_supported_without_cross_product(self):
         old = ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db",
@@ -120,6 +143,57 @@ class CoverageInputTests(unittest.TestCase):
 class CoverageRunTests(unittest.TestCase):
     def execute(self, script, verify):
         g1.G1RunTests().execute(script, verify)
+
+    def test_historical_unresolved_path_stays_readable_without_rewrite(self):
+        from threading import Event
+        from unittest.mock import patch
+        with fixtures.PersistedRunTests().store_case() as (store, ws, mission, refs):
+            run = store.start_run(ws, mission.mission_id, fixtures._start_request(mission, refs))
+            class HistoricalProvider(fixtures.FakeProvider):
+                def complete(self, messages, **kwargs):
+                    draft = store.get_run_snapshot(ws, mission.mission_id, run.run_id).draft
+                    if draft is None:
+                        name = "update_definition_draft"
+                        args = {"expected_version": 0, "expected_sha256": None,
+                                "fields": [], "relationships": [], "unresolved_items": ["Owner needed"]}
+                    else:
+                        name = "create_clarification"
+                        q = question([])
+                        q.pop("covers_obligation_handles"); q.pop("evidence_handles")
+                        q.update(source_refs=[], related_definition_paths=["fields.nonexistent.rule"])
+                        args = {"draft_version": draft.version, "draft_sha256": draft.sha256, "questions": [q]}
+                    self.completions = [fixtures._completion("Synthetic historical result", (
+                        fixtures.ProviderToolCall(name, name, json.dumps(args)),))]
+                    return super().complete(messages, **kwargs)
+            with patch.object(agent, "get_provider", return_value=HistoricalProvider([])):
+                fixtures.run_legacy_fixture_agent(store, ws, mission.mission_id, run.run_id, Event())
+            before = store.get_run_snapshot(ws, mission.mission_id, run.run_id)
+            self.assertEqual(before.status, "waiting_for_human")
+            self.assertEqual(before.clarifications[0].questions[0].related_definition_paths, ["fields.nonexistent.rule"])
+            reopened = fixtures.WorkspaceStore.open(store.data_dir)
+            self.assertEqual(reopened.get_run_snapshot(ws, mission.mission_id, run.run_id), before)
+
+    def test_invalid_path_has_no_write_then_corrected_request_persists(self):
+        def script(n, p, history):
+            if n == 1:
+                return [update(p)]
+            if n == 3:
+                error = json.loads(history[-1]["content"])["error"]
+                self.assertEqual(error["effect"], "none")
+                self.assertEqual(error["paths"], ["questions.related_definition_paths"])
+                self.assertIn("current draft", error["expected_shape"])
+                self.assertEqual(p["clarifications"], [])
+            q = question([o["obligation_handle"] for o in p["draft"]["clarification_obligations"]])
+            q["related_definition_paths"] = ["fields.nonexistent.rule" if n == 2 else "fields.candidate.name"]
+            return [call(f"clarify-{n}", "create_clarification", {"draft_token": p["draft_token"], "questions": [q]})]
+        def verify(r, calls, receipts):
+            self.assertEqual(r.status, "waiting_for_human")
+            self.assertEqual(len(r.clarifications), 1)
+            self.assertEqual(receipts, [("update", 1), ("clarify-3", 2)])
+            self.assertIn("fields.candidate.name", r.clarifications[0].questions[0].related_definition_paths)
+            self.assertNotIn("fields.nonexistent.rule", r.clarifications[0].questions[0].related_definition_paths)
+            self.assertEqual(len(calls), 3)
+        self.execute(script, verify)
 
     def test_old_pair_persisted_run_reopens_without_rewriting_receipts(self):
         from threading import Event

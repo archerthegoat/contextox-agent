@@ -304,6 +304,14 @@ class RunReferences:
     def clarification_arguments(self, value: ClarificationInput) -> dict[str, Any]:
         result = self.review_arguments(value)
         obligations = {item["obligation_handle"]: item for item in self.clarification_obligations()}
+        # Resolve against this exact draft, never arbitrary strings or historical requests.
+        valid_paths = {path for item in obligations.values() for path in item["related_definition_paths"]}
+        if self.current_draft is not None:
+            for collection, key in (("fields", "field_key"), ("relationships", "relationship_key")):
+                for obj in getattr(self.current_draft, collection):
+                    root = f"{collection}.{getattr(obj, key)}"
+                    valid_paths.add(root)
+                    valid_paths.update(f"{root}.{prop}" for prop in type(obj).model_fields)
         covered: set[str] = set()
         questions = []
         for question in value.questions:
@@ -311,6 +319,8 @@ class RunReferences:
             if len(set(handles)) != len(handles):
                 raise CandidateRejected("duplicate_obligation", ["questions.covers_obligation_handles"])
             paths = list(question.related_definition_paths)
+            if any(path not in valid_paths for path in paths):
+                raise CandidateRejected("unknown_definition_path", ["questions.related_definition_paths"])
             for handle in handles:
                 self.resolve(handle, "obligation")  # Forged or cross-Run capabilities fail closed.
                 if handle not in obligations:

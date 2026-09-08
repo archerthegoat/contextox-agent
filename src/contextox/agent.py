@@ -1681,6 +1681,8 @@ def run_agent(
                                 if "left_column_handles" in rejection.paths else
                                 "Cover all clarification_obligations from the current draft; group related items and provide owner, evidence and decision."
                                 if "questions.covers_obligation_handles" in rejection.paths else
+                                "Use only existing objects/properties of the current draft or its clarification_obligations paths; omit optional extra paths if unnecessary."
+                                if "questions.related_definition_paths" in rejection.paths else
                                 "Follow the supplied tool schema; no member of this batch executed.")}}
                 if rejection.missing_handles:
                     feedback["error"]["missing_obligation_handles"] = rejection.missing_handles
