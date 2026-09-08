@@ -95,7 +95,14 @@ class ShutdownTests(unittest.TestCase):
                         stream.readline()
                         streams.append(stream)
                     if mode == 'running':
-                        self.assertTrue(Path(directory, 'provider-entered').exists())
+                        # Health and the first Run event can precede Provider
+                        # entry. Exercise shutdown during a request, not during
+                        # the worker's scheduling/startup race.
+                        entered = Path(directory, 'provider-entered')
+                        deadline = time.monotonic() + 3
+                        while not entered.exists() and proc.poll() is None and time.monotonic() < deadline:
+                            time.sleep(.01)
+                        self.assertTrue(entered.exists(), 'synthetic Provider did not start')
                     started = time.monotonic()
                     proc.send_signal(signal.SIGINT)
                     out, err = proc.communicate(timeout=5)
