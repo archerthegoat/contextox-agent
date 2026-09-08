@@ -206,10 +206,83 @@ class _ChildIpcSendError(Exception):
     """The parent disappeared while the child was reporting a result."""
 
 
+_PROGRESS_COUNTERS = frozenset({"observed_elapsed_ms", "wire_bytes", "valid_sse_events",
+                              "reasoning_bytes", "content_bytes", "tool_argument_bytes"})
+_PROGRESS_TIMES = frozenset({"first_wire_ms", "first_valid_sse_ms"})
+_PROGRESS_FLAGS = frozenset({"finish_reason_seen", "done_seen"})
+
+
+def _progress_from_ipc(value: object) -> dict[str, Any]:
+    """Accept only bounded numbers and flags, never provider text."""
+    if not isinstance(value, dict) or set(value) != _PROGRESS_COUNTERS | _PROGRESS_TIMES | _PROGRESS_FLAGS:
+        raise _ProviderIpcProtocolError("Progress fields are not exact")
+    for key in _PROGRESS_COUNTERS | _PROGRESS_TIMES:
+        number = value[key]
+        if key in _PROGRESS_TIMES and number is None:
+            continue
+        if type(number) is not int or not 0 <= number < 2**31:
+            raise _ProviderIpcProtocolError("Progress number is invalid")
+    for key in _PROGRESS_FLAGS:
+        if type(value[key]) is not bool:
+            raise _ProviderIpcProtocolError("Progress flag is invalid")
+    return dict(value)
+
+
+class _StreamProgress:
+    """A constant-size snapshot; sampling never touches response deadlines."""
+
+    def __init__(self, started_at: float, callback: Callable[[dict[str, Any]], None] | None) -> None:
+        self.started_at = started_at
+        self.callback = callback
+        self.last_sent_at = float("-inf")
+        self.values = {**dict.fromkeys(_PROGRESS_COUNTERS, 0),
+                       **dict.fromkeys(_PROGRESS_TIMES), **dict.fromkeys(_PROGRESS_FLAGS, False)}
+
+    def elapsed_ms(self) -> int:
+        return min(max(int((time.monotonic() - self.started_at) * 1000), 0), 2**31 - 1)
+
+    def add(self, key: str, amount: int) -> None:
+        self.values[key] = min(self.values[key] + amount, 2**31 - 1)
+
+    def emit(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if self.callback is not None and (force or now - self.last_sent_at >= 0.25):
+            self.values["observed_elapsed_ms"] = self.elapsed_ms()
+            self.callback(dict(self.values))
+            self.last_sent_at = now
+
+    def wire(self, size: int) -> None:
+        if not size:
+            return
+        first = self.values["first_wire_ms"] is None
+        if first:
+            self.values["first_wire_ms"] = self.elapsed_ms()
+        self.add("wire_bytes", size)
+        self.emit(force=first)
+
+    def accepted_event(self, chunk: dict[str, Any]) -> None:
+        # Called only after the normal parser has validated this event.
+        first = self.values["first_valid_sse_ms"] is None
+        if first:
+            self.values["first_valid_sse_ms"] = self.elapsed_ms()
+        self.add("valid_sse_events", 1)
+        choice = chunk["choices"][0]
+        delta = choice["delta"]
+        for field, counter in (("reasoning_content", "reasoning_bytes"), ("content", "content_bytes")):
+            self.add(counter, len((delta.get(field) or "").encode("utf-8")))
+        for call in delta.get("tool_calls") or []:
+            self.add("tool_argument_bytes", len(((call.get("function") or {}).get("arguments") or "").encode("utf-8")))
+        finished = choice.get("finish_reason") is not None
+        first_finish = finished and not self.values["finish_reason_seen"]
+        self.values["finish_reason_seen"] |= finished
+        self.emit(force=first or first_finish)
+
+
 _IPC_EVENT_KEYS: dict[str, frozenset[str]] = {
     "connected": frozenset({"call_id", "sequence", "event_type"}),
     "request_started": frozenset({"call_id", "sequence", "event_type"}),
     "activity": frozenset({"call_id", "sequence", "event_type"}),
+    "progress": frozenset({"call_id", "sequence", "event_type", "snapshot"}),
     "content_delta": frozenset({"call_id", "sequence", "event_type", "content"}),
     "result": frozenset({"call_id", "sequence", "event_type", "completion"}),
     "error": frozenset({"call_id", "sequence", "event_type", "code", "usage"}),
@@ -397,10 +470,12 @@ def _decode_ipc_message(
     elif event_type == "request_started":
         if not connected or request_started:
             raise _ProviderIpcProtocolError("IPC request_started event is out of order")
-    elif event_type in {"activity", "content_delta", "result"}:
+    elif event_type in {"activity", "progress", "content_delta", "result"}:
         if not request_started:
             raise _ProviderIpcProtocolError("IPC response event is out of order")
-    if event_type == "content_delta":
+    if event_type == "progress":
+        _progress_from_ipc(value["snapshot"])
+    elif event_type == "content_delta":
         content = value["content"]
         if not isinstance(content, str) or not content:
             raise _ProviderIpcProtocolError("IPC content delta must be non-empty text")
@@ -1107,6 +1182,14 @@ class DeepSeekProvider:
             },
             method="POST",
         )
+        latest_progress: dict[str, Any] | None = None
+        progress_received_at: float | None = None
+
+        def remember_progress(snapshot: dict[str, Any]) -> None:
+            nonlocal latest_progress, progress_received_at
+            latest_progress = _progress_from_ipc(snapshot)
+            progress_received_at = time.monotonic()
+
         try:
             complete_request = self._complete_via_child if self._use_supervised_child else self._complete_request
             return complete_request(
@@ -1116,6 +1199,7 @@ class DeepSeekProvider:
                 cancel_event=cancel_event,
                 max_context_bytes=max_context_bytes,
                 on_content=on_content,
+                on_progress=remember_progress if stream else None,
             )
         except ProviderTimeoutUnknownError as exc:
             # Emit once, in the caller process. IPC diagnostics never carry text.
@@ -1133,6 +1217,18 @@ class DeepSeekProvider:
                 extra={"provider_timeout_diagnostic": {"mode": mode, **diagnostic}},
             )
             raise
+        finally:
+            if stream:
+                # This is the caller's latest received snapshot, even when the
+                # supervisor killed a child that could not execute its finally.
+                age_ms = None if progress_received_at is None else min(
+                    max(int((time.monotonic() - progress_received_at) * 1000), 0), 2**31 - 1
+                )
+                diagnostic = {"snapshot": latest_progress, "snapshot_received_age_ms": age_ms}
+                logging.getLogger(__name__).info(
+                    "stream_progress snapshot=%s snapshot_received_age_ms=%s", latest_progress, age_ms,
+                    extra={"provider_stream_progress_diagnostic": diagnostic},
+                )
 
     def _complete_request(
         self,
@@ -1145,6 +1241,7 @@ class DeepSeekProvider:
         on_content: Callable[[str], None] | None,
         on_phase: Callable[[str], None] | None = None,
         on_activity: Callable[[], None] | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> ProviderCompletion:
         """Execute one already-built request in the current process.
 
@@ -1153,6 +1250,7 @@ class DeepSeekProvider:
         """
 
         started_at = time.monotonic()
+        progress = _StreamProgress(started_at, on_progress) if stream else None
         try:
             response = self._open(
                 request,
@@ -1187,6 +1285,7 @@ class DeepSeekProvider:
                     max_context_bytes=max_context_bytes,
                     on_content=on_content,
                     on_activity=on_activity,
+                    progress=progress,
                 )
             return self._read_nonstream(
                 response,
@@ -1209,9 +1308,13 @@ class DeepSeekProvider:
                 raise ProviderStreamInterruptedError() from exc
             raise ProviderUnreachableError() from exc
         finally:
-            close = getattr(response, "close", None)
-            if callable(close):
-                close()
+            try:
+                if progress is not None:
+                    progress.emit(force=True)
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
 
     def _complete_via_child(
         self,
@@ -1222,6 +1325,7 @@ class DeepSeekProvider:
         cancel_event: Any | None,
         max_context_bytes: int,
         on_content: Callable[[str], None] | None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> ProviderCompletion:
         """Run the production request in one supervised, disposable child."""
 
@@ -1362,6 +1466,9 @@ class DeepSeekProvider:
                         connected = True
                     elif event_type == "request_started":
                         request_started = True
+                    elif event_type == "progress":
+                        if on_progress is not None:
+                            on_progress(message["snapshot"])
                     elif event_type in {"activity", "content_delta"}:
                         saw_activity = True
                         last_activity_at = time.monotonic()
@@ -1708,6 +1815,7 @@ class DeepSeekProvider:
         max_context_bytes: int,
         on_content: Callable[[str], None] | None,
         on_activity: Callable[[], None] | None,
+        progress: _StreamProgress | None = None,
     ) -> ProviderCompletion:
         completion_id: str | None = None
         content_parts: list[str] = []
@@ -1738,6 +1846,7 @@ class DeepSeekProvider:
                 read_chunk=read_chunk,
                 max_bytes=MAX_SSE_WIRE_BYTES,
                 max_event_bytes=max_context_bytes,
+                on_wire=progress.wire if progress is not None else None,
             ):
                 now = time.monotonic()
                 if cancel_event is not None and cancel_event.is_set():
@@ -1752,6 +1861,9 @@ class DeepSeekProvider:
                     raise ProviderProtocolError(usage=usage)
                 if data == "[DONE]":
                     done = True
+                    if progress is not None:
+                        progress.values["done_seen"] = True
+                        progress.emit(force=True)
                     break
                 if not data:
                     continue
@@ -1774,6 +1886,8 @@ class DeepSeekProvider:
                     usage = chunk_usage
                 if on_activity is not None:
                     on_activity()
+                if progress is not None:
+                    progress.accepted_event(chunk)
                 if tool_slots.get(-1, {}).get("finish_reason") is not None:
                     final_usage_present = chunk_usage is not None
                 if on_content is not None and len(content_parts) > content_cursor:
@@ -1955,6 +2069,7 @@ class DeepSeekProvider:
         read_chunk: Callable[[], object] | None = None,
         max_bytes: int | None = None,
         max_event_bytes: int | None = None,
+        on_wire: Callable[[int], None] | None = None,
     ) -> Iterable[str]:
         """Yield complete SSE data events from arbitrarily split byte chunks."""
 
@@ -1996,10 +2111,14 @@ class DeepSeekProvider:
                     chunk_bytes = len(chunk.encode("utf-8"))
                 except UnicodeEncodeError as exc:
                     raise ProviderProtocolError() from exc
+                if on_wire is not None:
+                    on_wire(chunk_bytes)
                 text = chunk
             elif isinstance(chunk, (bytes, bytearray)):
                 raw_chunk = bytes(chunk)
                 chunk_bytes = len(raw_chunk)
+                if on_wire is not None:
+                    on_wire(chunk_bytes)
                 text = decoder.decode(raw_chunk, final=False)
             else:
                 raise ProviderProtocolError()
@@ -2235,6 +2354,7 @@ def _provider_child_main(send_conn: Any, packet_bytes: bytes) -> None:
             on_content=lambda content: _send_child_content(ipc, content),
             on_phase=on_phase,
             on_activity=lambda: ipc.send("activity"),
+            on_progress=lambda snapshot: ipc.send("progress", snapshot=snapshot),
         )
         ipc.send("result", completion=_completion_to_ipc(completion))
     except ProviderError as exc:
