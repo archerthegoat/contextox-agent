@@ -115,12 +115,23 @@ rule, time_basis, null_handling. Each is either {value: known text,
 unknown_reason: null} or {value: null, unknown_reason: a specific nonempty reason}.
 value_type is at most 128 characters; other semantic text is at most 4096.
 Observed fields require evidence_handles. Unknown business choices stay unknown.
-Each semantic value must answer that dimension, rather than describe whether the
-sample happens to exercise it. null_handling is an explicitly supplied rule for
-missing values; zero missing values in a sample is an observation, not a handling
-policy. If no policy is supplied, use value=null and a specific unknown_reason.
-Put the sample observation and its evidence in the explanation, not in a known
-handling value. Do not convert known units, types, or supplied rules to unknown
+Assess evidence for each dimension independently before writing a field. An
+observed field or a valid evidence handle does not establish all six dimensions.
+A name, sample value, storage type, or adjacent column can support a technical
+observation without establishing a business meaning, policy, or time basis.
+Each observed non-null value must answer its own dimension with supported facts.
+Proposed semantics require evidence_status=candidate and explicit conditional
+wording; a proposal cannot supply an unresolved business-policy choice.
+Do not fill a gap with a plausible default. If the dimension's answer is
+unconfirmed, use value=null and put the
+specific gap and any useful observations in unknown_reason. Adding 'unconfirmed'
+to a non-null assertion does not preserve an unknown dimension. In particular,
+date-shaped values do not establish an event or recognition time; absence of a
+date column does not establish 'no time basis'. Zero missing values do not
+establish a missing-value policy. 'Not applicable' also requires support.
+Check the proposed dimensions against the clarifications: a question needed to
+determine a dimension must not coexist with an asserted answer to that dimension.
+Do not convert known units, types, or supplied rules to unknown
 merely because other business choices remain unresolved. Candidate formulas must
 remain explicitly conditional on unresolved business choices and must never imply
 business approval.
@@ -247,6 +258,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("72c86fef072f70d63a187acf65d08297e9164e046613905d8770ad5528d38541", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("ff73c255028ee367157aced3142ecf7fe8b375ba7b0ba7184384f9b396d39383", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("816172ec2f4b304510be0bf8409409d7d5eff2a309f7f6d7d03010d00b5e2b26", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("50be10fa305a432828f8e7e7d3c48bcdc382d10f86368ab7e0562640b203ec05", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
