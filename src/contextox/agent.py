@@ -308,13 +308,16 @@ def _remaining_run_ms(*, budget: RunBudget, started_at: float) -> int:
 def _provider_timeouts(
     budget: RunBudget,
     remaining_ms: int | None = None,
+    *,
+    non_stream_fallback: bool = False,
 ) -> ProviderTimeouts:
     def bounded(value: int) -> int:
         return value if remaining_ms is None else min(value, remaining_ms)
 
     return ProviderTimeouts(
         connect_ms=bounded(budget.connect_timeout_ms),
-        first_event_ms=bounded(budget.first_event_timeout_ms),
+        # A non-stream answer may have no response bytes until generation ends.
+        first_event_ms=bounded(budget.total_timeout_ms if non_stream_fallback else budget.first_event_timeout_ms),
         idle_ms=bounded(budget.idle_timeout_ms),
         total_ms=bounded(budget.total_timeout_ms),
     )
@@ -1446,7 +1449,7 @@ def run_agent(
                 tools=[dict(definition) for definition in TOOL_DEFINITIONS],
                 max_tokens=budget.max_output_tokens,
                 user_id=_opaque_user_id(workspace_id, provider),
-                timeouts=_provider_timeouts(budget, remaining_ms),
+                timeouts=_provider_timeouts(budget, remaining_ms, non_stream_fallback=is_fallback),
                 cancel_event=cancel_event,
                 max_context_bytes=budget.max_context_bytes,
                 on_content=lambda content: _append_model_delta(
