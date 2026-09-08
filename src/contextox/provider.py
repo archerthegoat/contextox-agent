@@ -101,9 +101,23 @@ class ProviderUnavailableError(ProviderError):
         super().__init__("provider_unavailable", "failed")
 
 
+_TIMEOUT_PHASES = frozenset({"first_response", "idle", "total", "read_or_peer_unknown",
+                             "child_closed", "after_dispatch_unknown"})
+_TIMEOUT_ORIGINS = frozenset({"supervisor", "response_reader", "request_open", "stream_reader"})
+
+
 class ProviderTimeoutUnknownError(ProviderError):
-    def __init__(self) -> None:
+    def __init__(self, *, phase: str | None = None, origin: str | None = None,
+                 elapsed_ms: int | None = None, limit_ms: int | None = None) -> None:
         super().__init__("provider_timeout_unknown", "failed")
+        self.diagnostic = None
+        if isinstance(phase, str) and phase in _TIMEOUT_PHASES and \
+                isinstance(origin, str) and origin in _TIMEOUT_ORIGINS:
+            self.diagnostic = {
+                "phase": phase, "origin": origin,
+                "elapsed_ms": min(max(elapsed_ms, 0), 2**31 - 1) if type(elapsed_ms) is int else None,
+                "limit_ms": min(max(limit_ms, 0), 2**31 - 1) if type(limit_ms) is int else None,
+            }
 
 
 class ProviderStreamInterruptedError(ProviderError):
@@ -366,6 +380,8 @@ def _decode_ipc_message(
     expected_keys = _IPC_EVENT_KEYS[event_type]
     if event_type == "error" and value.get("code") == "context_budget_exceeded":
         expected_keys = expected_keys | {"budget"}
+    if event_type == "error" and value.get("code") == "provider_timeout_unknown" and "timeout" in value:
+        expected_keys = expected_keys | {"timeout"}
     if set(value) != expected_keys:
         raise _ProviderIpcProtocolError("IPC message fields are not exact")
     if value.get("call_id") != expected_call_id:
@@ -405,6 +421,8 @@ def _decode_ipc_message(
         _usage_from_ipc(value["usage"])
         if code == "context_budget_exceeded":
             _budget_from_ipc(value["budget"])
+        if code == "provider_timeout_unknown":
+            _timeout_from_ipc(value.get("timeout"))
     return value
 
 
@@ -441,8 +459,37 @@ def _budget_to_ipc(error: ProviderContextBudgetError) -> dict[str, Any]:
     return {"stage": error.stage, "used_bytes": error.used_bytes, "limit_bytes": error.limit_bytes}
 
 
+def _timeout_from_ipc(value: object) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"phase", "origin", "elapsed_ms", "limit_ms"}:
+        raise _ProviderIpcProtocolError("IPC timeout fields are not exact")
+    if not isinstance(value["phase"], str) or value["phase"] not in _TIMEOUT_PHASES or \
+            not isinstance(value["origin"], str) or value["origin"] not in _TIMEOUT_ORIGINS:
+        raise _ProviderIpcProtocolError("IPC timeout labels are not allowed")
+    for key in ("elapsed_ms", "limit_ms"):
+        number = value[key]
+        if number is not None and (type(number) is not int or not 0 <= number <= 2**31 - 1):
+            raise _ProviderIpcProtocolError("IPC timeout number is not valid")
+    return value
+
+
+def _response_timeout(*, origin: str, started_at: float, last_event_at: float,
+                      saw_event: bool, timeouts: ProviderTimeouts) -> ProviderTimeoutUnknownError:
+    now = time.monotonic()
+    phase_limit = timeouts.idle_ms if saw_event else timeouts.first_event_ms
+    if now >= started_at + timeouts.total_ms / 1000:
+        phase, limit = "total", timeouts.total_ms
+    elif now >= last_event_at + phase_limit / 1000:
+        phase, limit = ("idle" if saw_event else "first_response"), phase_limit
+    else:
+        phase, limit = "read_or_peer_unknown", None
+    return ProviderTimeoutUnknownError(phase=phase, origin=origin,
+                                      elapsed_ms=int((now - started_at) * 1000), limit_ms=limit)
+
+
 def _provider_error_from_code(code: str, *, usage: ProviderUsage | None = None,
-                              budget: object = None) -> ProviderError:
+                              budget: object = None, timeout: object = None) -> ProviderError:
     if code == "cancelled":
         return ProviderCancelledError()
     if code == "provider_cancelled_outcome_unknown":
@@ -462,7 +509,7 @@ def _provider_error_from_code(code: str, *, usage: ProviderUsage | None = None,
     if code == "provider_stream_interrupted":
         return ProviderStreamInterruptedError()
     if code == "provider_timeout_unknown":
-        return ProviderTimeoutUnknownError()
+        return ProviderTimeoutUnknownError(**(_timeout_from_ipc(timeout) or {}))
     if code == "provider_unreachable":
         return ProviderUnreachableError()
     if code == "provider_unavailable":
@@ -1060,8 +1107,9 @@ class DeepSeekProvider:
             },
             method="POST",
         )
-        if self._use_supervised_child:
-            return self._complete_via_child(
+        try:
+            complete_request = self._complete_via_child if self._use_supervised_child else self._complete_request
+            return complete_request(
                 request,
                 stream=stream,
                 timeouts=timeouts,
@@ -1069,14 +1117,22 @@ class DeepSeekProvider:
                 max_context_bytes=max_context_bytes,
                 on_content=on_content,
             )
-        return self._complete_request(
-            request,
-            stream=stream,
-            timeouts=timeouts,
-            cancel_event=cancel_event,
-            max_context_bytes=max_context_bytes,
-            on_content=on_content,
-        )
+        except ProviderTimeoutUnknownError as exc:
+            # Emit once, in the caller process. IPC diagnostics never carry text.
+            try:
+                diagnostic = _timeout_from_ipc(exc.diagnostic)
+            except _ProviderIpcProtocolError:
+                diagnostic = None
+            diagnostic = diagnostic or {"phase": "unknown", "origin": "unknown",
+                                        "elapsed_ms": None, "limit_ms": None}
+            mode = "stream" if stream else "nonstream"
+            logging.getLogger(__name__).warning(
+                "timeout_boundary mode=%s phase=%s origin=%s elapsed_ms=%s limit_ms=%s",
+                mode, diagnostic["phase"], diagnostic["origin"],
+                diagnostic["elapsed_ms"], diagnostic["limit_ms"],
+                extra={"provider_timeout_diagnostic": {"mode": mode, **diagnostic}},
+            )
+            raise
 
     def _complete_request(
         self,
@@ -1106,6 +1162,11 @@ class DeepSeekProvider:
                 max_context_bytes=max_context_bytes,
                 on_phase=on_phase,
             )
+        except ProviderTimeoutUnknownError as exc:
+            if exc.diagnostic is not None:
+                raise
+            raise _response_timeout(origin="request_open", started_at=started_at,
+                                    last_event_at=started_at, saw_event=False, timeouts=timeouts) from exc
         except ProviderError:
             raise
         except HTTPError as exc:
@@ -1255,12 +1316,15 @@ class DeepSeekProvider:
                 if not connected and now >= connect_deadline:
                     raise ProviderUnreachableError()
                 if request_started and not saw_activity and now >= first_event_deadline:
-                    raise ProviderTimeoutUnknownError()
+                    raise ProviderTimeoutUnknownError(phase="first_response", origin="supervisor",
+                        elapsed_ms=int((now - started_at) * 1000), limit_ms=timeouts.first_event_ms)
                 if saw_activity and now >= last_activity_at + max(timeouts.idle_ms, 0) / 1000:
-                    raise ProviderTimeoutUnknownError()
+                    raise ProviderTimeoutUnknownError(phase="idle", origin="supervisor",
+                        elapsed_ms=int((now - started_at) * 1000), limit_ms=timeouts.idle_ms)
                 if now >= total_deadline:
                     if request_started:
-                        raise ProviderTimeoutUnknownError()
+                        raise ProviderTimeoutUnknownError(phase="total", origin="supervisor",
+                            elapsed_ms=int((now - started_at) * 1000), limit_ms=timeouts.total_ms)
                     raise ProviderUnreachableError()
 
             while True:
@@ -1315,10 +1379,12 @@ class DeepSeekProvider:
                         if request_started and code == "cancelled":
                             raise ProviderCancelledError(outcome_unknown=True)
                         if request_started and code == "provider_unreachable":
-                            raise ProviderTimeoutUnknownError()
+                            raise ProviderTimeoutUnknownError(phase="after_dispatch_unknown", origin="supervisor",
+                                elapsed_ms=int((time.monotonic() - started_at) * 1000))
                         if not request_started and code == "provider_unavailable":
                             raise ProviderUnreachableError()
-                        raise _provider_error_from_code(code, usage=usage, budget=message.get("budget"))
+                        raise _provider_error_from_code(code, usage=usage, budget=message.get("budget"),
+                                                        timeout=message.get("timeout"))
 
                 check_supervision()
                 if not process.is_alive():
@@ -1344,7 +1410,8 @@ class DeepSeekProvider:
             raise ProviderProtocolError() from exc
         except _ProviderIpcClosed as exc:
             if request_started:
-                raise ProviderTimeoutUnknownError() from exc
+                raise ProviderTimeoutUnknownError(phase="child_closed", origin="supervisor",
+                    elapsed_ms=int((time.monotonic() - started_at) * 1000)) from exc
             raise ProviderUnreachableError() from exc
         finally:
             if process is not None:
@@ -1532,14 +1599,20 @@ class DeepSeekProvider:
             saw_data = False
             last_data_at = started_at
             while True:
-                chunk = self._read_response_chunk(
-                    response,
-                    started_at=started_at,
-                    last_event_at=last_data_at,
-                    saw_event=saw_data,
-                    timeouts=timeouts,
-                    cancel_event=cancel_event,
-                )
+                try:
+                    chunk = self._read_response_chunk(
+                        response,
+                        started_at=started_at,
+                        last_event_at=last_data_at,
+                        saw_event=saw_data,
+                        timeouts=timeouts,
+                        cancel_event=cancel_event,
+                    )
+                except ProviderTimeoutUnknownError as exc:
+                    if exc.diagnostic is not None:
+                        raise
+                    raise _response_timeout(origin="response_reader", started_at=started_at,
+                        last_event_at=last_data_at, saw_event=saw_data, timeouts=timeouts) from exc
                 if isinstance(chunk, str):
                     try:
                         chunk = chunk.encode("utf-8")
@@ -1710,10 +1783,16 @@ class DeepSeekProvider:
                         if pending:
                             on_content(pending)
                     content_cursor = len(content_parts)
+        except ProviderTimeoutUnknownError as exc:
+            if exc.diagnostic is not None:
+                raise
+            raise _response_timeout(origin="stream_reader", started_at=started_at,
+                last_event_at=last_event_at, saw_event=saw_event, timeouts=timeouts) from exc
         except ProviderError:
             raise
         except (TimeoutError, socket.timeout) as exc:
-            raise ProviderTimeoutUnknownError() from exc
+            raise _response_timeout(origin="stream_reader", started_at=started_at,
+                last_event_at=last_event_at, saw_event=saw_event, timeouts=timeouts) from exc
         except (UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
             raise ProviderProtocolError() from exc
         except OSError as exc:
@@ -1724,7 +1803,8 @@ class DeepSeekProvider:
             if now - started_at >= timeouts.total_ms / 1000 or now - last_event_at >= (
                 timeouts.first_event_ms if not saw_event else timeouts.idle_ms
             ) / 1000:
-                raise ProviderTimeoutUnknownError()
+                raise _response_timeout(origin="stream_reader", started_at=started_at,
+                    last_event_at=last_event_at, saw_event=saw_event, timeouts=timeouts)
             raise ProviderStreamInterruptedError()
         if not saw_event or completion_id is None:
             raise ProviderProtocolError(usage=usage)
@@ -2161,6 +2241,8 @@ def _provider_child_main(send_conn: Any, packet_bytes: bytes) -> None:
         if ipc is not None:
             try:
                 fields = {"budget": _budget_to_ipc(exc)} if isinstance(exc, ProviderContextBudgetError) else {}
+                if isinstance(exc, ProviderTimeoutUnknownError):
+                    fields["timeout"] = exc.diagnostic
                 ipc.send("error", code=exc.code, usage=_usage_to_ipc(exc.usage), **fields)
             except _ChildIpcSendError:
                 pass

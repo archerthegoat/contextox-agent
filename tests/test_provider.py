@@ -1916,6 +1916,11 @@ class ProviderTests(unittest.TestCase):
                     self.assertLess(elapsed, 2.0)
                     if name in {"first", "total"}:
                         self.assertGreater(elapsed, 0.6)
+                    if name in {"first", "total", "idle"}:
+                        self.assertEqual(raised.exception.diagnostic["phase"],
+                                         "first_response" if name == "first" else name)
+                        self.assertIn(raised.exception.diagnostic["origin"],
+                                      {"supervisor", "response_reader"})
                     if name == "cancel":
                         self.assertTrue(request_started.is_set())
                         self.assertEqual(raised.exception.code, "provider_cancelled_outcome_unknown")
