@@ -20,6 +20,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from contextox import __version__
 from contextox.models import (
+    ClarificationCasePage, ClarificationAnswerRead, ClarificationAnswerSaveRequest,
+    ClarificationAnswerApproveRequest, ClarificationSubmissionReceipt, AnswerImpact,
+)
+from contextox.models import (
     TaskMessagePage, TaskRunPage, TaskMessageSendRequest, TaskMessageSendReceipt,
     AgentRunResult,
     CancelRunRequest,
@@ -422,7 +426,7 @@ def _areas() -> list[WorkbenchArea]:
         WorkbenchArea(
             id="clarifications",
             label="Clarifications",
-            description="查看分析生成的澄清问题；回答与批准入口尚未开放。",
+            description="整份回答、明确批准并继续分析；未知问题保留卡点与解决方。",
             status="ready",
         ),
         WorkbenchArea(
@@ -526,16 +530,18 @@ def _workspace_store_error_response(
     if isinstance(error, Path2StateError):
         not_found = error.code in {
             "mission_draft_attempt_not_found", "mission_not_found", "run_not_found",
-            "message_not_found", "message_submission_not_found"
+            "message_not_found", "message_submission_not_found", "clarification_not_found",
+            "clarification_answer_not_found", "clarification_submission_not_found"
         }
         return _workspace_error(
             request,
             status_code=(404 if not_found else 503 if error.code in {
-                "task_dialogue_not_implemented", "message_page_item_too_large"
+                "task_dialogue_not_implemented", "message_page_item_too_large", "clarification_answers_not_implemented"
             } else 409 if error.code in {"message_reference_stale",
                 "message_context_scope_mismatch", "task_waiting_for_review",
-                "previous_outcome_unresolved"} or (error.code in {"state_conflict", "run_already_active"} and
-                (request.url.path.endswith("/messages") or "/message-submissions/" in request.url.path)) else 422),
+                "previous_outcome_unresolved", "idempotency_conflict", "clarification_answer_stale",
+                "clarification_draft_stale", "clarification_target_stale", "clarification_scope_too_large"} or (error.code in {"state_conflict", "run_already_active"} and
+                (request.url.path.endswith("/messages") or "/message-submissions/" in request.url.path or "/clarifications/" in request.url.path)) else 422),
             code=error.code,
             message=(
                 "The requested Path 2 object was not found."
@@ -769,6 +775,7 @@ def create_app(
     static_dir: Path | None = None,
     data_dir: Path | None = None,
     migrate_dialogue: bool = False,
+    migrate_clarifications: bool = False,
 ) -> FastAPI:
     resolved_static_dir = (static_dir or DEFAULT_STATIC_DIR).resolve()
 
@@ -799,7 +806,7 @@ def create_app(
     app.state.path2_runtime = None
     if app.state.data_dir is not None:
         try:
-            app.state.workspace_store = WorkspaceStore.open(app.state.data_dir, migrate_dialogue=migrate_dialogue)
+            app.state.workspace_store = WorkspaceStore.open(app.state.data_dir, migrate_dialogue=migrate_dialogue, migrate_clarifications=migrate_clarifications)
         except WorkspaceStoreError as error:
             app.state.workspace_store_error = error
         except (OSError, sqlite3.Error):
@@ -1289,6 +1296,55 @@ def create_app(
             return _workspace_store(app).list_task_runs(workspace_id, mission_id, before_run_id, limit)
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
+
+    @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/clarification-cases", response_model=ClarificationCasePage, tags=["missions"])
+    def clarification_cases(workspace_id: str, mission_id: str, request: Request):
+        try:
+            return _workspace_store(app).list_clarification_cases(workspace_id, mission_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request,error)
+
+    @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers/{version}", response_model=ClarificationAnswerRead, tags=["missions"])
+    def clarification_answer(workspace_id: str, mission_id: str, origin_run_id: str, clarification_id: str, version: int, request: Request):
+        try:
+            return _workspace_store(app).get_clarification_answer(workspace_id, mission_id, origin_run_id, clarification_id, version)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request,error)
+
+    @app.post("/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers", response_model=ClarificationSubmissionReceipt, status_code=201, responses={200:{"model":ClarificationSubmissionReceipt}}, tags=["missions"])
+    def save_clarification_answer(workspace_id: str, mission_id: str, origin_run_id: str, clarification_id: str, payload: ClarificationAnswerSaveRequest, request: Request, response: Response):
+        try:
+            receipt,created = _workspace_store(app).save_clarification_answer(workspace_id,mission_id,origin_run_id,clarification_id,payload)
+            response.status_code = 201 if created else 200
+            return receipt
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request,error)
+
+    @app.post("/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers/{version}/approve", response_model=ClarificationSubmissionReceipt, status_code=201, responses={200:{"model":ClarificationSubmissionReceipt}}, tags=["missions"])
+    def approve_clarification_answer(workspace_id: str, mission_id: str, origin_run_id: str, clarification_id: str, version: int, payload: ClarificationAnswerApproveRequest, request: Request, response: Response):
+        try:
+            receipt,created = _workspace_store(app).approve_clarification_answer(workspace_id,mission_id,origin_run_id,clarification_id,version,payload)
+            response.status_code = 201 if created else 200
+            return receipt
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request,error)
+
+    @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/clarification-submissions/{client_request_id}", response_model=ClarificationSubmissionReceipt, tags=["missions"])
+    def clarification_submission(workspace_id: str, mission_id: str, client_request_id: str, request: Request):
+        try:
+            result = _workspace_store(app).clarification_submission(workspace_id,mission_id,client_request_id)
+            if result is None:
+                raise Path2StateError("clarification_submission_not_found")
+            return result
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request,error)
+
+    @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/answer-impact", response_model=AnswerImpact, tags=["runs"])
+    def answer_impact(workspace_id: str, mission_id: str, run_id: str, request: Request):
+        try:
+            return _workspace_store(app).get_answer_impact(workspace_id,mission_id,run_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request,error)
 
     @app.post("/api/workspaces/{workspace_id}/missions/{mission_id}/messages",
               response_model=TaskMessageSendReceipt, status_code=202, tags=["missions"],

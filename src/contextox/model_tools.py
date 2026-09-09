@@ -176,6 +176,13 @@ class RunReferences:
         self.scope = (snapshot.mission.workspace_id, snapshot.mission.mission_id,
                       snapshot.run.run_id)
         self.selected = {r.revision_id: r for r in snapshot.run.source_refs}
+        # Exact approved unknown targets already have a persistent question/blocker.
+        # They remain unresolved; only the obligation to ask them again is removed.
+        self.approved_unknown_targets = {
+            ("fields" if target.kind == "field" else "relationships", target.key, target.property)
+            for approved in snapshot.approved_answers for item in approved.answer.items
+            if item.disposition == "unknown" for target in item.targets
+        }
         self.values: dict[str, tuple[str, Any]] = {}
         self.reverse: dict[tuple[str, str], str] = {}
         self.catalog: list[dict[str, Any]] = []
@@ -289,6 +296,9 @@ class RunReferences:
                     if collection == "relationships":
                         # Relationship unknowns may already qualify their property by key.
                         property_path = property_path.removeprefix(f"{object_key}.")
+                    if ((collection, object_key, property_path) in self.approved_unknown_targets
+                            and getattr(obj, property_path, None) is None):
+                        continue
                     path = f"{collection}.{object_key}.{property_path}"
                     # Domain paths are bounded Keys; indexes remain scoped to this exact draft.
                     if len(path) > 128:
@@ -379,6 +389,10 @@ class RunReferences:
                 "draft_token": self.draft_token,
                 "draft": self.public(self.current_draft),
                 "clarifications": self.public(snapshot.clarifications),
+                "approved_answers": [{"origin_run_id": a.answer.origin_run_id, "clarification_id": a.answer.clarification_id,
+                    "answer_version": a.answer.version, "answer_sha256": a.answer.sha256,
+                    "questions": self.public(a.request.questions), "items": self.public(a.answer.items)}
+                    for a in snapshot.approved_answers],
                 "coverage": self.coverage,
                 "budget": _plain(snapshot.run.budget)}
 

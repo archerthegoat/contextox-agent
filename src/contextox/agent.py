@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from contextox.clarifications import refs as approved_answer_refs
 from contextox.models import (
     ClarificationRequest,
     ContextManifestInput,
@@ -205,6 +206,10 @@ SUPPORTED_DRAFT_P0_HASHES = frozenset({
     P0_DRAFT_SHA256,
     "e588954b3d0d260327ef1ca503a1d4cba9f9044e60ec48d4055985ba5b1310ea",
 })
+PRE_R2_P0_RUN_SHA256 = _sha256_text(P0_RUN)
+P0_RUN += """
+Approved answers are immutable task-local human statements, not observed source facts or approval of your resulting draft. Apply answered items as candidates with their business provenance. An approved unknown remains unresolved with its resolver, required evidence and next action. Never guess values for unknown targets, including new fields that paraphrase an unresolved question. If a later answer becomes available the human must update and approve a whole new version of the original request. You cannot approve answers, resolve an unknown by repeating it in a new request, or complete the Mission.
+"""
 P0_RUN_SHA256 = _sha256_text(P0_RUN)
 
 
@@ -303,6 +308,8 @@ SUPPORTED_RUN_HASH_PAIRS = frozenset({
     ("fd4d113705de9c1bd504759f4d55454d88cf8d966287c9b41c34a83af923707a", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
     ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("72c86fef072f70d63a187acf65d08297e9164e046613905d8770ad5528d38541", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
+    (PRE_R2_P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    ("5a31396f90c74b88be2bbffb38ff51262139f8d2c394d4889b7fde6dc14c7ba0", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("ff73c255028ee367157aced3142ecf7fe8b375ba7b0ba7184384f9b396d39383", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("816172ec2f4b304510be0bf8409409d7d5eff2a309f7f6d7d03010d00b5e2b26", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
     ("50be10fa305a432828f8e7e7d3c48bcdc382d10f86368ab7e0562640b203ec05", "e1912d9c55485e1b63fe13913a7c4915dc5255bc2390726f80e552889acf8031"),
@@ -778,6 +785,7 @@ def _context_manifest(
         draft_version=draft.version if draft else None,
         draft_sha256=draft.sha256 if draft else None,
         source_refs=list(snapshot.run.source_refs),
+        approved_answer_refs=approved_answer_refs(snapshot.approved_answers),
         clarification_ids=[item.clarification_id for item in snapshot.clarifications],
         tool_receipt_ids=list(tool_receipt_ids),
         budget=snapshot.run.budget,
@@ -1173,6 +1181,9 @@ def _validate_model_batch(store: WorkspaceStore, workspace_id: str, mission_id: 
     try:
         store.validate_run_tool_batch(workspace_id, mission_id, run_id, calls)
     except Path2StateError as exc:
+        if exc.code == "approved_unknown_must_remain_unresolved":
+            raise CandidateRejected(exc.code, ["approved_unknown_targets"],
+                [index for index, call in enumerate(calls) if call.name == "update_definition_draft"]) from exc
         if (exc.code != "state_conflict" or len(calls) != 1
                 or calls[0].name not in {"create_clarification", "submit_for_review"}):
             raise
@@ -1734,6 +1745,8 @@ def run_agent(
                 feedback = {"ok": False, "error": {"code": code, "effect": "none",
                             "recoverable": recoveries <= 2, "paths": rejection.paths,
                             "expected_shape": (
+                                "An approved unknown must remain null with its unknown reason. Keep its blocker unresolved; no member of this batch executed."
+                                if "approved_unknown_targets" in rejection.paths else
                                 "Read the refreshed current draft_token and propose again; old tokens never upgrade."
                                 if "draft_token" in rejection.paths else
                                 "Select each join column from its corresponding table in the current source catalog."

@@ -263,6 +263,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarification-cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Clarification Cases */
+        get: operations["clarification_cases_api_workspaces__workspace_id__missions__mission_id__clarification_cases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Clarification Answer */
+        get: operations["clarification_answer_api_workspaces__workspace_id__missions__mission_id__clarifications__origin_run_id___clarification_id__answers__version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Clarification Answer */
+        post: operations["save_clarification_answer_api_workspaces__workspace_id__missions__mission_id__clarifications__origin_run_id___clarification_id__answers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarifications/{origin_run_id}/{clarification_id}/answers/{version}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Clarification Answer */
+        post: operations["approve_clarification_answer_api_workspaces__workspace_id__missions__mission_id__clarifications__origin_run_id___clarification_id__answers__version__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/clarification-submissions/{client_request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Clarification Submission */
+        get: operations["clarification_submission_api_workspaces__workspace_id__missions__mission_id__clarification_submissions__client_request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/runs/{run_id}/answer-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Answer Impact */
+        get: operations["answer_impact_api_workspaces__workspace_id__missions__mission_id__runs__run_id__answer_impact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/missions/{mission_id}/message-submissions/{client_request_id}": {
         parameters: {
             query?: never;
@@ -352,8 +454,212 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AnswerBlocker */
+        AnswerBlocker: {
+            /** Resolver */
+            resolver: string;
+            /** Evidence Needed */
+            evidence_needed: string;
+            /** Next Action */
+            next_action: string;
+        };
+        /** AnswerImpact */
+        AnswerImpact: {
+            /** Approved Answers */
+            approved_answers: components["schemas"]["ApprovedAnswerSnapshot"][];
+            before_draft: components["schemas"]["DefinitionDraft"] | null;
+            after_draft: components["schemas"]["DefinitionDraft"] | null;
+            /** Changes */
+            changes: components["schemas"]["AnswerImpactChange"][];
+            /** Remaining Blockers */
+            remaining_blockers: components["schemas"]["RemainingAnswerBlocker"][];
+            /**
+             * Result State
+             * @enum {string}
+             */
+            result_state: "no_result" | "partial" | "available";
+        };
+        /** AnswerImpactChange */
+        AnswerImpactChange: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "field" | "relationship";
+            /** Key */
+            key: string;
+            /**
+             * Change
+             * @enum {string}
+             */
+            change: "added" | "changed" | "removed";
+            /** Before */
+            before: components["schemas"]["DefinitionField"] | components["schemas"]["RelationshipCandidate"] | null;
+            /** After */
+            after: components["schemas"]["DefinitionField"] | components["schemas"]["RelationshipCandidate"] | null;
+            /** Question Refs */
+            question_refs: components["schemas"]["AnswerQuestionRef"][];
+        };
+        /** AnswerItem */
+        AnswerItem: {
+            /** Question Index */
+            question_index: number;
+            /**
+             * Disposition
+             * @enum {string}
+             */
+            disposition: "answered" | "unknown";
+            /** Answer */
+            answer: string | null;
+            /** Respondent */
+            respondent: string;
+            /** Basis */
+            basis: string;
+            /** Evidence Refs */
+            evidence_refs: components["schemas"]["EvidenceRef"][];
+            /** Targets */
+            targets: (components["schemas"]["FieldAnswerTarget"] | components["schemas"]["RelationshipAnswerTarget"])[];
+            blocker: components["schemas"]["AnswerBlocker"] | null;
+        };
+        /** AnswerQuestionRef */
+        AnswerQuestionRef: {
+            /** Origin Run Id */
+            origin_run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            /** Question Index */
+            question_index: number;
+        };
+        /** ApprovedAnswerRef */
+        ApprovedAnswerRef: {
+            /** Origin Run Id */
+            origin_run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            /** Answer Version */
+            answer_version: number;
+            /** Answer Sha256 */
+            answer_sha256: string;
+            /** Approval Id */
+            approval_id: string;
+        };
+        /** ApprovedAnswerSnapshot */
+        ApprovedAnswerSnapshot: {
+            request: components["schemas"]["ClarificationRequest"];
+            answer: components["schemas"]["ClarificationAnswerVersion"];
+            approval: components["schemas"]["ClarificationAnswerApproval"];
+        };
         /** CancelRunRequest */
         CancelRunRequest: Record<string, never>;
+        /** ClarificationAnswerApproval */
+        ClarificationAnswerApproval: {
+            /** Origin Run Id */
+            origin_run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            /** Answer Version */
+            answer_version: number;
+            /** Answer Sha256 */
+            answer_sha256: string;
+            /** Approval Id */
+            approval_id: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /**
+             * Approved By
+             * @constant
+             */
+            approved_by: "local-owner";
+            /**
+             * Approved At
+             * Format: date-time
+             */
+            approved_at: string;
+        };
+        /** ClarificationAnswerApproveRequest */
+        ClarificationAnswerApproveRequest: {
+            /** Client Request Id */
+            client_request_id: string;
+            /** Expected State Version */
+            expected_state_version: number;
+            /** Expected Answer Sha256 */
+            expected_answer_sha256: string;
+        };
+        /** ClarificationAnswerRead */
+        ClarificationAnswerRead: {
+            answer: components["schemas"]["ClarificationAnswerVersion"];
+            approval: components["schemas"]["ClarificationAnswerApproval"] | null;
+        };
+        /** ClarificationAnswerSaveRequest */
+        ClarificationAnswerSaveRequest: {
+            /** Client Request Id */
+            client_request_id: string;
+            /** Expected Latest Version */
+            expected_latest_version: number;
+            /** Expected State Version */
+            expected_state_version: number;
+            /** Request Sha256 */
+            request_sha256: string;
+            review_draft: components["schemas"]["DraftIdentity"];
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+            /** Items */
+            items: components["schemas"]["AnswerItem"][];
+        };
+        /** ClarificationAnswerVersion */
+        ClarificationAnswerVersion: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Origin Run Id */
+            origin_run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            /** Version */
+            version: number;
+            /** Request Sha256 */
+            request_sha256: string;
+            review_draft: components["schemas"]["DraftIdentity"];
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+            /** Items */
+            items: components["schemas"]["AnswerItem"][];
+            /**
+             * Saved By
+             * @constant
+             */
+            saved_by: "local-owner";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** ClarificationCase */
+        ClarificationCase: {
+            request: components["schemas"]["ClarificationRequest"];
+            /** Request Sha256 */
+            request_sha256: string;
+            latest_answer: components["schemas"]["ClarificationAnswerVersion"] | null;
+            latest_approval: components["schemas"]["ClarificationAnswerApproval"] | null;
+            /**
+             * Review State
+             * @enum {string}
+             */
+            review_state: "awaiting_answer" | "awaiting_approval" | "approved" | "stale";
+        };
+        /** ClarificationCasePage */
+        ClarificationCasePage: {
+            /** Items */
+            items: components["schemas"]["ClarificationCase"][];
+            /** Mission State Version */
+            mission_state_version: number;
+        };
         /** ClarificationQuestion */
         ClarificationQuestion: {
             /** Question */
@@ -435,6 +741,20 @@ export interface components {
             draft_version: number;
             /** Draft Sha256 */
             draft_sha256: string;
+        };
+        /** ClarificationSubmissionReceipt */
+        ClarificationSubmissionReceipt: {
+            /**
+             * Operation
+             * @enum {string}
+             */
+            operation: "save" | "approve";
+            /** Client Request Id */
+            client_request_id: string;
+            answer: components["schemas"]["ClarificationAnswerVersion"];
+            approval: components["schemas"]["ClarificationAnswerApproval"] | null;
+            /** Mission State Version */
+            mission_state_version: number;
         };
         /** ColumnProfile */
         ColumnProfile: {
@@ -550,6 +870,15 @@ export interface components {
             /** Field Key */
             field_key: string;
         };
+        /** DraftIdentity */
+        DraftIdentity: {
+            /** Draft Id */
+            draft_id: string;
+            /** Version */
+            version: number;
+            /** Sha256 */
+            sha256: string;
+        };
         /** DraftRelationshipMessageReference */
         DraftRelationshipMessageReference: {
             /**
@@ -655,6 +984,21 @@ export interface components {
             sha256: string;
             /** Locator */
             locator: components["schemas"]["CsvRowsLocator"] | components["schemas"]["JsonPointerLocator"] | components["schemas"]["TextLinesLocator"];
+        };
+        /** FieldAnswerTarget */
+        FieldAnswerTarget: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "field";
+            /** Key */
+            key: string;
+            /**
+             * Property
+             * @enum {string}
+             */
+            property: "meaning" | "value_type" | "grain" | "rule" | "time_basis" | "null_handling";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1033,6 +1377,21 @@ export interface components {
             /** Checks */
             checks: components["schemas"]["HealthCheck"][];
         };
+        /** RelationshipAnswerTarget */
+        RelationshipAnswerTarget: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "relationship";
+            /** Key */
+            key: string;
+            /**
+             * Property
+             * @enum {string}
+             */
+            property: "join_rule" | "grain_notes";
+        };
         /** RelationshipCandidate */
         RelationshipCandidate: {
             /** Relationship Key */
@@ -1059,6 +1418,18 @@ export interface components {
             risks: string[];
             /** Unknowns */
             unknowns: components["schemas"]["UnknownItem"][];
+        };
+        /** RemainingAnswerBlocker */
+        RemainingAnswerBlocker: {
+            /** Origin Run Id */
+            origin_run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            /** Question Index */
+            question_index: number;
+            /** Question */
+            question: string;
+            blocker: components["schemas"]["AnswerBlocker"];
         };
         /** RunBlockedEventEnvelope */
         RunBlockedEventEnvelope: {
@@ -1307,6 +1678,8 @@ export interface components {
         };
         /** RunSnapshot */
         RunSnapshot: {
+            /** Approved Answers */
+            approved_answers?: components["schemas"]["ApprovedAnswerSnapshot"][];
             /** Workspace Id */
             workspace_id: string;
             /** Mission Id */
@@ -1624,6 +1997,9 @@ export interface components {
         };
         /** TaskMessageSendRequest */
         TaskMessageSendRequest: {
+            /** Approved Answers */
+            approved_answers?: components["schemas"]["ApprovedAnswerRef"][];
+            expected_draft?: components["schemas"]["DraftIdentity"] | null;
             /**
              * Kind
              * @constant
@@ -2021,6 +2397,8 @@ export interface components {
         };
         /** ContextManifestInput */
         ContextManifestInput: {
+            /** Approved Answer Refs */
+            approved_answer_refs?: components["schemas"]["ApprovedAnswerRef"][];
             /** Mission State Version */
             mission_state_version: number;
             /** Turn Index */
@@ -2043,6 +2421,8 @@ export interface components {
         };
         /** ContextPacketManifest */
         ContextPacketManifest: {
+            /** Approved Answer Refs */
+            approved_answer_refs?: components["schemas"]["ApprovedAnswerRef"][];
             /** Mission State Version */
             mission_state_version: number;
             /** Turn Index */
@@ -2083,6 +2463,8 @@ export interface components {
         };
         /** ContextSnapshot */
         ContextSnapshot: {
+            /** Approved Answers */
+            approved_answers?: components["schemas"]["ApprovedAnswerSnapshot"][];
             /** @default null */
             message_context: components["schemas"]["MessageContext"] | null;
             mission: components["schemas"]["Mission"];
@@ -3314,6 +3696,234 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    clarification_cases_api_workspaces__workspace_id__missions__mission_id__clarification_cases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationCasePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clarification_answer_api_workspaces__workspace_id__missions__mission_id__clarifications__origin_run_id___clarification_id__answers__version__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                origin_run_id: string;
+                clarification_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationAnswerRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_clarification_answer_api_workspaces__workspace_id__missions__mission_id__clarifications__origin_run_id___clarification_id__answers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                origin_run_id: string;
+                clarification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClarificationAnswerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationSubmissionReceipt"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationSubmissionReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_clarification_answer_api_workspaces__workspace_id__missions__mission_id__clarifications__origin_run_id___clarification_id__answers__version__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                origin_run_id: string;
+                clarification_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClarificationAnswerApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationSubmissionReceipt"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationSubmissionReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clarification_submission_api_workspaces__workspace_id__missions__mission_id__clarification_submissions__client_request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                client_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClarificationSubmissionReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    answer_impact_api_workspaces__workspace_id__missions__mission_id__runs__run_id__answer_impact_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerImpact"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

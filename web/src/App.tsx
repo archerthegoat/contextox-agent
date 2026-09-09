@@ -438,7 +438,7 @@ function CenterPanel({
   );
 }
 
-function AgentPanel({ path2, dialogue, onReference, onHistory, onResults }: { path2: Path2WorkbenchState; dialogue: DialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onResults: () => void }) {
+function AgentPanel({ path2, dialogue, onReference, onHistory, onResults, onClarifications }: { path2: Path2WorkbenchState; dialogue: DialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onResults: () => void; onClarifications: () => void }) {
   const [isOpen, setIsOpen] = useState(true);
   const contentId = "agent-panel-content";
   const toggleLabel = isOpen ? "折叠任务对话" : "展开任务对话";
@@ -464,7 +464,7 @@ function AgentPanel({ path2, dialogue, onReference, onHistory, onResults }: { pa
         </button>
       </div>
       <div id={contentId} className="agent-panel-content" hidden={!isOpen}>
-        <TaskConversation state={path2} dialogue={dialogue} onReference={onReference} onHistory={onHistory} onResults={onResults} />
+        <TaskConversation state={path2} dialogue={dialogue} onReference={onReference} onHistory={onHistory} onResults={onResults} onClarifications={onClarifications} />
       </div>
     </aside>
   );
@@ -575,7 +575,7 @@ function App() {
           onReference={addReference}
           path2={path2}
         />
-        <AgentPanel path2={path2} dialogue={dialogue} onReference={inspectReference} onHistory={() => {setFocusedReference(null); setActiveTab("history"); setMobileView("result");}} onResults={() => {setFocusedReference(null); setActiveArea("mission"); setActiveTab("relationship"); setMobileView("result");}} />
+        <AgentPanel onClarifications={() => {setFocusedReference(null); setActiveArea("clarifications"); setActiveTab("mission"); setMobileView("result");}} path2={path2} dialogue={dialogue} onReference={inspectReference} onHistory={() => {setFocusedReference(null); setActiveTab("history"); setMobileView("result");}} onResults={() => {setFocusedReference(null); setActiveArea("mission"); setActiveTab("relationship"); setMobileView("result");}} />
       </div>
     </div>
   );

@@ -2252,3 +2252,17 @@ a:focus-visible {
 .reference-inspector button { padding: 8px; background: #edf4fd; border-radius: 5px; }
 .dialogue-missing-sources { margin: 8px 0; padding: 8px 10px; border: 1px solid #d8e1ee; border-radius: 8px; font-size: 12px; }
 .dialogue-missing-sources p { margin: 4px 0; }
+
+.clarification-answer-form { display: grid; gap: 20px; }
+.clarification-answer-form fieldset { min-width: 0; margin: 0; padding: 18px; border: 1px solid var(--border, #d4d4d4); border-radius: 8px; }
+.clarification-answer-form legend { max-width: 100%; padding: 0 6px; font-weight: 650; overflow-wrap: anywhere; }
+.clarification-answer-form label:not(.history-choice) { display: grid; gap: 6px; margin: 12px 0; }
+.clarification-answer-form textarea, .clarification-answer-form input:not([type=checkbox]), .clarification-answer-form select { box-sizing: border-box; width: 100%; max-width: 100%; padding: 9px; font: inherit; color: inherit; background: transparent; border: 1px solid #969696; border-radius: 5px; }
+.clarification-answer-form textarea { min-height: 76px; resize: vertical; }
+.clarification-readback dd, .answer-impact dd { margin: 4px 0 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.clarification-readback dt, .answer-impact dt { font-weight: 650; }
+.clarification-readback pre, .answer-impact pre, .clarification-answer-form pre { max-width: 100%; overflow: auto; font-size: 12px; }
+.preserve-lines { white-space: pre-wrap; }
+.answer-diff { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.answer-impact details { margin: 12px 0; }
+@media (max-width: 720px) { .answer-diff { grid-template-columns: 1fr; } .clarification-answer-form fieldset { padding: 10px; } }

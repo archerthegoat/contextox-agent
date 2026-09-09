@@ -166,6 +166,8 @@ def _insert_run(
 def _downgrade_empty_v3_to_exact_v2(db_path: Path) -> None:
     with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys=ON")
+        from test_clarifications import strip_r2_fixture
+        strip_r2_fixture(connection)
         connection.execute("DROP TABLE IF EXISTS run_message_inputs")
         connection.execute("DROP INDEX runs_one_active_per_mission")
         connection.execute("DROP TABLE definition_drafts")
@@ -228,7 +230,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(store.db_path, data_dir.resolve() / "contextox.sqlite3")
             self.assertEqual(store.list_workspaces(), [])
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
                 self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "delete")
                 self.assertEqual(
                     [
@@ -237,7 +239,7 @@ class StoreTests(unittest.TestCase):
                             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                         ).fetchall()
                     ],
-                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs"]),
+                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs", *[name for name,_ in store_module.r2.TABLES]]),
                 )
                 self.assertTrue(store_module._schema_is_exact(connection))
                 active_indexes = connection.execute(
@@ -1214,7 +1216,7 @@ class StoreTests(unittest.TestCase):
             with self.assertRaises(WorkspaceStoreUnavailableError):
                 WorkspaceStore.open(corrupt)
 
-            for label, version in (("older", 0), ("newer", 5)):
+            for label, version in (("older", 0), ("newer", 6)):
                 with self.subTest(label=label):
                     candidate = root / label
                     candidate.mkdir()
@@ -1276,7 +1278,7 @@ class StoreTests(unittest.TestCase):
             ),
             (
                 "newer",
-                lambda connection: connection.execute("PRAGMA user_version=5"),
+                lambda connection: connection.execute("PRAGMA user_version=6"),
             ),
         )
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
@@ -1388,7 +1390,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(v3_diagnostics["workspace_store_schema"].status, "ready")
             self.assertEqual(v3_diagnostics["workspace_store_open"].actual, "open")
             self.assertEqual(v3_diagnostics["workspace_store_readwrite"].status, "ready")
-            self.assertEqual(v3_diagnostics["workspace_store_schema"].actual, "user_version=4")
+            self.assertEqual(v3_diagnostics["workspace_store_schema"].actual, "user_version=5")
 
     def test_open_and_doctor_fail_closed_for_foreign_key_violations(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
@@ -1554,7 +1556,7 @@ class StoreTests(unittest.TestCase):
 
             initialized = WorkspaceStore.open(directory)
             with closing(sqlite3.connect(initialized.db_path)) as connection, connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
                 self.assertTrue(store_module._schema_is_exact(connection))
 
     def test_source_persistence_supports_four_media_types_restart_and_isolation(self) -> None:
@@ -1815,6 +1817,6 @@ class StoreTests(unittest.TestCase):
                             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                         ).fetchall()
                     ],
-                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs"]),
+                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs", *[name for name,_ in store_module.r2.TABLES]]),
                 )
             self.assertEqual(len(store.list_workspaces()), 1)

@@ -1,3 +1,4 @@
+import { ClarificationAnswers } from "./ClarificationAnswers";
 import {
   useCallback,
   useEffect,
@@ -3724,7 +3725,7 @@ function MissionPanel({ state }: { state: Path2WorkbenchState }) {
           <details><summary>任务版本与身份</summary><div className="path2-attempt-meta"><span>state version <code>{mission.state_version}</code></span><span>mission <code>{mission.mission_id}</code></span></div></details>
           {state.missionSnapshotState.issue ? <IssueCallout issue={state.missionSnapshotState.issue} title="Mission 快照不可用" /> : null}
           <SourceSelection state={state} idPrefix="run-source" title="对话使用的资料" description="选择本轮可用资料；右侧发送时会显示这一范围。" />
-          <p className="path2-body-copy">{state.clarifications.length > 0 ? "请在待澄清中核对问题；回答与批准入口尚未开放。" : state.latestDraft?.status === "in_review" ? "定义草案已提交审核；正式审批入口尚未开放。" : "在右侧发送具体问题，开始或继续分析。"}</p>
+          <p className="path2-body-copy">{state.clarifications.length > 0 ? "请在待澄清中完成整份回答与批准，再明确继续分析。" : state.latestDraft?.status === "in_review" ? "定义草案已提交审核；正式审批入口尚未开放。" : "在右侧发送具体问题，开始或继续分析。"}</p>
           <details><summary>整任务分析入口</summary>
           <label className="path2-confirmation-row">
             <input type="checkbox" checked={runSendConfirmed} onChange={(event) => setRunSendConfirmed(event.target.checked)} />
@@ -3764,7 +3765,7 @@ function evidenceLocatorLabel(locator: EvidenceLocator): string {
   }
 }
 
-function EvidenceRefs({ refs, label = "证据引用" }: { refs: EvidenceRef[]; label?: string }) {
+export function EvidenceRefs({ refs, label = "证据引用" }: { refs: EvidenceRef[]; label?: string }) {
   if (refs.length === 0) {
     return <small className="path2-detail-muted">{label}：暂无；证据身份未提供。</small>;
   }
@@ -3819,52 +3820,7 @@ function DefinitionPanel({ state, mode }: { state: Path2WorkbenchState; mode: "c
   if (!state.workspaceId) {
     return <WorkspaceRequired copy="定义草案和待确认问题只从当前 Workspace 的真实 Mission/Run 快照读取。" />;
   }
-  if (mode === "clarifications") {
-    return (
-      <div className="path2-panel-stack">
-        <div className="path2-panel-intro">
-          <div>
-            <span className="path2-eyebrow">HUMAN INPUT</span>
-            <h2>待澄清问题</h2>
-            <p>这里只查看 Agent 提出的公开问题；本卡不实现回答、审批或正式契约发布。</p>
-          </div>
-          <span className="path2-count">{state.clarifications.length}</span>
-        </div>
-        {snapshotIssue ? <IssueCallout issue={snapshotIssue} title="澄清快照不可用" /> : null}
-        {!snapshotIssue && state.missionSnapshotState.status === "loading" ? (
-          <div className="path2-inline-status">正在回读澄清请求…</div>
-        ) : null}
-        {!snapshotIssue && state.missionSnapshotState.status !== "loading" && state.clarifications.length === 0 ? (
-          <div className="path2-inline-empty">当前快照没有待确认问题。</div>
-        ) : null}
-        {state.clarifications.map((request) => (
-          <article className="path2-card path2-clarification-card" key={request.clarification_id}>
-            <div className="path2-card-heading">
-              <div>
-                <h3>澄清请求</h3>
-                <p>draft version {request.draft_version} · <code>{request.draft_sha256.slice(0, 14)}…</code></p>
-              </div>
-              <StatusPill status={request.status}>等待回答</StatusPill>
-            </div>
-            {request.questions.map((question, index) => (
-              <div className="path2-question" key={`${request.clarification_id}-${index}`}>
-                <strong>{index + 1}. {question.question}</strong>
-                <p>{question.why_needed}</p>
-                <small>{question.blocking_impact === "blocking" ? "阻塞性问题" : "非阻塞问题"} · {question.expected_answer_type}</small>
-                <dl className="path2-detail-grid">
-                  {question.suggested_owner_role ? <div><dt>建议负责人</dt><dd>{question.suggested_owner_role}</dd></div> : null}
-                  {question.related_definition_paths.length > 0 ? <div><dt>关联定义路径</dt><dd><ul className="path2-plain-list">{question.related_definition_paths.map((item, itemIndex) => <li key={`${itemIndex}-${item}`}><code>{item}</code></li>)}</ul></dd></div> : null}
-                </dl>
-                <StringList label="需要的证据" items={question.evidence_requested} />
-                <StringList label="示例或选项" items={question.examples_or_options} />
-                <EvidenceRefs refs={question.source_refs} />
-              </div>
-            ))}
-          </article>
-        ))}
-      </div>
-    );
-  }
+  if (mode === "clarifications") return <ClarificationAnswers key={`${state.workspaceId}/${state.selectedMission?.mission_id}`} state={state}/>;
   return (
     <div className="path2-panel-stack">
       <div className="path2-panel-intro">
