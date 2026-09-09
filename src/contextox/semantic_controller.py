@@ -411,7 +411,11 @@ def request_semantic_proposal(
         user_id=user_id,
         timeouts=ProviderTimeouts(
             connect_ms=budget.connect_timeout_ms,
-            first_event_ms=min(budget.first_event_timeout_ms, SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS),
+            # A non-streaming response has no earlier progress event: its first
+            # event is the complete response. Keep that deadline aligned with
+            # the approved single-request total instead of truncating it at the
+            # legacy streaming first-event limit.
+            first_event_ms=SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
             idle_ms=min(budget.idle_timeout_ms, SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS),
             total_ms=SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
         ),

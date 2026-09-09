@@ -108,6 +108,10 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
                 request["kwargs"]["timeouts"].total_ms,
                 SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
             )
+            self.assertEqual(
+                request["kwargs"]["timeouts"].first_event_ms,
+                SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
+            )
 
     def test_context_exposes_cross_source_relationship_stats_only_through_handles(self):
         with fixtures.PersistedRunTests().store_case(
