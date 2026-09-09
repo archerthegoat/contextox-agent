@@ -3897,12 +3897,9 @@ class WorkspaceStore:
         self._require_path2_workspace(workspace_id)
         from contextox.agent import SUPPORTED_RUN_HASH_PAIRS
         from contextox.semantic_controller import (
-            EMPTY_TOOL_SCHEMA_SHA256,
-            P0_SEMANTIC_PROPOSAL_SHA256,
+            SUPPORTED_SEMANTIC_HASH_PAIRS,
         )
-        supported_run_hash_pairs = SUPPORTED_RUN_HASH_PAIRS | {
-            (P0_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256)
-        }
+        supported_run_hash_pairs = SUPPORTED_RUN_HASH_PAIRS | SUPPORTED_SEMANTIC_HASH_PAIRS
 
         try:
             receipt = ProviderReceipt.model_validate(receipt.model_dump(mode="json"))
@@ -5175,12 +5172,9 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
             raise WorkspaceStoreUnavailableError()
         from contextox.agent import SUPPORTED_RUN_HASH_PAIRS
         from contextox.semantic_controller import (
-            EMPTY_TOOL_SCHEMA_SHA256,
-            P0_SEMANTIC_PROPOSAL_SHA256,
+            SUPPORTED_SEMANTIC_HASH_PAIRS,
         )
-        supported_run_hash_pairs = SUPPORTED_RUN_HASH_PAIRS | {
-            (P0_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256)
-        }
+        supported_run_hash_pairs = SUPPORTED_RUN_HASH_PAIRS | SUPPORTED_SEMANTIC_HASH_PAIRS
 
         provider_rows = connection.execute(
             """

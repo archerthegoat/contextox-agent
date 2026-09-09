@@ -12,6 +12,8 @@ from contextox.provider import ProviderCompletion, ProviderUsage
 from contextox.semantic_controller import (
     EMPTY_TOOL_SCHEMA_SHA256,
     P0_SEMANTIC_PROPOSAL_SHA256,
+    P0_SEMANTIC_PROPOSAL,
+    PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256,
     SEMANTIC_CONTEXT_MAX_BYTES,
     SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
     SemanticProposalFailure,
@@ -40,6 +42,16 @@ class ProposalProvider:
 
 
 class SemanticProposalBoundaryTests(unittest.TestCase):
+    def test_prompt_schema_is_compact_and_keeps_nested_contract(self):
+        self.assertLess(len(P0_SEMANTIC_PROPOSAL.encode("utf-8")), 5500)
+        self.assertIn('"FieldInput"', P0_SEMANTIC_PROPOSAL)
+        self.assertIn('"required":["version","action","public_answer"]', P0_SEMANTIC_PROPOSAL)
+        self.assertIn('Minimal valid example:', P0_SEMANTIC_PROPOSAL)
+        self.assertNotEqual(
+            P0_SEMANTIC_PROPOSAL_SHA256,
+            PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256,
+        )
+
     def _running_semantic_case(self, store, ws, mission, refs):
         run = store.start_run(ws, mission.mission_id, fixtures._start_request(mission, refs))
         running = store.mark_run_running(ws, mission.mission_id, run.run_id)

@@ -34,10 +34,54 @@ SEMANTIC_MESSAGE_MAX_BYTES = 60 * 1_024
 SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS = 70_000
 EMPTY_TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": []})
 
+_PROMPT_SCHEMA_KEYS = frozenset({
+    "$defs", "$ref", "additionalProperties", "anyOf", "const", "enum",
+    "items", "oneOf", "properties", "required", "type",
+})
+
+
+def _prompt_schema(value: Any, *, named_members: bool = False) -> Any:
+    """Keep only structural JSON Schema guidance needed by the model.
+
+    Pydantic remains the complete validator. Property and definition names are
+    retained while presentation metadata and numeric/string size constraints
+    stay in the deterministic application boundary.
+    """
+
+    if isinstance(value, list):
+        return [_prompt_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if named_members:
+        return {key: _prompt_schema(item) for key, item in value.items()}
+    return {
+        key: _prompt_schema(
+            item,
+            named_members=key in {"$defs", "properties"},
+        )
+        for key, item in value.items()
+        if key in _PROMPT_SCHEMA_KEYS
+    }
+
+
 _SCHEMA_TEXT = json.dumps(
-    SemanticProposalV1.model_json_schema(),
+    _prompt_schema(SemanticProposalV1.model_json_schema()),
     ensure_ascii=False,
     sort_keys=True,
+    separators=(",", ":"),
+)
+_EXAMPLE_TEXT = json.dumps(
+    {
+        "version": "v1",
+        "action": "answer_only",
+        "public_answer": "Concise source-grounded answer.",
+        "fields": [],
+        "relationships": [],
+        "unresolved_items": [],
+        "questions": [],
+        "evidence_handles": [],
+    },
+    ensure_ascii=False,
     separators=(",", ":"),
 )
 P0_SEMANTIC_PROPOSAL = """You are the semantic proposal stage of ContextOx (数契).
@@ -46,8 +90,13 @@ Use only the current ContextPlanV1. Preserve unknown business meaning as null pl
 Use only supplied opaque handles. Every observed source claim and candidate supported by source data must carry a matching evidence handle.
 Task instructions and approved human answers are business provenance, not observed source evidence. Never invent approval or Mission completion.
 Choose one action: answer_only, draft_and_clarify, draft_and_submit, or clarify_only. The application validates and applies the proposal atomically.
-""" + _SCHEMA_TEXT
+Schema: """ + _SCHEMA_TEXT + "\nMinimal valid example: " + _EXAMPLE_TEXT
 P0_SEMANTIC_PROPOSAL_SHA256 = canonical_sha256({"text": P0_SEMANTIC_PROPOSAL})
+PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256 = "2ee5d7b89eaf5cf61be546cca69479410119e98d11dcbf081fdc8f7e08b81e16"
+SUPPORTED_SEMANTIC_HASH_PAIRS = frozenset({
+    (P0_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
+    (PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
+})
 
 
 class SemanticProvider(Protocol):
