@@ -78,7 +78,13 @@ from contextox.provider import (
     ProviderUsage,
 )
 from contextox.store import Path2StateError, Path2NotImplementedError, WorkspaceStore, WorkspaceStoreError
-from contextox.model_tools import MODEL_ARGUMENT_TYPES, CandidateRejected, HandleDenied, ToolAdapter
+from contextox.model_tools import (
+    MODEL_ARGUMENT_TYPES,
+    CandidateRejected,
+    ContextBundleExceeded,
+    HandleDenied,
+    ToolAdapter,
+)
 from contextox.models import Key
 
 
@@ -217,6 +223,11 @@ The current context coverage is the citation index for fragments already read in
 Source parse_status describes the whole imported document. For structured sources, recognized_table_rows_complete states whether every row in the recognized record arrays was inspected. A partial status caused only by ignored non-tabular JSON members does not imply truncated or missing table rows. Preserve the precise tool limitation instead of broadening it.
 """
 P0_RUN_SHA256 = _sha256_text(P0_RUN)
+PRE_CONTEXT_CHECKPOINT_P0_RUN_SHA256 = P0_RUN_SHA256
+P0_RUN += """
+The evidence_bundle is the bounded Run working set from completed read_source and inspect_dataset calls. It may arrive in a fresh Provider session without earlier assistant reasoning or tool messages. Treat its results and handles as already acquired in this Run; do not repeat a read or inspection merely because the earlier Provider transcript is absent. Request more evidence only when the current bundle lacks material needed for a supported candidate or clarification.
+"""
+P0_RUN_SHA256 = _sha256_text(P0_RUN)
 
 
 _TOOL_ARGUMENT_TYPES: dict[str, type[BaseModel]] = {
@@ -310,6 +321,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    (PRE_CONTEXT_CHECKPOINT_P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
     (PRE_CITATION_INDEX_P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
     ("32a2a89ad05548171db0963bf8543a1b5c1df3e916798306f7867bc68ac5a3af", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
     ("fd4d113705de9c1bd504759f4d55454d88cf8d966287c9b41c34a83af923707a", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
@@ -1276,6 +1288,15 @@ def _tool_message(result: RunToolResult) -> dict[str, str]:
     }
 
 
+def _checkpoint_messages(context_text: str) -> list[dict[str, Any]]:
+    """Start a fresh provider session from the current bounded Run working set."""
+
+    return [
+        {"role": "system", "content": P0_RUN},
+        {"role": "user", "content": context_text},
+    ]
+
+
 def _record_run_receipt(
     store: WorkspaceStoreLike,
     workspace_id: str,
@@ -1427,10 +1448,8 @@ def run_agent(
         return
     public_parts: list[str] = []
     public_bytes = [0]
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": P0_RUN},
-        {"role": "user", "content": context_text},
-    ]
+    messages = _checkpoint_messages(context_text)
+    checkpoint_before_next_turn = False
 
     fallback_from: int | None = None
     fallback_used = False
@@ -1480,8 +1499,14 @@ def run_agent(
                 return
             try:
                 if not is_fallback:
-                    messages[1] = {"role": "user", "content": json.dumps(
-                        adapter.context(snapshot), ensure_ascii=False, sort_keys=True, separators=(",", ":"))}
+                    context_text = json.dumps(
+                        adapter.context(snapshot), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                    )
+                    if checkpoint_before_next_turn:
+                        messages = _checkpoint_messages(context_text)
+                        checkpoint_before_next_turn = False
+                    else:
+                        messages[1] = {"role": "user", "content": context_text}
             except HandleDenied:
                 _stop_run(store, workspace_id, mission_id, run_id, "blocked", "source_permission_denied")
                 return
@@ -1789,6 +1814,7 @@ def run_agent(
             return
 
         batch_terminal = False
+        batch_rejected = False
         for call in calls:
             if cancel_event.is_set():
                 _cancel_run(store, workspace_id, mission_id, run_id)
@@ -1858,10 +1884,14 @@ def run_agent(
                 messages.append({"role": "tool", "tool_call_id": result.call_id,
                                  "content": json.dumps(adapter.output(result, call), ensure_ascii=False,
                                                        sort_keys=True, separators=(",", ":"))})
+            except ContextBundleExceeded:
+                _stop_run(store, workspace_id, mission_id, run_id, "blocked", "context_budget_exceeded")
+                return
             except HandleDenied:
                 _stop_run(store, workspace_id, mission_id, run_id, "blocked", "source_permission_denied")
                 return
             if result.status == "rejected":
+                batch_rejected = True
                 recoveries += 1
                 if recoveries > 2:
                     _stop_run(store, workspace_id, mission_id, run_id, "failed", "tool_recovery_budget_exceeded")
@@ -1884,5 +1914,11 @@ def run_agent(
                     return
         if batch_terminal:
             return
+        # A successful tool batch is now fully represented by the refreshed
+        # authoritative snapshot and the adapter's bounded evidence bundle.
+        # The next request is an independent provider session, so completed
+        # reasoning and full tool messages no longer accumulate across turns.
+        if not batch_rejected and getattr(adapter, "supports_context_checkpoints", False):
+            checkpoint_before_next_turn = True
 
     _stop_run(store, workspace_id, mission_id, run_id, "blocked", "model_turn_budget_exceeded")

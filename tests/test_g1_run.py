@@ -129,20 +129,66 @@ class G1RunTests(unittest.TestCase):
         def script(n, p, h):
             left, right = [s["tables"][0] for s in p["sources"]]
             if n == 1:
+                self.assertEqual([message["role"] for message in h], ["system", "user"])
                 return [call("read", "read_source", {"source_handle": p["sources"][0]["source_handle"],
                     "locator": {"kind": "csv_rows", "row_start": 1,
                                 "row_end": left["row_count"], "column": None}})]
             if n == 2:
                 self.assertEqual(p["coverage"][0]["status"], "read")
                 self.assertFalse(p["coverage"][0]["truncated"])
+                self.assertEqual([message["role"] for message in h], ["system", "user"])
+                self.assertEqual([item["tool_name"] for item in p["evidence_bundle"]], ["read_source"])
+                self.assertTrue(p["evidence_bundle"][0]["result"]["text"])
                 return [call("join", "inspect_dataset", {"kind": "relationship",
                     "left_table_handle": left["table_handle"], "right_table_handle": right["table_handle"],
                     "left_column_handles": [left["columns"][0]["column_handle"]],
                     "right_column_handles": [right["columns"][0]["column_handle"]]})]
+            self.assertEqual([message["role"] for message in h], ["system", "user"])
+            self.assertEqual([item["tool_name"] for item in p["evidence_bundle"]],
+                             ["read_source", "inspect_dataset"])
             return [finish()]
         self.execute(script, lambda r, c, receipts: (
             self.assertEqual(r.status, "partial"),
             self.assertEqual(receipts, [("read", 1), ("join", 2), ("finish", 3)])), True)
+
+    def test_repeated_evidence_is_deduplicated_across_fresh_provider_sessions(self):
+        def script(n, p, h):
+            source = p["sources"][0]
+            table = source["tables"][0]
+            if n <= 2:
+                self.assertEqual([message["role"] for message in h], ["system", "user"])
+                self.assertEqual(len(p["evidence_bundle"]), n - 1)
+                return [call(f"read-{n}", "read_source", {"source_handle": source["source_handle"],
+                    "locator": {"kind": "csv_rows", "row_start": 1,
+                                "row_end": table["row_count"], "column": None}})]
+            self.assertEqual([message["role"] for message in h], ["system", "user"])
+            self.assertEqual(len(p["evidence_bundle"]), 1)
+            return [finish()]
+        self.execute(script, lambda r, c, receipts: (
+            self.assertEqual(r.status, "partial"),
+            self.assertEqual(receipts, [("read-1", 1), ("read-2", 2), ("finish", 3)])), True)
+
+    def test_evidence_bundle_overflow_blocks_after_the_read_receipt(self):
+        original_adapter = agent.ToolAdapter
+
+        class TinyBundleAdapter(original_adapter):
+            def __init__(self, snapshot, store):
+                super().__init__(snapshot, store)
+                self._evidence_bundle_max_bytes = 1
+
+        def script(n, p, h):
+            source = p["sources"][0]
+            table = source["tables"][0]
+            return [call("read", "read_source", {"source_handle": source["source_handle"],
+                "locator": {"kind": "csv_rows", "row_start": 1,
+                            "row_end": table["row_count"], "column": None}})]
+
+        with patch.object(agent, "ToolAdapter", TinyBundleAdapter):
+            self.execute(script, lambda r, c, receipts: (
+                self.assertEqual(r.status, "blocked"),
+                self.assertEqual(r.error_code, "context_budget_exceeded"),
+                self.assertEqual(len(c), 1),
+                self.assertEqual(receipts, [("read", 1)])), True)
 
     def test_review_and_clarification_use_published_draft_token(self):
         for terminal in ("submit_for_review", "create_clarification"):

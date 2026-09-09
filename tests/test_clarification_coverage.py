@@ -261,6 +261,7 @@ class CoverageRunTests(unittest.TestCase):
 
     def test_old_pair_persisted_run_reopens_without_rewriting_receipts(self):
         pairs = (
+            (agent.PRE_CONTEXT_CHECKPOINT_P0_RUN_SHA256, agent.TOOL_SCHEMA_SHA256),
             (agent.PRE_CITATION_INDEX_P0_RUN_SHA256, agent.TOOL_SCHEMA_SHA256),
             ("32a2a89ad05548171db0963bf8543a1b5c1df3e916798306f7867bc68ac5a3af", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
             ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),
@@ -285,8 +286,9 @@ class CoverageRunTests(unittest.TestCase):
                                 "row_end": source["tables"][0]["row_count"], "column": None},
                 }) for i, source in enumerate(packet["sources"])]
             if turn == 2:
-                tool_evidence = [json.loads(message["content"])["evidence_handle"]
-                                 for message in history if message["role"] == "tool"]
+                self.assertEqual([message["role"] for message in history], ["system", "user"])
+                tool_evidence = [item["result"]["evidence_handle"]
+                                 for item in packet["evidence_bundle"]]
                 self.assertEqual(
                     [item["evidence_handle"] for item in packet["coverage"]],
                     tool_evidence,

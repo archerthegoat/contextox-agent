@@ -152,6 +152,10 @@ class HandleDenied(Exception):
     """No details about other sources or runs may be disclosed."""
 
 
+class ContextBundleExceeded(Exception):
+    """A completed tool result cannot fit in the bounded Run working set."""
+
+
 class CandidateRejected(Exception):
     def __init__(self, code: str, paths: list[str] | None = None, indices: list[int] | None = None,
                  missing_handles: list[str] | None = None):
@@ -173,6 +177,8 @@ class RunReferences:
     source and domain operation. No registry is restored after process restart.
     """
 
+    supports_context_checkpoints = True
+
     def __init__(self, snapshot: ContextSnapshot, artifacts: list[SourceArtifact]):
         self.scope = (snapshot.mission.workspace_id, snapshot.mission.mission_id,
                       snapshot.run.run_id)
@@ -188,6 +194,12 @@ class RunReferences:
         self.reverse: dict[tuple[str, str], str] = {}
         self.catalog: list[dict[str, Any]] = []
         self.coverage: list[dict[str, Any]] = []
+        self.evidence_bundle: list[dict[str, Any]] = []
+        self._evidence_bundle_keys: set[str] = set()
+        # Leave at least half the request budget for P0, current authoritative
+        # state, active user input and tool schemas. Individual source/tool
+        # outputs are already bounded by their Pydantic contracts.
+        self._evidence_bundle_max_bytes = snapshot.run.budget.max_context_bytes // 2
         source_by_id = {r.revision_id: r for r in snapshot.sources}
         if set(self.selected) != {a.source_ref.revision_id for a in artifacts}:
             raise HandleDenied()
@@ -399,6 +411,7 @@ class RunReferences:
                     "questions": self.public(a.request.questions), "items": self.public(a.answer.items)}
                     for a in snapshot.approved_answers],
                 "coverage": self.coverage,
+                "evidence_bundle": self.evidence_bundle,
                 "budget": _plain(snapshot.run.budget)}
 
     def check_snapshot(self, snapshot: ContextSnapshot) -> None:
@@ -505,6 +518,26 @@ class RunReferences:
             return TypeAdapter(datetime).dump_python(value, mode="json")
         return value
 
+    def remember_evidence(self, tool_name: str, value: Any) -> Any:
+        """Retain one bounded public result across provider session checkpoints."""
+
+        public_value = self.public(value)
+        if tool_name not in {"read_source", "inspect_dataset"}:
+            return public_value
+        entry = {"tool_name": tool_name, "result": public_value}
+        key = json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if key in self._evidence_bundle_keys:
+            return public_value
+        projected = [*self.evidence_bundle, entry]
+        encoded = json.dumps(
+            projected, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        if len(encoded) > self._evidence_bundle_max_bytes:
+            raise ContextBundleExceeded()
+        self.evidence_bundle.append(entry)
+        self._evidence_bundle_keys.add(key)
+        return public_value
+
 
 class ToolAdapter(RunReferences):
     def __init__(self, snapshot: ContextSnapshot, store: Any):
@@ -591,4 +624,6 @@ class ToolAdapter(RunReferences):
             return {"draft_token": self.draft_token, "updated_field_keys": [f.field_key for f in call.arguments.fields],
                     "updated_relationship_keys": [r.relationship_key for r in call.arguments.relationships],
                     "clarification_obligations": self.clarification_obligations()}
+        if result.status == "succeeded":
+            return self.remember_evidence(call.name, result.output)
         return self.public(result.output)
