@@ -1068,10 +1068,16 @@ class _UrllibTransport:
 class DeepSeekProvider:
     """Fixed DeepSeek Chat Completions adapter with no automatic retry."""
 
-    def __init__(self, *, model: str = DEFAULT_MODEL, transport: Any | None = None) -> None:
+    def __init__(
+        self, *, model: str = DEFAULT_MODEL, reasoning_effort: str = "high",
+        transport: Any | None = None,
+    ) -> None:
         if model not in {"deepseek-v4-flash", "deepseek-v4-pro"}:
             raise ValueError("model must be an approved DeepSeek model")
+        if reasoning_effort not in ("low", "high", "max"):
+            raise ValueError("reasoning_effort must be low, high, or max")
         self.model = model
+        self.reasoning_effort = reasoning_effort
         self._use_supervised_child = transport is None
         self.transport = transport if transport is not None else _UrllibTransport()
 
@@ -1081,7 +1087,7 @@ class DeepSeekProvider:
             endpoint_id="deepseek_chat_completions",
             model=self.model,
             thinking="enabled",
-            reasoning_effort="high",
+            reasoning_effort=self.reasoning_effort,
         )
 
     @staticmethod
@@ -1108,7 +1114,7 @@ class DeepSeekProvider:
             "model": self.model,
             "messages": messages,
             "thinking": {"type": "enabled"},
-            "reasoning_effort": "high",
+            "reasoning_effort": self.reasoning_effort,
             "max_tokens": max_tokens,
             "stream": stream,
             "user_id": user_id,

@@ -847,7 +847,7 @@ class ProviderConfigSnapshot(ContextOxModel):
     endpoint_id: Literal["deepseek_chat_completions"]
     model: Literal["deepseek-v4-flash", "deepseek-v4-pro"]
     thinking: Literal["enabled"]
-    reasoning_effort: Literal["high"]
+    reasoning_effort: Literal["low", "high", "max"]
 
 
 ProviderReceiptStatus = Literal["succeeded", "blocked", "failed", "cancelled"]

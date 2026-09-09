@@ -968,9 +968,9 @@ export interface components {
             thinking: "enabled";
             /**
              * Reasoning Effort
-             * @constant
+             * @enum {string}
              */
-            reasoning_effort: "high";
+            reasoning_effort: "low" | "high" | "max";
         };
         /** ProviderReceipt */
         ProviderReceipt: {
