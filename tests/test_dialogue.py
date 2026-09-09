@@ -185,7 +185,7 @@ class DialogueTests(unittest.TestCase):
         self.assertFalse(created)
         self.assertEqual(replay.run.run_id, receipt.run.run_id)
 
-    def test_v3_read_only_then_explicit_migration_keeps_history(self):
+    def test_v3_read_only_then_explicit_migrations_keep_history(self):
         with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
             db = Path(directory) / "contextox.sqlite3"
             with closing(sqlite3.connect(db)) as c, c:
@@ -205,6 +205,11 @@ class DialogueTests(unittest.TestCase):
             self.assertEqual(store.list_task_messages(ws, mission.mission_id), before)
             with closing(sqlite3.connect(backup / "contextox.sqlite3")) as c:
                 self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0], 3)
+            with self.assertRaises(Path2StateError) as error:
+                store.send_task_message(ws, mission.mission_id, request())
+            self.assertEqual(error.exception.code, "task_dialogue_not_implemented")
+            store.migrate_clarification_answers()
+            store.migrate_profile_interpretations()
             self.assertTrue(store.send_task_message(ws, mission.mission_id, request())[1])
 
     def test_unknown_model_turn_blocks_both_entrypoints(self):

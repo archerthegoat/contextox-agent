@@ -1411,7 +1411,7 @@ export interface components {
             status: "queued" | "running" | "succeeded" | "blocked" | "failed" | "cancelled";
             /** Profile Hash */
             profile_hash: string;
-            config: components["schemas"]["ProviderConfigSnapshot"] | null;
+            config: components["schemas"]["ProviderConfigSnapshot"];
             /** Config Fingerprint */
             config_fingerprint: string;
             /** Prompt Sha256 */

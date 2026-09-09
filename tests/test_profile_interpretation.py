@@ -9,6 +9,7 @@ import test_sources as source_fixtures
 from contextox.profile_interpretation import (
     PROFILE_INTERPRETATION_P0_SHA256,
     PROFILE_CHUNK_MAX_BYTES,
+    ProfileInterpretationFailure,
     interpret_profile,
     profile_provider_config,
     profile_chunks,
@@ -102,6 +103,88 @@ class ProfileInterpretationTests(unittest.TestCase):
             <= PROFILE_CHUNK_MAX_BYTES
             for chunk in profile_chunks(pack)
         ))
+
+    def test_profile_interpretation_rejects_incomplete_column_output(self):
+        class IncompleteProvider(FakeInterpretationProvider):
+            def complete(self, messages, **kwargs):
+                completion = super().complete(messages, **kwargs)
+                return completion.__class__(
+                    **{
+                        **completion.__dict__,
+                        "content": json.dumps({
+                            "columns": [],
+                            "relationship_hints": [],
+                            "unknown_items": [],
+                        }),
+                    }
+                )
+
+        with self.assertRaisesRegex(
+            ProfileInterpretationFailure, "profile_interpretation_invalid"
+        ):
+            interpret_profile(
+                IncompleteProvider(), self._pack(),
+                user_id="ws-test", cancel_event=Event(),
+            )
+
+    def test_relationship_hints_are_limited_to_supplied_deterministic_stats(self):
+        content = (
+            b'{"orders":[{"customer_id":"c1"},{"customer_id":"c2"}],'
+            b'"customers":[{"customer_id":"c1"},{"customer_id":"c3"}]}'
+        )
+        pack = build_profile_pack(
+            source_fixtures._revision(content, "application/json"), content
+        )
+
+        class RelationshipProvider(FakeInterpretationProvider):
+            def complete(self, messages, **kwargs):
+                completion = super().complete(messages, **kwargs)
+                payload = json.loads(messages[1]["content"])
+                hints = [{
+                    "left_table_id": item["left_table_id"],
+                    "right_table_id": item["right_table_id"],
+                    "left_columns": item["left_columns"],
+                    "right_columns": item["right_columns"],
+                    "reason": "Exact profile statistics show a prospective match.",
+                } for item in payload["relationships"]]
+                body = json.loads(completion.content)
+                body["relationship_hints"] = hints
+                return completion.__class__(**{
+                    **completion.__dict__, "content": json.dumps(body)
+                })
+
+        provider = RelationshipProvider()
+        result = interpret_profile(
+            provider, pack, user_id="ws-test", cancel_event=Event()
+        )
+
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(len(result.interpretation.relationship_hints), 1)
+        relationship_payload = provider.calls[1]["messages"][1]["content"]
+        self.assertNotIn(pack.source_ref.revision_id, relationship_payload)
+        self.assertNotIn("source_refs", relationship_payload)
+        self.assertNotIn("sample_rows", relationship_payload)
+
+    def test_profile_interpretation_marks_four_chunk_cap_partial(self):
+        names = [f"column_{index}" for index in range(100)]
+        rows = [
+            ",".join([f"value_{row}_" + ("x" * 220) for _ in names])
+            for row in range(10)
+        ]
+        content = (",".join(names) + "\n" + "\n".join(rows) + "\n").encode()
+        revision = source_fixtures._revision(content, "text/csv")
+        pack = build_profile_pack(revision, content)
+        self.assertGreater(len(profile_chunks(pack)), 4)
+        provider = FakeInterpretationProvider()
+
+        result = interpret_profile(
+            provider, pack, user_id="ws-test", cancel_event=Event()
+        )
+
+        self.assertTrue(result.interpretation.partial)
+        self.assertEqual(result.interpretation.covered_chunks, 4)
+        self.assertGreater(result.interpretation.total_chunks, 4)
+        self.assertEqual(len(provider.calls), 4)
 
     def test_succeeded_interpretation_is_cached_by_profile_and_config(self):
         with tempfile.TemporaryDirectory(

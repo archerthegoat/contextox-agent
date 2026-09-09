@@ -109,6 +109,33 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
                 SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
             )
 
+    def test_context_exposes_cross_source_relationship_stats_only_through_handles(self):
+        with fixtures.PersistedRunTests().store_case(
+            with_sources=True, controller=True
+        ) as (store, ws, mission, refs):
+            run = store.start_run(ws, mission.mission_id, fixtures._start_request(mission, refs))
+            snapshot = store.get_context_snapshot(ws, mission.mission_id, run.run_id)
+
+            plan, adapter = build_context_plan(snapshot, store)
+
+            self.assertEqual(len(plan.prospective_relationships), 1)
+            relationship = plan.prospective_relationships[0]
+            self.assertEqual(relationship["matched_distinct_keys"], 1)
+            self.assertEqual(relationship["unmatched_left_rows"], 1)
+            self.assertEqual(relationship["unmatched_right_rows"], 1)
+            self.assertEqual(relationship["prospective_join_rows"], 1)
+            self.assertEqual(relationship["observed_cardinality"], "one_to_one")
+            self.assertEqual(len(relationship["evidence_handles"]), 2)
+            self.assertEqual(
+                adapter.resolve(relationship["left"], "table").columns,
+                [],
+            )
+            for handle in relationship["left_column_handles"]:
+                self.assertEqual(adapter.resolve(handle, "column").column, "id")
+            serialized = json.dumps(relationship, ensure_ascii=False)
+            self.assertNotIn(ws, serialized)
+            self.assertNotIn(refs[0].revision_id, serialized)
+
     def test_invalid_proposal_fails_without_a_second_request(self):
         plan = ContextPlanV1(
             context_kind="semantic_context_v1",
@@ -145,6 +172,64 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(SemanticProposalFailure, "context_too_broad"):
             semantic_messages(plan)
+
+    def test_context_prunes_reproducible_profile_detail_before_rejecting(self):
+        profile = {
+            "limitations": ["x" * 30_000],
+            "tables": [{
+                "table_id": "",
+                "evidence_handles": ["ev-required"],
+                "columns": [{
+                    "name": "customer_id",
+                    "top_values": [{"text": "y" * 25_000}],
+                    "type_counts": [{"value_kind": "string", "count": 100}],
+                    "numeric_p25": None,
+                    "numeric_p50": None,
+                    "numeric_p75": None,
+                    "text_length_min": 1,
+                    "text_length_max": 100,
+                }],
+            }],
+        }
+        plan = ContextPlanV1(
+            context_kind="semantic_context_v1",
+            mission={"goal": "保留当前用户请求"},
+            message_context={"input": {"content": "保留当前用户请求"}},
+            sources=[{"profile_pack": profile}],
+            prospective_relationships=[{
+                "left": "table-left",
+                "right": "table-right",
+                "left_column_handles": ["column-left"],
+                "right_column_handles": ["column-right"],
+                "matched_distinct_keys": 1,
+                "evidence_handles": ["relationship-evidence-required"],
+            }],
+            draft={"draft_token": "draft-required", "unresolved_items": ["待确认"]},
+            clarifications=[],
+            approved_answers=[],
+        )
+
+        messages = semantic_messages(plan)
+        self.assertLessEqual(
+            len(json.dumps(messages, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":")).encode()),
+            60 * 1024,
+        )
+        payload = json.loads(messages[1]["content"])
+        self.assertEqual(payload["mission"]["goal"], "保留当前用户请求")
+        self.assertEqual(payload["draft"]["draft_token"], "draft-required")
+        self.assertEqual(
+            payload["sources"][0]["profile_pack"]["tables"][0]["evidence_handles"],
+            ["ev-required"],
+        )
+        self.assertEqual(
+            payload["sources"][0]["profile_pack"]["tables"][0]["columns"][0]["top_values"],
+            [],
+        )
+        self.assertEqual(
+            payload["prospective_relationships"][0]["evidence_handles"],
+            ["relationship-evidence-required"],
+        )
 
     def test_draft_and_clarification_are_applied_in_one_transaction(self):
         with fixtures.PersistedRunTests().store_case(
@@ -281,6 +366,27 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
                 EMPTY_TOOL_SCHEMA_SHA256,
             )
             self.assertEqual(len(result.terminal_receipt.tool_receipt_ids), 1)
+            events = store.list_run_events(ws, mission.mission_id, run.run_id)
+            self.assertEqual(
+                [event.event_type for event in events],
+                [
+                    "run_started", "run_phase_changed", "model_started",
+                    "model_completed", "run_phase_changed", "run_phase_changed",
+                    "run_phase_changed", "run_partial",
+                ],
+            )
+            phases = [
+                event.public_payload.phase for event in events
+                if event.event_type == "run_phase_changed"
+            ]
+            self.assertEqual(
+                phases, ["synthesize_once", "validate", "apply", "terminal"]
+            )
+            model_start = next(
+                event for event in events if event.event_type == "model_started"
+            )
+            self.assertEqual(model_start.public_payload.transport, "non_stream")
+            self.assertIsNone(model_start.public_payload.fallback_of_turn_index)
 
     def test_invalid_json_records_the_single_call_and_leaves_domain_state_empty(self):
         import contextox.store as store_module

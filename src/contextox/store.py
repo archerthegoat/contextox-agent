@@ -63,6 +63,7 @@ from contextox.sources import (
     MAX_FILE_BYTES,
     PARSER_VERSION,
     SourceInputError,
+    build_prospective_relationships,
     inspect_relationship,
     build_profile_pack,
     parse_source,
@@ -991,7 +992,7 @@ CREATE TABLE profile_interpretation_attempts (
     finished_at TEXT,
     status TEXT NOT NULL,
     profile_hash TEXT NOT NULL,
-    config_json TEXT,
+    config_json TEXT NOT NULL,
     config_fingerprint TEXT NOT NULL,
     prompt_sha256 TEXT NOT NULL,
     sent_bytes INTEGER NOT NULL,
@@ -1727,6 +1728,25 @@ class WorkspaceStore:
         revision, _artifact, content = self._get_source(workspace_id, revision_id)
         return build_profile_pack(revision, content)
 
+    def get_prospective_relationship_profiles(
+        self,
+        workspace_id: str,
+        revision_ids: list[str],
+    ) -> list[RelationshipProfile]:
+        """Compute exact same-column candidates across the selected revisions."""
+
+        self._require_path2_workspace(workspace_id)
+        if not revision_ids or len(revision_ids) > 8 or len(set(revision_ids)) != len(revision_ids):
+            raise Path2StateError("source_selection_invalid")
+        materials = []
+        for revision_id in revision_ids:
+            revision, _artifact, content = self._get_source(workspace_id, revision_id)
+            materials.append((revision, content))
+        try:
+            return build_prospective_relationships(materials)
+        except SourceInputError as exc:
+            raise Path2StateError(exc.code) from exc
+
     def create_profile_interpretation_attempt(
         self,
         workspace_id: str,
@@ -2301,7 +2321,7 @@ class WorkspaceStore:
             if replay is not None:
                 return replay, False
             schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if schema_version not in {4, 5, 6}:
+            if schema_version != 6:
                 raise Path2StateError("task_dialogue_not_implemented")
             if mission.state_version != request.expected_state_version:
                 raise Path2StateError("state_conflict")
@@ -2318,10 +2338,8 @@ class WorkspaceStore:
                 "started_at, finished_at, status, budget_json, last_sequence, final_output, error_code, start_request_sha256) "
                 "VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, 0, NULL, NULL, ?)",
                 (workspace_id, mission_id, run_id, request.client_request_id, now,
-                 _canonical_json(
-                     RunBudget.deterministic_controller()
-                     if schema_version == 6 else RunBudget(max_output_tokens=16384)
-                 ), canonical_sha256(request)),
+                 _canonical_json(RunBudget.deterministic_controller()),
+                 canonical_sha256(request)),
             )
             connection.executemany(
                 "INSERT INTO run_sources VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -2470,6 +2488,8 @@ class WorkspaceStore:
         request_sha256 = canonical_sha256(request)
         try:
             with self._write_transaction() as connection:
+                if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                    raise Path2StateError("task_dialogue_not_implemented")
                 replay = connection.execute(
                     """
                     SELECT workspace_id, mission_id, run_id, client_request_id, created_at,
@@ -2538,11 +2558,7 @@ class WorkspaceStore:
                         raise Path2StateError("state_conflict")
                 run_id = str(uuid4())
                 created_at = _utc_now()
-                budget = (
-                    RunBudget.deterministic_controller()
-                    if connection.execute("PRAGMA user_version").fetchone()[0] == 6
-                    else RunBudget(max_output_tokens=16384)
-                )
+                budget = RunBudget.deterministic_controller()
                 connection.execute(
                     """
                     INSERT INTO runs
@@ -2995,6 +3011,7 @@ class WorkspaceStore:
         run_id: str,
         phase: Literal["synthesize_once", "validate", "apply"],
     ) -> RunSnapshot:
+        self._require_path2_workspace(workspace_id)
         transitions = {
             "prepare_context": "synthesize_once",
             "synthesize_once": "validate",

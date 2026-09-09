@@ -4,8 +4,10 @@ import unittest
 from contextlib import closing
 from unittest.mock import patch
 
-from contextox import agent
-from contextox.models import MissionDraftPayload, RunStartRequest
+from contextox import agent, profile_interpretation
+from contextox.models import (
+    MissionDraftPayload, ProfileInterpretationCreateRequest, RunStartRequest,
+)
 from contextox.provider import ProviderUsage
 from contextox.runtime import Path2Runtime
 from contextox.store import WorkspaceStore, WorkspaceStoreBusyError, WorkspaceStoreUnavailableError
@@ -209,6 +211,53 @@ class RuntimeTests(unittest.TestCase):
                 "00000000-0000-4000-8000-000000000003", 0,
             )
             self.assertEqual([event.root.sequence for event in buffered], [2, 3])
+
+    def test_profile_interpretation_uses_the_same_bounded_runtime_slot(self):
+        with tempfile.TemporaryDirectory(prefix="contextox-profile-runtime-", dir="/private/tmp") as directory:
+            store = WorkspaceStore.open(directory)
+            workspace_id = store.create_workspace("Profile runtime").workspace_id
+            revision, _ = store.import_source_revision(
+                workspace_id, "input.csv", "text/csv", b"id\n1\n"
+            )
+            runtime = Path2Runtime(store, thread_factory=InlineThread)
+            request = ProfileInterpretationCreateRequest(
+                client_request_id="00000000-0000-4000-8000-000000000099",
+                provider_send_confirmed=True,
+            )
+
+            def stop_profile(store, workspace_id, revision_id, attempt_id, cancel_event):
+                del cancel_event
+                store.mark_profile_interpretation_running(
+                    workspace_id, revision_id, attempt_id
+                )
+                store.fail_profile_interpretation_attempt(
+                    workspace_id, revision_id, attempt_id,
+                    "blocked", "synthetic_profile_stop",
+                )
+
+            with patch.object(
+                profile_interpretation,
+                "run_profile_interpretation",
+                side_effect=stop_profile,
+            ):
+                attempt, created = runtime.start_profile_interpretation(
+                    workspace_id, revision.revision_id, request
+                )
+            self.assertTrue(created)
+            self.assertFalse(runtime.busy)
+            stopped = store.get_profile_interpretation_attempt(
+                workspace_id, revision.revision_id, attempt.attempt_id
+            )
+            self.assertEqual(
+                (stopped.status, stopped.error_code),
+                ("blocked", "synthetic_profile_stop"),
+            )
+            replay, replay_created = runtime.start_profile_interpretation(
+                workspace_id, revision.revision_id, request
+            )
+            self.assertFalse(replay_created)
+            self.assertEqual(replay.attempt_id, attempt.attempt_id)
+            runtime.shutdown(timeout=0)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ from contextox.provider import (
 
 PROFILE_CHUNK_MAX_BYTES = 32 * 1024
 PROFILE_CHUNK_MAX_COUNT = 4
+PROFILE_CHUNK_MAX_TOTAL = 1_604
 PROFILE_PROVIDER_TIMEOUT_MS = 30_000
 PROFILE_OUTPUT_TOKENS = 4096
 
@@ -120,12 +121,12 @@ def _chunk_wire_bytes(payload: dict[str, Any]) -> int:
         **payload,
         "chunk_index": PROFILE_CHUNK_MAX_COUNT,
         "covered_chunks": PROFILE_CHUNK_MAX_COUNT,
-        "total_chunks": 999,
+        "total_chunks": PROFILE_CHUNK_MAX_TOTAL,
     }))
 
 
 def profile_chunks(pack: ProfilePackV1) -> list[dict[str, Any]]:
-    """Greedily split ordered column statistics into bounded Provider packets."""
+    """Split ordered column and relationship statistics into bounded packets."""
 
     units = [
         {
@@ -144,8 +145,21 @@ def profile_chunks(pack: ProfilePackV1) -> list[dict[str, Any]]:
         "stats_mode": pack.stats_mode,
         "limitations": pack.limitations,
     }
-    if not units:
-        payload = {**base, "items": []}
+    relationship_units = [
+        {
+            **relationship.model_dump(
+                mode="json",
+                exclude={"left", "right", "source_refs", "limitations"},
+            ),
+            "left_table_id": relationship.left.table_id,
+            "left_columns": relationship.left.columns,
+            "right_table_id": relationship.right.table_id,
+            "right_columns": relationship.right.columns,
+        }
+        for relationship in pack.relationships
+    ]
+    if not units and not relationship_units:
+        payload = {**base, "items": [], "relationships": []}
         if _chunk_wire_bytes(payload) > PROFILE_CHUNK_MAX_BYTES:
             raise ProfileInterpretationFailure("profile_context_too_broad")
         return [payload]
@@ -153,17 +167,48 @@ def profile_chunks(pack: ProfilePackV1) -> list[dict[str, Any]]:
     chunks: list[dict[str, Any]] = []
     current: list[dict[str, Any]] = []
     for unit in units:
-        candidate = {**base, "items": [*current, unit]}
+        candidate = {**base, "items": [*current, unit], "relationships": []}
         if _chunk_wire_bytes(candidate) <= PROFILE_CHUNK_MAX_BYTES:
             current.append(unit)
             continue
         if not current:
             raise ProfileInterpretationFailure("profile_context_too_broad")
-        chunks.append({**base, "items": current})
+        chunks.append({**base, "items": current, "relationships": []})
         current = [unit]
-        if _chunk_wire_bytes({**base, "items": current}) > PROFILE_CHUNK_MAX_BYTES:
+        if _chunk_wire_bytes(
+            {**base, "items": current, "relationships": []}
+        ) > PROFILE_CHUNK_MAX_BYTES:
             raise ProfileInterpretationFailure("profile_context_too_broad")
-    chunks.append({**base, "items": current})
+    if current:
+        chunks.append({**base, "items": current, "relationships": []})
+
+    current_relationships: list[dict[str, Any]] = []
+    for relationship in relationship_units:
+        candidate = {
+            **base,
+            "items": [],
+            "relationships": [*current_relationships, relationship],
+        }
+        if (
+            len(current_relationships) < 25
+            and _chunk_wire_bytes(candidate) <= PROFILE_CHUNK_MAX_BYTES
+        ):
+            current_relationships.append(relationship)
+            continue
+        if not current_relationships:
+            raise ProfileInterpretationFailure("profile_context_too_broad")
+        chunks.append({
+            **base, "items": [], "relationships": current_relationships,
+        })
+        current_relationships = [relationship]
+        if _chunk_wire_bytes({
+            **base, "items": [], "relationships": current_relationships,
+        }) > PROFILE_CHUNK_MAX_BYTES:
+            raise ProfileInterpretationFailure("profile_context_too_broad")
+    if current_relationships:
+        chunks.append({
+            **base, "items": [], "relationships": current_relationships,
+        })
     return chunks
 
 
@@ -176,12 +221,6 @@ def interpret_profile(
 ) -> ProfileInterpretationResult:
     chunks = profile_chunks(pack)
     selected = chunks[:PROFILE_CHUNK_MAX_COUNT]
-    allowed_columns = {
-        (item["table_id"], item["column"]["name"])
-        for chunk in selected
-        for item in chunk["items"]
-    }
-    allowed_tables = {table.table_id for table in pack.tables}
     columns: list[ProfileColumnInterpretationV1] = []
     relationships: list[ProfileRelationshipHintV1] = []
     unknowns: list[str] = []
@@ -234,15 +273,28 @@ def interpret_profile(
             raise ProfileInterpretationFailure(
                 "profile_interpretation_invalid", usage=completion.usage
             ) from exc
-        if any((item.table_id, item.column_name) not in allowed_columns for item in output.columns):
+        chunk_columns = {
+            (item["table_id"], item["column"]["name"])
+            for item in chunk["items"]
+        }
+        output_columns = {
+            (item.table_id, item.column_name) for item in output.columns
+        }
+        if output_columns != chunk_columns:
             raise ProfileInterpretationFailure(
                 "profile_interpretation_invalid", usage=completion.usage
             )
-        if any(
-            item.left_table_id not in allowed_tables
-            or item.right_table_id not in allowed_tables
-            for item in output.relationship_hints
-        ):
+        allowed_relationships = {
+            (
+                item["left_table_id"], tuple(item["left_columns"]),
+                item["right_table_id"], tuple(item["right_columns"]),
+            )
+            for item in chunk["relationships"]
+        }
+        if any((
+            item.left_table_id, tuple(item.left_columns),
+            item.right_table_id, tuple(item.right_columns),
+        ) not in allowed_relationships for item in output.relationship_hints):
             raise ProfileInterpretationFailure(
                 "profile_interpretation_invalid", usage=completion.usage
             )

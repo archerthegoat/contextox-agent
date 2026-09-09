@@ -17,6 +17,7 @@ from contextox.model_tools import (
 )
 from contextox.models import (
     ClarificationQuestion,
+    ColumnRef,
     ContextSnapshot,
     DefinitionField,
     EvidenceRef,
@@ -103,12 +104,17 @@ def _question_contract(
         ("fields", fields, "field_key"),
         ("relationships", relationships, "relationship_key"),
     ):
-        for item in items:
+        for object_index, item in enumerate(items):
             item_key = getattr(item, key_name)
             root = f"{collection}.{item_key}"
-            valid_paths.add(root)
-            valid_paths.update(f"{root}.{name}" for name in type(item).model_fields)
-            for unknown in item.unknowns:
+            if len(root) <= 128:
+                valid_paths.add(root)
+            valid_paths.update(
+                candidate
+                for name in type(item).model_fields
+                if len(candidate := f"{root}.{name}") <= 128
+            )
+            for unknown_index, unknown in enumerate(item.unknowns):
                 property_path = unknown.property_path
                 if collection == "relationships":
                     property_path = property_path.removeprefix(f"{item_key}.")
@@ -118,7 +124,11 @@ def _question_contract(
                     and getattr(item, property_path, None) is None
                 ):
                     continue
-                obligations[f"{root}.{property_path}"] = collection == "fields"
+                path = f"{root}.{property_path}"
+                if len(path) > 128:
+                    path = f"{collection}.{object_index}.unknowns.{unknown_index}"
+                valid_paths.add(path)
+                obligations[path] = collection == "fields"
     for index, _item in enumerate(unresolved_items):
         path = f"unresolved_items.{index}"
         valid_paths.add(path)
@@ -245,6 +255,54 @@ def _source_plans(adapter: ToolAdapter, snapshot: ContextSnapshot, store: Any) -
     return plans
 
 
+def _relationship_plans(
+    adapter: ToolAdapter,
+    snapshot: ContextSnapshot,
+    store: Any,
+) -> list[dict[str, Any]]:
+    profiles = store.get_prospective_relationship_profiles(
+        snapshot.mission.workspace_id,
+        [ref.revision_id for ref in snapshot.run.source_refs],
+    )
+    plans: list[dict[str, Any]] = []
+    for profile in profiles:
+        left_columns = [
+            adapter.column(
+                ColumnRef(
+                    source_ref=profile.left.source_ref,
+                    table_id=profile.left.table_id,
+                    column=column,
+                )
+            )
+            for column in profile.left.columns
+        ]
+        right_columns = [
+            adapter.column(
+                ColumnRef(
+                    source_ref=profile.right.source_ref,
+                    table_id=profile.right.table_id,
+                    column=column,
+                )
+            )
+            for column in profile.right.columns
+        ]
+        plans.append(
+            {
+                **profile.model_dump(
+                    mode="json", exclude={"left", "right", "source_refs"}
+                ),
+                "left": adapter.table(profile.left),
+                "right": adapter.table(profile.right),
+                "left_column_handles": left_columns,
+                "right_column_handles": right_columns,
+                "evidence_handles": [
+                    adapter.evidence(ref) for ref in profile.source_refs
+                ],
+            }
+        )
+    return plans
+
+
 def build_context_plan(
     snapshot: ContextSnapshot,
     store: Any,
@@ -258,6 +316,7 @@ def build_context_plan(
         mission=current["mission"],
         message_context=current["message_context"],
         sources=_source_plans(adapter, snapshot, store),
+        prospective_relationships=_relationship_plans(adapter, snapshot, store),
         draft=current["draft"],
         clarifications=current["clarifications"],
         approved_answers=current["approved_answers"],
@@ -339,10 +398,11 @@ def request_semantic_proposal(
     *,
     user_id: str,
     cancel_event: Event,
+    messages: list[dict[str, Any]] | None = None,
 ) -> tuple[SemanticProposalV1, ProviderCompletion]:
     """Request and validate one proposal without performing any domain operation."""
 
-    messages = semantic_messages(plan)
+    messages = messages or semantic_messages(plan)
     completion = provider.complete(
         messages,
         stream=False,

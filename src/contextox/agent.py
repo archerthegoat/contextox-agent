@@ -93,6 +93,7 @@ from contextox.semantic_controller import (
     build_context_plan,
     normalize_semantic_proposal,
     request_semantic_proposal,
+    semantic_messages,
 )
 
 
@@ -1419,6 +1420,7 @@ def _run_semantic_agent(
     """Execute one model proposal followed by one deterministic transaction."""
 
     started_at = time.monotonic()
+    phase_started_at = started_at
     snapshot = store.get_context_snapshot(workspace_id, mission_id, run_id)
     if (
         snapshot.mission.workspace_id != workspace_id
@@ -1443,6 +1445,15 @@ def _run_semantic_agent(
 
     try:
         plan, adapter = build_context_plan(snapshot, store)
+        messages = semantic_messages(plan)
+        request_bytes = len(json.dumps(
+            messages, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8"))
+        profile_cache_hit = any(
+            source.get("profile_interpretation") is not None
+            for source in plan.sources
+        )
         manifest_input = _context_manifest(snapshot, turn_index=1, tool_receipt_ids=[])
         manifest = store.record_context_manifest(
             workspace_id, mission_id, run_id, manifest_input
@@ -1454,6 +1465,13 @@ def _run_semantic_agent(
         running = store.set_run_phase(
             workspace_id, mission_id, run_id, "synthesize_once"
         )
+        logger.info(
+            "semantic_run_metrics phase=prepare_context duration_ms=%d request_bytes=%d profile_cache_hit=%s",
+            int((time.monotonic() - phase_started_at) * 1000),
+            request_bytes,
+            str(profile_cache_hit).lower(),
+        )
+        phase_started_at = time.monotonic()
     except SemanticProposalFailure as exc:
         _stop_run(store, workspace_id, mission_id, run_id, "blocked", exc.code)
         return
@@ -1478,6 +1496,7 @@ def _run_semantic_agent(
             running.budget,
             user_id=_opaque_user_id(workspace_id, provider),
             cancel_event=cancel_event,
+            messages=messages,
         )
     except ProviderCancelledError as exc:
         receipt = _make_receipt(
@@ -1543,6 +1562,12 @@ def _run_semantic_agent(
     )
     receipt = _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
     _append_model_completed(store, workspace_id, mission_id, run_id, 1, receipt)
+    logger.info(
+        "semantic_run_metrics phase=synthesize_once duration_ms=%d input_tokens=%s output_tokens=%s",
+        int((time.monotonic() - phase_started_at) * 1000),
+        "unknown" if completion.usage is None else completion.usage.input_tokens,
+        "unknown" if completion.usage is None else completion.usage.output_tokens,
+    )
     if cancel_event.is_set():
         _cancel_run(store, workspace_id, mission_id, run_id)
         return
@@ -1550,8 +1575,14 @@ def _run_semantic_agent(
         _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
         return
     try:
+        phase_started_at = time.monotonic()
         store.set_run_phase(workspace_id, mission_id, run_id, "validate")
         application = normalize_semantic_proposal(adapter, proposal)
+        logger.info(
+            "semantic_run_metrics phase=validate duration_ms=%d",
+            int((time.monotonic() - phase_started_at) * 1000),
+        )
+        phase_started_at = time.monotonic()
         store.set_run_phase(workspace_id, mission_id, run_id, "apply")
         terminal = store.apply_semantic_proposal(
             workspace_id, mission_id, run_id, application
@@ -1565,6 +1596,12 @@ def _run_semantic_agent(
         status, code = _store_failure(exc)
         _stop_run(store, workspace_id, mission_id, run_id, status, code)
         return
+    logger.info(
+        "semantic_run_metrics phase=apply duration_ms=%d total_duration_ms=%d terminal_status=%s",
+        int((time.monotonic() - phase_started_at) * 1000),
+        int((time.monotonic() - started_at) * 1000),
+        terminal.status,
+    )
     if terminal.status == "partial" and terminal.terminal_receipt is not None:
         _append_run_partial_event(
             store, workspace_id, mission_id, run_id, terminal.terminal_receipt.receipt_id

@@ -9,7 +9,9 @@ from unittest.mock import patch
 from uuid import UUID
 
 import contextox.store as store_module
-from contextox.models import CsvRowsLocator, JsonPointerLocator, TextLinesLocator
+from contextox.models import (
+    CsvRowsLocator, JsonPointerLocator, RunStartRequest, TextLinesLocator,
+)
 from contextox.sources import SourceInputError
 from contextox.store import (
     InvalidWorkspaceNameError,
@@ -249,6 +251,20 @@ class StoreTests(unittest.TestCase):
                     store_module._EXPECTED_V3_INDEXES,
                 ))
             legacy = WorkspaceStore.open(directory)
+            with self.assertRaises(Path2StateError) as blocked_start:
+                legacy.start_run(
+                    workspace_id,
+                    mission_id,
+                    RunStartRequest(
+                        expected_state_version=1,
+                        source_refs=[],
+                        provider_send_confirmed=True,
+                        client_request_id="00000000-0000-4000-8000-000000000015",
+                    ),
+                )
+            self.assertEqual(
+                blocked_start.exception.code, "task_dialogue_not_implemented"
+            )
             backup = legacy.migrate_profile_interpretations()
             self.assertIsNotNone(backup)
             self.assertEqual(

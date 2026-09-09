@@ -1216,7 +1216,7 @@ class ProfileInterpretationAttempt(ContextOxModel):
     finished_at: UTC | None
     status: ProfileInterpretationStatus
     profile_hash: Hash
-    config: ProviderConfigSnapshot | None
+    config: ProviderConfigSnapshot
     config_fingerprint: Hash
     prompt_sha256: Hash
     sent_bytes: Count

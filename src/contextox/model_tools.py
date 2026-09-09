@@ -148,6 +148,7 @@ class ContextPlanV1(ContextOxModel):
     mission: dict[str, Any]
     message_context: dict[str, Any] | None
     sources: list[dict[str, Any]] = Field(max_length=8)
+    prospective_relationships: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     draft: dict[str, Any] | None
     clarifications: list[dict[str, Any]] = Field(max_length=20)
     approved_answers: list[dict[str, Any]] = Field(max_length=50)
@@ -535,7 +536,8 @@ class RunReferences:
                 raise HandleDenied()
             self.current_draft = value
             self.draft_token = self.register("draft", self.draft_pair(value))
-            return {"draft_token": self.draft_token, "status": value.status,
+            return {"draft_token": self.draft_token, "draft_version": value.version,
+                    "draft_sha256": value.sha256, "status": value.status,
                     "fields": self.public(value.fields), "relationships": self.public(value.relationships),
                     "unresolved_items": value.unresolved_items,
                     "clarification_obligations": self.clarification_obligations()}

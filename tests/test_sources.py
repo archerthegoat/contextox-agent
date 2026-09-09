@@ -25,6 +25,7 @@ from contextox.sources import (
     MAX_TABLE_ROWS,
     SourceInputError,
     build_profile_pack,
+    build_prospective_relationships,
     inspect_relationship,
     parse_source,
     read_source_fragment,
@@ -598,6 +599,47 @@ class SourceBoundaryTests(unittest.TestCase):
 
 
 class RelationshipInspectionTests(unittest.TestCase):
+    def test_profile_pack_includes_same_column_relationships_between_json_tables(self) -> None:
+        content = (
+            b'{"orders":[{"customer_id":"c1"},{"customer_id":"c1"},{"customer_id":"c2"}],'
+            b'"customers":[{"customer_id":"c1"},{"customer_id":"c3"}]}'
+        )
+        revision = _revision(content, "application/json")
+
+        pack = build_profile_pack(revision, content)
+
+        self.assertEqual(len(pack.relationships), 1)
+        profile = pack.relationships[0]
+        self.assertEqual((profile.left.table_id, profile.right.table_id), (
+            "/orders", "/customers"
+        ))
+        self.assertEqual((profile.left.columns, profile.right.columns), (
+            ["customer_id"], ["customer_id"]
+        ))
+        self.assertEqual(profile.matched_distinct_keys, 1)
+        self.assertEqual(profile.prospective_join_rows, 2)
+        self.assertEqual(profile.observed_cardinality, "many_to_one")
+        self.assertEqual(len(profile.source_refs), 2)
+
+    def test_cross_source_candidates_parse_each_revision_and_keep_exact_types(self) -> None:
+        left_content = b"id,value\n1,a\n1,b\n2,c\n"
+        right_content = b"id,label\n1,x\n3,y\n"
+        left_revision = _revision(left_content, "text/csv")
+        right_revision = _revision(right_content, "text/csv", number=2)
+
+        profiles = build_prospective_relationships([
+            (left_revision, left_content),
+            (right_revision, right_content),
+        ])
+
+        self.assertEqual(len(profiles), 1)
+        profile = profiles[0]
+        self.assertEqual(profile.matched_distinct_keys, 1)
+        self.assertEqual(profile.unmatched_left_rows, 1)
+        self.assertEqual(profile.unmatched_right_rows, 1)
+        self.assertEqual(profile.prospective_join_rows, 2)
+        self.assertEqual(profile.observed_cardinality, "many_to_one")
+
     def test_non_tabular_json_member_does_not_imply_recognized_row_loss(self) -> None:
         left_content = (
             b'{"orders":[{"customer_id":"c1"},{"customer_id":"c2"}],'

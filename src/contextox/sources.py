@@ -956,6 +956,11 @@ def build_profile_pack(revision: SourceRevision, content: bytes) -> ProfilePackV
     """Build a versioned exact profile without sending source rows externally."""
 
     artifact = parse_source(revision, content)
+    relationships = (
+        []
+        if artifact.parse_status in {"blocked", "failed"}
+        else build_prospective_relationships([(revision, content)])
+    )
     payload = {
         "version": "v1",
         "source_ref": artifact.source_ref,
@@ -974,18 +979,18 @@ def build_profile_pack(revision: SourceRevision, content: bytes) -> ProfilePackV
             )
             for table in artifact.tables
         ],
-        "relationships": [],
+        "relationships": relationships,
         "limitations": [
             "Statistics are exact within the current 5,000-row and 100-column admission limits.",
             "Top values are local observations, not approved business semantics.",
-            "Relationship statistics require an explicit pair of table keys and are not inferred here.",
+            "Prospective relationships compare same-named columns with exact typed values; they are observations, not approved business relationships.",
         ],
     }
     plain = {
         **payload,
         "source_ref": artifact.source_ref.model_dump(mode="json"),
         "tables": [item.model_dump(mode="json") for item in payload["tables"]],
-        "relationships": [],
+        "relationships": [item.model_dump(mode="json") for item in relationships],
     }
     return ProfilePackV1(**plain, profile_hash=canonical_sha256(plain))
 
@@ -1190,52 +1195,17 @@ def _relationship_cardinality(
     return "one_to_one"
 
 
-def inspect_relationship(
+def _relationship_profile_from_tables(
     left: TableKey,
     left_revision: SourceRevision,
-    left_content: bytes,
+    left_table: _Table,
+    left_document: _ParsedDocument,
     right: TableKey,
     right_revision: SourceRevision,
-    right_content: bytes,
+    right_table: _Table,
+    right_document: _ParsedDocument,
 ) -> RelationshipProfile:
-    """Inspect exact-key relationship counts without normalizing or joining rows."""
-
-    if not isinstance(left, TableKey) or not isinstance(right, TableKey):
-        raise SourceInputError("invalid_table_key")
-    if left.source_ref.workspace_id != right.source_ref.workspace_id:
-        raise SourceInputError("workspace_mismatch")
-    _validate_table_key(left, left_revision, left_content)
-    _validate_table_key(right, right_revision, right_content)
-    if len(left.columns) == 0 or len(right.columns) == 0:
-        raise SourceInputError("join_columns_empty")
-    if len(set(left.columns)) != len(left.columns) or len(set(right.columns)) != len(right.columns):
-        raise SourceInputError("join_columns_duplicated")
-
-    left_text = _decode_utf8(left_content)
-    right_text = _decode_utf8(right_content)
-    left_document = _parse_document(left_revision, left_text)
-    right_document = _parse_document(right_revision, right_text)
-    if not left_document.tables or not right_document.tables:
-        raise SourceInputError("table_not_found")
-    left_table = next(
-        (table for table in left_document.tables if table.table_id == left.table_id),
-        None,
-    )
-    right_table = next(
-        (table for table in right_document.tables if table.table_id == right.table_id),
-        None,
-    )
-    if left_table is None or right_table is None:
-        raise SourceInputError("table_not_found")
-    if any(column not in left_table.columns for column in left.columns):
-        raise SourceInputError("join_column_not_found")
-    if any(column not in right_table.columns for column in right.columns):
-        raise SourceInputError("join_column_not_found")
-    if left_document.status in {"blocked", "failed"} or right_document.status in {
-        "blocked",
-        "failed",
-    }:
-        raise SourceInputError("source_parse_failed")
+    """Compute one exact prospective join from already parsed bounded tables."""
 
     left_counts: Counter[tuple[tuple[str, str | None], ...]] = Counter()
     right_counts: Counter[tuple[tuple[str, str | None], ...]] = Counter()
@@ -1312,4 +1282,127 @@ def inspect_relationship(
         observed_cardinality=_relationship_cardinality(left_counts, right_counts),
         source_refs=source_refs,
         limitations=limitations,
+    )
+
+
+def build_prospective_relationships(
+    materials: list[tuple[SourceRevision, bytes]],
+    *,
+    max_relationships: int = 100,
+) -> list[RelationshipProfile]:
+    """Profile bounded same-name join candidates after parsing each source once.
+
+    Candidate discovery is deliberately narrow and deterministic. It compares
+    one same-named column at a time across distinct tables, including tables in
+    separate authorized revisions. The result is evidence for a later semantic
+    proposal; it does not assert that a business relationship exists.
+    """
+
+    if type(max_relationships) is not int or not 1 <= max_relationships <= 100:
+        raise SourceInputError("relationship_limit_invalid")
+    if not materials:
+        return []
+    workspace_id = materials[0][0].workspace_id
+    revision_ids: set[str] = set()
+    parsed: list[tuple[SourceRevision, _ParsedDocument]] = []
+    for revision, content in materials:
+        if revision.workspace_id != workspace_id:
+            raise SourceInputError("workspace_mismatch")
+        if revision.revision_id in revision_ids:
+            raise SourceInputError("duplicate_source_revision")
+        revision_ids.add(revision.revision_id)
+        _validate_source_input(revision, content, allow_oversized=False)
+        document = _parse_document(revision, _decode_utf8(content))
+        if document.status not in {"blocked", "failed"}:
+            parsed.append((revision, document))
+
+    tables = [
+        (revision, document, table)
+        for revision, document in parsed
+        for table in document.tables
+    ]
+    profiles: list[RelationshipProfile] = []
+    for left_index, (left_revision, left_document, left_table) in enumerate(tables):
+        for right_revision, right_document, right_table in tables[left_index + 1 :]:
+            shared_columns = [
+                column for column in left_table.columns if column in right_table.columns
+            ]
+            for column in shared_columns:
+                left = TableKey(
+                    source_ref=_source_identity(left_revision),
+                    table_id=left_table.table_id,
+                    columns=[column],
+                )
+                right = TableKey(
+                    source_ref=_source_identity(right_revision),
+                    table_id=right_table.table_id,
+                    columns=[column],
+                )
+                profiles.append(
+                    _relationship_profile_from_tables(
+                        left,
+                        left_revision,
+                        left_table,
+                        left_document,
+                        right,
+                        right_revision,
+                        right_table,
+                        right_document,
+                    )
+                )
+                if len(profiles) == max_relationships:
+                    return profiles
+    return profiles
+
+
+def inspect_relationship(
+    left: TableKey,
+    left_revision: SourceRevision,
+    left_content: bytes,
+    right: TableKey,
+    right_revision: SourceRevision,
+    right_content: bytes,
+) -> RelationshipProfile:
+    """Inspect exact-key relationship counts without normalizing or joining rows."""
+
+    if not isinstance(left, TableKey) or not isinstance(right, TableKey):
+        raise SourceInputError("invalid_table_key")
+    if left.source_ref.workspace_id != right.source_ref.workspace_id:
+        raise SourceInputError("workspace_mismatch")
+    _validate_table_key(left, left_revision, left_content)
+    _validate_table_key(right, right_revision, right_content)
+    if len(left.columns) == 0 or len(right.columns) == 0:
+        raise SourceInputError("join_columns_empty")
+    if len(set(left.columns)) != len(left.columns) or len(set(right.columns)) != len(right.columns):
+        raise SourceInputError("join_columns_duplicated")
+
+    left_text = _decode_utf8(left_content)
+    right_text = _decode_utf8(right_content)
+    left_document = _parse_document(left_revision, left_text)
+    right_document = _parse_document(right_revision, right_text)
+    if not left_document.tables or not right_document.tables:
+        raise SourceInputError("table_not_found")
+    left_table = next(
+        (table for table in left_document.tables if table.table_id == left.table_id),
+        None,
+    )
+    right_table = next(
+        (table for table in right_document.tables if table.table_id == right.table_id),
+        None,
+    )
+    if left_table is None or right_table is None:
+        raise SourceInputError("table_not_found")
+    if any(column not in left_table.columns for column in left.columns):
+        raise SourceInputError("join_column_not_found")
+    if any(column not in right_table.columns for column in right.columns):
+        raise SourceInputError("join_column_not_found")
+    if left_document.status in {"blocked", "failed"} or right_document.status in {
+        "blocked",
+        "failed",
+    }:
+        raise SourceInputError("source_parse_failed")
+
+    return _relationship_profile_from_tables(
+        left, left_revision, left_table, left_document,
+        right, right_revision, right_table, right_document,
     )
