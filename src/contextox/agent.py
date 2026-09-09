@@ -86,6 +86,14 @@ from contextox.model_tools import (
     ToolAdapter,
 )
 from contextox.models import Key
+from contextox.semantic_controller import (
+    EMPTY_TOOL_SCHEMA_SHA256,
+    P0_SEMANTIC_PROPOSAL_SHA256,
+    SemanticProposalFailure,
+    build_context_plan,
+    normalize_semantic_proposal,
+    request_semantic_proposal,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -433,6 +441,7 @@ def _make_receipt(
     usage: ProviderUsage | None,
     context_manifest: ContextPacketManifest | None = None,
     error_code: str | None = None,
+    run_tool_schema_sha256: str | None = None,
 ) -> ProviderReceipt:
     input_tokens, output_tokens, cache_hit, cache_miss = _usage_values(usage)
     return ProviderReceipt(
@@ -452,7 +461,10 @@ def _make_receipt(
         cache_miss_tokens=cache_miss,
         context_manifest_id=(context_manifest.manifest_id if context_manifest else None),
         context_manifest_sha256=(context_manifest.sha256 if context_manifest else None),
-        tool_schema_sha256=TOOL_SCHEMA_SHA256 if run_id is not None else None,
+        tool_schema_sha256=(
+            (run_tool_schema_sha256 or TOOL_SCHEMA_SHA256)
+            if run_id is not None else None
+        ),
         error_code=error_code,
     )
 
@@ -1394,14 +1406,161 @@ def _handle_terminal(
 WorkspaceStoreLike = WorkspaceStore
 
 
-def run_agent(
+def _run_semantic_agent(
     store: WorkspaceStoreLike,
     workspace_id: str,
     mission_id: str,
     run_id: str,
     cancel_event: Event,
 ) -> None:
-    """Run the bounded serial seven-tool Agent loop."""
+    """Execute one model proposal followed by one deterministic transaction."""
+
+    started_at = time.monotonic()
+    snapshot = store.get_context_snapshot(workspace_id, mission_id, run_id)
+    if (
+        snapshot.mission.workspace_id != workspace_id
+        or snapshot.mission.mission_id != mission_id
+        or snapshot.run.workspace_id != workspace_id
+        or snapshot.run.mission_id != mission_id
+        or snapshot.run.run_id != run_id
+    ):
+        raise WorkspaceStoreError("ContextSnapshot identity does not match the requested Run.")
+    if snapshot.run.status == "cancelled" or snapshot.run.status != "queued":
+        return
+    if cancel_event.is_set():
+        _cancel_run(store, workspace_id, mission_id, run_id)
+        return
+    running = store.mark_run_running(workspace_id, mission_id, run_id)
+    if not _run_snapshot_matches_identity(running, workspace_id, mission_id, run_id):
+        raise WorkspaceStoreError("mark_run_running returned an invalid RunSnapshot.")
+    if running.status != "running":
+        return
+    snapshot = snapshot.model_copy(update={"run": running})
+    _append_run_started(store, workspace_id, mission_id, run_id)
+
+    try:
+        plan, adapter = build_context_plan(snapshot, store)
+        manifest_input = _context_manifest(snapshot, turn_index=1, tool_receipt_ids=[])
+        manifest = store.record_context_manifest(
+            workspace_id, mission_id, run_id, manifest_input
+        )
+        if not _manifest_matches_request(
+            manifest, manifest_input, workspace_id, mission_id, run_id
+        ):
+            raise Path2StateError("context_manifest_invalid")
+    except SemanticProposalFailure as exc:
+        _stop_run(store, workspace_id, mission_id, run_id, "blocked", exc.code)
+        return
+    except HandleDenied:
+        _stop_run(store, workspace_id, mission_id, run_id, "blocked", "source_permission_denied")
+        return
+    except Path2NotImplementedError:
+        raise
+    except WorkspaceStoreError as exc:
+        status, code = _store_failure(exc)
+        _stop_run(store, workspace_id, mission_id, run_id, status, code)
+        return
+
+    provider = get_provider()
+    try:
+        proposal, completion = request_semantic_proposal(
+            provider,
+            plan,
+            running.budget,
+            user_id=_opaque_user_id(workspace_id, provider),
+            cancel_event=cancel_event,
+        )
+    except ProviderCancelledError as exc:
+        receipt = _make_receipt(
+            provider=provider, workspace_id=workspace_id, attempt_id=None,
+            mission_id=mission_id, run_id=run_id, turn_index=1,
+            status="cancelled", p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
+            usage=exc.usage, context_manifest=manifest, error_code=exc.code,
+            run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
+        )
+        _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
+        _cancel_run(store, workspace_id, mission_id, run_id)
+        return
+    except ProviderError as exc:
+        receipt = _make_receipt(
+            provider=provider, workspace_id=workspace_id, attempt_id=None,
+            mission_id=mission_id, run_id=run_id, turn_index=1,
+            status=exc.run_status, p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
+            usage=exc.usage, context_manifest=manifest, error_code=exc.code,
+            run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
+        )
+        _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
+        if exc.run_status == "cancelled" or cancel_event.is_set():
+            _cancel_run(store, workspace_id, mission_id, run_id)
+        else:
+            _stop_run(store, workspace_id, mission_id, run_id, exc.run_status, exc.code)
+        return
+    except SemanticProposalFailure as exc:
+        completion = exc.completion
+        receipt = _make_receipt(
+            provider=provider, workspace_id=workspace_id, attempt_id=None,
+            mission_id=mission_id, run_id=run_id, turn_index=1,
+            status="succeeded" if isinstance(completion, ProviderCompletion) else "failed",
+            p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
+            usage=completion.usage if isinstance(completion, ProviderCompletion) else None,
+            context_manifest=manifest,
+            error_code=(
+                "provider_usage_missing"
+                if isinstance(completion, ProviderCompletion) and completion.usage is None
+                else exc.code if not isinstance(completion, ProviderCompletion) else None
+            ),
+            run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
+        )
+        receipt = _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
+        if isinstance(completion, ProviderCompletion):
+            _append_model_completed(store, workspace_id, mission_id, run_id, 1, receipt)
+        _stop_run(store, workspace_id, mission_id, run_id, "failed", exc.code)
+        return
+
+    receipt = _make_receipt(
+        provider=provider, workspace_id=workspace_id, attempt_id=None,
+        mission_id=mission_id, run_id=run_id, turn_index=1,
+        status="succeeded", p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
+        usage=completion.usage, context_manifest=manifest,
+        error_code="provider_usage_missing" if completion.usage is None else None,
+        run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
+    )
+    receipt = _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
+    _append_model_completed(store, workspace_id, mission_id, run_id, 1, receipt)
+    if cancel_event.is_set():
+        _cancel_run(store, workspace_id, mission_id, run_id)
+        return
+    if (time.monotonic() - started_at) * 1000 >= running.budget.max_elapsed_ms:
+        _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
+        return
+    try:
+        application = normalize_semantic_proposal(adapter, proposal)
+        terminal = store.apply_semantic_proposal(
+            workspace_id, mission_id, run_id, application
+        )
+    except SemanticProposalFailure as exc:
+        _stop_run(store, workspace_id, mission_id, run_id, "failed", exc.code)
+        return
+    except Path2NotImplementedError:
+        raise
+    except WorkspaceStoreError as exc:
+        status, code = _store_failure(exc)
+        _stop_run(store, workspace_id, mission_id, run_id, status, code)
+        return
+    if terminal.status == "partial" and terminal.terminal_receipt is not None:
+        _append_run_partial_event(
+            store, workspace_id, mission_id, run_id, terminal.terminal_receipt.receipt_id
+        )
+
+
+def _run_legacy_agent(
+    store: WorkspaceStoreLike,
+    workspace_id: str,
+    mission_id: str,
+    run_id: str,
+    cancel_event: Event,
+) -> None:
+    """Read and replay historical eight-turn runs under their persisted budget."""
 
     started_at = time.monotonic()
     snapshot = store.get_context_snapshot(workspace_id, mission_id, run_id)
@@ -1922,3 +2081,19 @@ def run_agent(
             checkpoint_before_next_turn = True
 
     _stop_run(store, workspace_id, mission_id, run_id, "blocked", "model_turn_budget_exceeded")
+
+
+def run_agent(
+    store: WorkspaceStoreLike,
+    workspace_id: str,
+    mission_id: str,
+    run_id: str,
+    cancel_event: Event,
+) -> None:
+    """Dispatch by the immutable execution profile persisted with the Run."""
+
+    snapshot = store.get_run_snapshot(workspace_id, mission_id, run_id)
+    if snapshot.budget.max_model_turns == 1:
+        _run_semantic_agent(store, workspace_id, mission_id, run_id, cancel_event)
+    else:
+        _run_legacy_agent(store, workspace_id, mission_id, run_id, cancel_event)

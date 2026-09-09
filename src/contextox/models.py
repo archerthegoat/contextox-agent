@@ -550,41 +550,59 @@ class Mission(ContextOxModel):
 
 
 class RunBudget(ContextOxModel):
-    max_model_turns: Literal[8] = 8
-    max_tool_calls: Literal[24] = 24
-    max_elapsed_ms: Literal[300000] = 300000
+    max_model_turns: Literal[1, 8] = 8
+    max_tool_calls: Literal[2, 24] = 24
+    max_elapsed_ms: Literal[75000, 300000] = 300000
     max_output_tokens: Literal[4096, 16384] = 4096
     max_retries: Literal[0] = 0
     connect_timeout_ms: Literal[10000] = 10000
     first_event_timeout_ms: Literal[60000] = 60000
     idle_timeout_ms: Literal[30000] = 30000
-    total_timeout_ms: Literal[120000] = 120000
-    max_context_bytes: Literal[262144] = 262144
+    total_timeout_ms: Literal[70000, 120000] = 120000
+    max_context_bytes: Literal[65536, 262144] = 262144
+
+    @classmethod
+    def deterministic_controller(cls) -> RunBudget:
+        return cls(
+            max_model_turns=1,
+            max_tool_calls=2,
+            max_elapsed_ms=75000,
+            max_output_tokens=16384,
+            total_timeout_ms=70000,
+            max_context_bytes=65536,
+        )
 
     @model_validator(mode="before")
     @classmethod
     def validate_fixed_values(cls, values: object) -> object:
         if not isinstance(values, dict):
             return values
-        expected = {
-            "max_model_turns": 8,
-            "max_tool_calls": 24,
-            "max_elapsed_ms": 300000,
-            "max_retries": 0,
-            "connect_timeout_ms": 10000,
-            "first_event_timeout_ms": 60000,
-            "idle_timeout_ms": 30000,
-            "total_timeout_ms": 120000,
+        legacy = {
+            "max_model_turns": 8, "max_tool_calls": 24,
+            "max_elapsed_ms": 300000, "max_retries": 0,
+            "connect_timeout_ms": 10000, "first_event_timeout_ms": 60000,
+            "idle_timeout_ms": 30000, "total_timeout_ms": 120000,
             "max_context_bytes": 262144,
+        }
+        controller = {
+            "max_model_turns": 1, "max_tool_calls": 2,
+            "max_elapsed_ms": 75000, "max_retries": 0,
+            "connect_timeout_ms": 10000, "first_event_timeout_ms": 60000,
+            "idle_timeout_ms": 30000, "total_timeout_ms": 70000,
+            "max_context_bytes": 65536,
         }
         if "max_output_tokens" in values and (
             type(values["max_output_tokens"]) is not int
             or values["max_output_tokens"] not in {4096, 16384}
         ):
             raise ValueError("max_output_tokens must be a supported RunBudget value")
-        for name, expected_value in expected.items():
-            if name in values and (type(values[name]) is not int or values[name] != expected_value):
-                raise ValueError(f"{name} is a fixed RunBudget value")
+        projected = {name: values.get(name, legacy[name]) for name in legacy}
+        if any(type(value) is not int for value in projected.values()):
+            raise ValueError("RunBudget values must be strict integers")
+        if projected != legacy and projected != controller:
+            raise ValueError("RunBudget must match one supported execution profile")
+        if projected == controller and values.get("max_output_tokens", 4096) != 16384:
+            raise ValueError("deterministic controller requires max_output_tokens=16384")
         return values
 
 
@@ -1501,6 +1519,50 @@ class FinishRunArguments(ContextOxModel):
     outcome: Literal["partial"]
     reason: Text
     source_refs: list[EvidenceRef]
+
+
+SemanticAction = Literal[
+    "answer_only",
+    "draft_and_clarify",
+    "draft_and_submit",
+    "clarify_only",
+]
+
+
+class SemanticApplicationInput(ContextOxModel):
+    """Fully resolved proposal applied by one Store transaction."""
+
+    action: SemanticAction
+    public_answer: FinalOutput
+    expected_version: Count
+    expected_sha256: Hash | None
+    fields: list[DefinitionField] = Field(default_factory=list, max_length=100)
+    relationships: list[RelationshipCandidate] = Field(default_factory=list, max_length=100)
+    unresolved_items: list[Text] = Field(default_factory=list, max_length=100)
+    questions: list[ClarificationQuestion] = Field(default_factory=list, max_length=20)
+    source_refs: list[EvidenceRef] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_application_shape(self) -> SemanticApplicationInput:
+        if not self.public_answer.strip():
+            raise ValueError("public_answer must be nonblank")
+        if self.expected_version == 0 and self.expected_sha256 is not None:
+            raise ValueError("expected_sha256 must be null for the initial draft")
+        if self.expected_version > 0 and self.expected_sha256 is None:
+            raise ValueError("expected_sha256 is required after the initial draft")
+        if self.action == "answer_only" and (
+            self.fields or self.relationships or self.unresolved_items or self.questions
+        ):
+            raise ValueError("answer_only cannot contain draft or clarification changes")
+        if self.action == "clarify_only" and (
+            self.fields or self.relationships or self.unresolved_items or not self.questions
+        ):
+            raise ValueError("clarify_only requires questions and no draft changes")
+        if self.action == "draft_and_clarify" and not self.questions:
+            raise ValueError("draft_and_clarify requires questions")
+        if self.action == "draft_and_submit" and self.questions:
+            raise ValueError("draft_and_submit cannot contain questions")
+        return self
 
 
 class ListSourcesCall(ContextOxModel):

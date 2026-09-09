@@ -14,7 +14,7 @@ from contextox.models import (
     DomainToolCall, UnknownItem, RelationshipCandidate,
     EvidenceLocator, EvidenceRef, Key, SourceArtifact,
     SourceExcerpt, SourceIdentity, SourceRevision, StatementEvidenceStatus,
-    TableKey, Text, AnswerType, FinalOutput,
+    TableKey, Text, AnswerType, FinalOutput, SemanticAction,
 )
 from contextox.sources import recognized_table_rows_complete
 
@@ -153,12 +153,26 @@ class ContextPlanV1(ContextOxModel):
     approved_answers: list[dict[str, Any]] = Field(max_length=50)
 
 
-SemanticAction = Literal[
-    "answer_only",
-    "draft_and_clarify",
-    "draft_and_submit",
-    "clarify_only",
-]
+class SemanticQuestionInput(ContextOxModel):
+    """Question paths target the projected draft produced by this proposal."""
+
+    question: Text
+    why_needed: Text
+    expected_answer_type: AnswerType
+    suggested_owner_role: Key | None
+    related_definition_paths: list[Key] = Field(min_length=1, max_length=100)
+    evidence_requested: list[Text]
+    examples_or_options: list[Text]
+    blocking_impact: Literal["blocking", "non_blocking"]
+    evidence_handles: list[Handle]
+
+    @model_validator(mode="after")
+    def validate_paths(self) -> SemanticQuestionInput:
+        if len(set(self.related_definition_paths)) != len(self.related_definition_paths):
+            raise ValueError("related_definition_paths must be unique")
+        if len(set(self.evidence_handles)) != len(self.evidence_handles):
+            raise ValueError("evidence_handles must be unique")
+        return self
 
 
 class SemanticProposalV1(ContextOxModel):
@@ -170,7 +184,7 @@ class SemanticProposalV1(ContextOxModel):
     fields: list[FieldInput] = Field(default_factory=list, max_length=100)
     relationships: list[RelationshipInput] = Field(default_factory=list, max_length=100)
     unresolved_items: list[Text] = Field(default_factory=list, max_length=100)
-    questions: list[QuestionInput] = Field(default_factory=list, max_length=20)
+    questions: list[SemanticQuestionInput] = Field(default_factory=list, max_length=20)
     evidence_handles: list[Handle] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")

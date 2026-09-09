@@ -43,6 +43,7 @@ from contextox.models import (
     RunSnapshot,
     RunStartRequest,
     RunToolResult,
+    SemanticApplicationInput,
     SourceArtifact,
     SourceExcerpt,
     SourceIdentity,
@@ -2643,6 +2644,292 @@ class WorkspaceStore:
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
             raise WorkspaceStoreUnavailableError() from exc
 
+    @staticmethod
+    def _semantic_clarification_contract(
+        run: RunSnapshot,
+        draft: DefinitionDraft,
+        questions: list,
+    ) -> dict[str, bool]:
+        approved_unknown_targets = {
+            ("fields" if target.kind == "field" else "relationships", target.key, target.property)
+            for approved in run.approved_answers
+            for item in approved.answer.items
+            if item.disposition == "unknown"
+            for target in item.targets
+        }
+        obligations: dict[str, bool] = {}
+        valid_paths: set[str] = set()
+        for collection, items, key_name in (
+            ("fields", draft.fields, "field_key"),
+            ("relationships", draft.relationships, "relationship_key"),
+        ):
+            for object_index, item in enumerate(items):
+                item_key = getattr(item, key_name)
+                root = f"{collection}.{item_key}"
+                if len(root) <= 128:
+                    valid_paths.add(root)
+                for name in type(item).model_fields:
+                    candidate = f"{root}.{name}"
+                    if len(candidate) <= 128:
+                        valid_paths.add(candidate)
+                for unknown_index, unknown in enumerate(item.unknowns):
+                    property_path = unknown.property_path
+                    if collection == "relationships":
+                        property_path = property_path.removeprefix(f"{item_key}.")
+                    if (
+                        (collection, item_key, property_path) in approved_unknown_targets
+                        and getattr(item, property_path, None) is None
+                    ):
+                        continue
+                    path = f"{root}.{property_path}"
+                    if len(path) > 128:
+                        path = f"{collection}.{object_index}.unknowns.{unknown_index}"
+                    valid_paths.add(path)
+                    obligations[path] = collection == "fields"
+        for index, _item in enumerate(draft.unresolved_items):
+            path = f"unresolved_items.{index}"
+            valid_paths.add(path)
+            obligations[path] = False
+
+        covered: set[str] = set()
+        for question in questions:
+            paths = set(question.related_definition_paths)
+            if not paths or not paths.issubset(valid_paths):
+                raise Path2StateError("semantic_definition_path_invalid")
+            covered_obligations = paths.intersection(obligations)
+            if covered_obligations and (
+                not question.suggested_owner_role
+                or not question.suggested_owner_role.strip()
+                or not question.evidence_requested
+                or any(not item.strip() for item in question.evidence_requested)
+            ):
+                raise Path2StateError("semantic_handoff_incomplete")
+            if (
+                question.blocking_impact != "blocking"
+                and any(obligations[path] for path in covered_obligations)
+            ):
+                raise Path2StateError("semantic_clarification_impact_conflict")
+            covered.update(covered_obligations)
+        if set(obligations) - covered:
+            raise Path2StateError("semantic_clarification_coverage_incomplete")
+        return obligations
+
+    def apply_semantic_proposal(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        application: SemanticApplicationInput,
+    ) -> RunSnapshot:
+        """Prevalidate and atomically persist one deterministic semantic result."""
+
+        self._require_path2_workspace(workspace_id)
+        try:
+            application = SemanticApplicationInput.model_validate(
+                application.model_dump(mode="json")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise Path2StateError("semantic_proposal_invalid") from exc
+        try:
+            with self._write_transaction() as connection:
+                run = _load_run(connection, workspace_id, mission_id, run_id)
+                if run.status != "running":
+                    raise Path2StateError("state_conflict")
+                provider_receipts = run.provider_receipts
+                if (
+                    len(provider_receipts) != 1
+                    or provider_receipts[0].turn_index != 1
+                    or provider_receipts[0].status != "succeeded"
+                ):
+                    raise Path2StateError("semantic_provider_receipt_invalid")
+                prior_receipts = _load_tool_receipts(
+                    connection, workspace_id, mission_id, run_id
+                )
+                if prior_receipts:
+                    raise Path2StateError("state_conflict")
+
+                latest = _load_latest_draft(connection, workspace_id, mission_id)
+                if latest is not None and latest.status == "in_review":
+                    raise Path2StateError("draft_in_review")
+                if (
+                    (latest is None and (
+                        application.expected_version != 0
+                        or application.expected_sha256 is not None
+                    ))
+                    or (latest is not None and (
+                        application.expected_version != latest.version
+                        or application.expected_sha256 != latest.sha256
+                    ))
+                ):
+                    raise Path2StateError("state_conflict")
+
+                self._validate_run_evidence_refs(connection, run, application.source_refs)
+                self._validate_run_evidence_refs(
+                    connection,
+                    run,
+                    [
+                        ref
+                        for question in application.questions
+                        for ref in question.source_refs
+                    ],
+                )
+
+                projected = latest
+                update_call: DomainToolCall | None = None
+                if application.action in {"draft_and_clarify", "draft_and_submit"}:
+                    update_call = TypeAdapter(DomainToolCall).validate_python({
+                        "call_id": "semantic_update_v1",
+                        "name": "update_definition_draft",
+                        "arguments": {
+                            "expected_version": application.expected_version,
+                            "expected_sha256": application.expected_sha256,
+                            "fields": application.fields,
+                            "relationships": application.relationships,
+                            "unresolved_items": application.unresolved_items,
+                        },
+                    })
+                    self._validate_run_tool_call(connection, run, update_call)
+                    payload = {
+                        "fields": [item.model_dump(mode="json") for item in application.fields],
+                        "relationships": [
+                            item.model_dump(mode="json") for item in application.relationships
+                        ],
+                        "unresolved_items": list(application.unresolved_items),
+                    }
+                    projected = DefinitionDraft(
+                        workspace_id=workspace_id,
+                        mission_id=mission_id,
+                        draft_id=latest.draft_id if latest else str(uuid4()),
+                        version=1 if latest is None else latest.version + 1,
+                        sha256=canonical_sha256(payload),
+                        status="draft",
+                        semantic_approval="pending",
+                        **payload,
+                    )
+
+                if application.action != "answer_only":
+                    if projected is None:
+                        raise Path2StateError("semantic_draft_required")
+                    obligations = self._semantic_clarification_contract(
+                        run, projected, application.questions
+                    )
+                    if application.action == "draft_and_submit" and obligations:
+                        raise Path2StateError("semantic_clarification_required")
+                    if application.action == "draft_and_clarify" and not obligations:
+                        raise Path2StateError("semantic_proposal_invalid")
+
+                required_tool_calls = 2 if update_call is not None else 1
+                if required_tool_calls > run.budget.max_tool_calls:
+                    raise Path2StateError("tool_call_budget_exceeded")
+
+                if projected is not None and update_call is not None:
+                    connection.execute(
+                        """
+                        INSERT INTO definition_drafts
+                            (workspace_id, mission_id, draft_id, version, sha256,
+                             status, semantic_approval, fields_json,
+                             relationships_json, unresolved_items_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            workspace_id, mission_id, projected.draft_id,
+                            projected.version, projected.sha256, projected.status,
+                            projected.semantic_approval, _canonical_json(projected.fields),
+                            _canonical_json(projected.relationships),
+                            _canonical_json(projected.unresolved_items),
+                        ),
+                    )
+                    update_receipt = ToolReceipt(
+                        workspace_id=workspace_id,
+                        mission_id=mission_id,
+                        run_id=run_id,
+                        receipt_id=str(uuid4()),
+                        ordinal=1,
+                        call_id=update_call.call_id,
+                        name=update_call.name,
+                        arguments_sha256=canonical_sha256(update_call.arguments),
+                        status="succeeded",
+                        created_at=_utc_now(),
+                        source_refs=_evidence_refs(projected),
+                        error_code=None,
+                    )
+                    _insert_tool_receipt(connection, update_receipt)
+                    _append_event_in_transaction(
+                        connection,
+                        run,
+                        "draft_updated",
+                        {
+                            "draft_id": projected.draft_id,
+                            "version": projected.version,
+                            "sha256": projected.sha256,
+                        },
+                    )
+                    prior_receipts = [update_receipt]
+
+                if application.action in {"draft_and_clarify", "clarify_only"}:
+                    terminal_name = "create_clarification"
+                    terminal_arguments = {
+                        "draft_version": projected.version,
+                        "draft_sha256": projected.sha256,
+                        "questions": application.questions,
+                    }
+                elif application.action == "draft_and_submit":
+                    terminal_name = "submit_for_review"
+                    terminal_arguments = {
+                        "draft_version": projected.version,
+                        "draft_sha256": projected.sha256,
+                    }
+                else:
+                    terminal_name = "finish_run"
+                    terminal_arguments = {
+                        "outcome": "partial",
+                        "reason": application.public_answer,
+                        "source_refs": application.source_refs,
+                    }
+                terminal_call = TypeAdapter(DomainToolCall).validate_python({
+                    "call_id": "semantic_terminal_v1",
+                    "name": terminal_name,
+                    "arguments": terminal_arguments,
+                })
+                _output, terminal_snapshot = self._execute_terminal_tool(
+                    connection,
+                    run,
+                    terminal_call,
+                    prior_receipts,
+                    len(prior_receipts) + 1,
+                    terminal_source_refs=application.source_refs,
+                )
+                now = _utc_now().isoformat()
+                changed = connection.execute(
+                    """
+                    UPDATE runs SET final_output=?
+                    WHERE workspace_id=? AND mission_id=? AND run_id=?
+                      AND final_output IS NULL
+                    """,
+                    (application.public_answer, workspace_id, mission_id, run_id),
+                ).rowcount
+                if changed != 1:
+                    raise Path2StateError("state_conflict")
+                connection.execute(
+                    """
+                    INSERT INTO mission_messages
+                        (workspace_id, mission_id, message_id, created_at, role,
+                         content, original_attempt_id, run_id)
+                    VALUES (?, ?, ?, ?, 'assistant', ?, NULL, ?)
+                    """,
+                    (
+                        workspace_id, mission_id, str(uuid4()), now,
+                        application.public_answer, run_id,
+                    ),
+                )
+                return _load_run(connection, workspace_id, mission_id, run_id)
+        except WorkspaceStoreError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise Path2StateError("state_conflict") from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
     def execute_run_tool(
         self,
         workspace_id: str,
@@ -3017,6 +3304,7 @@ class WorkspaceStore:
     def _execute_terminal_tool(
         self, connection: sqlite3.Connection, run: RunSnapshot,
         call: DomainToolCall, prior_receipts: list[ToolReceipt], ordinal: int,
+        terminal_source_refs: list[EvidenceRef] | None = None,
     ) -> tuple[object, RunSnapshot]:
         workspace_id, mission_id, run_id = run.workspace_id, run.mission_id, run.run_id
         latest = _load_latest_draft(connection, workspace_id, mission_id)
@@ -3066,6 +3354,8 @@ class WorkspaceStore:
             list(call.arguments.source_refs)
             if call.name == "finish_run" else _evidence_refs(output)
         )
+        if terminal_source_refs:
+            output_refs = _unique_evidence_refs([*output_refs, *terminal_source_refs])
         tool_receipt = ToolReceipt(
             workspace_id=workspace_id, mission_id=mission_id, run_id=run_id,
             receipt_id=str(uuid4()), ordinal=ordinal, call_id=call.call_id,
@@ -3150,7 +3440,14 @@ class WorkspaceStore:
         receipt: ProviderReceipt,
     ) -> ProviderReceipt:
         self._require_path2_workspace(workspace_id)
-        from contextox.agent import P0_RUN_SHA256, TOOL_SCHEMA_SHA256
+        from contextox.agent import SUPPORTED_RUN_HASH_PAIRS
+        from contextox.semantic_controller import (
+            EMPTY_TOOL_SCHEMA_SHA256,
+            P0_SEMANTIC_PROPOSAL_SHA256,
+        )
+        supported_run_hash_pairs = SUPPORTED_RUN_HASH_PAIRS | {
+            (P0_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256)
+        }
 
         try:
             receipt = ProviderReceipt.model_validate(receipt.model_dump(mode="json"))
@@ -3161,8 +3458,10 @@ class WorkspaceStore:
             or receipt.attempt_id is not None
             or receipt.mission_id != mission_id
             or receipt.run_id != run_id
-            or receipt.p0_sha256 != P0_RUN_SHA256
-            or receipt.tool_schema_sha256 != TOOL_SCHEMA_SHA256
+            or (
+                receipt.p0_sha256,
+                receipt.tool_schema_sha256,
+            ) not in supported_run_hash_pairs
         ):
             raise Path2StateError("provider_receipt_invalid")
         try:
@@ -4370,6 +4669,13 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
         elif run.status in {"blocked", "failed", "cancelled"} and run.error_code is None:
             raise WorkspaceStoreUnavailableError()
         from contextox.agent import SUPPORTED_RUN_HASH_PAIRS
+        from contextox.semantic_controller import (
+            EMPTY_TOOL_SCHEMA_SHA256,
+            P0_SEMANTIC_PROPOSAL_SHA256,
+        )
+        supported_run_hash_pairs = SUPPORTED_RUN_HASH_PAIRS | {
+            (P0_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256)
+        }
 
         provider_rows = connection.execute(
             """
@@ -4407,7 +4713,7 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
                 or receipt.mission_id != run.mission_id
                 or receipt.run_id != run.run_id
                 or receipt.attempt_id is not None
-                or (receipt.p0_sha256, receipt.tool_schema_sha256) not in SUPPORTED_RUN_HASH_PAIRS
+                or (receipt.p0_sha256, receipt.tool_schema_sha256) not in supported_run_hash_pairs
                 or receipt.turn_index != manifest.turn_index
                 or receipt.context_manifest_sha256 != manifest.sha256
             ):
@@ -4674,6 +4980,10 @@ def _evidence_refs(value: object) -> list[EvidenceRef]:
         refs.extend(ref for question in value.questions for ref in question.source_refs)
     elif isinstance(value, TerminalReceipt):
         refs.extend(value.source_refs)
+    return _unique_evidence_refs(refs)
+
+
+def _unique_evidence_refs(refs: list[EvidenceRef]) -> list[EvidenceRef]:
     unique: list[EvidenceRef] = []
     seen: set[str] = set()
     for ref in refs:

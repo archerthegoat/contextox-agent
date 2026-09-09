@@ -2459,7 +2459,7 @@ class LegacyFixtureAdapter:
 
 def run_legacy_fixture_agent(*args, **kwargs):
     with patch.object(agent, "ToolAdapter", LegacyFixtureAdapter):
-        return agent.run_agent(*args, **kwargs)
+        return agent._run_legacy_agent(*args, **kwargs)
 
 
 if __name__ == "__main__":
