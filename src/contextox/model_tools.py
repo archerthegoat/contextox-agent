@@ -16,6 +16,7 @@ from contextox.models import (
     SourceExcerpt, SourceIdentity, SourceRevision, StatementEvidenceStatus,
     TableKey, Text, AnswerType,
 )
+from contextox.sources import recognized_table_rows_complete
 
 Handle = Annotated[str, Field(strict=True, min_length=1, max_length=64,
                               pattern=r"^[A-Za-z0-9_-]+$")]
@@ -209,6 +210,10 @@ class RunReferences:
             self.catalog.append({"source_handle": self.register("source", artifact.source_ref),
                                  "name": revision.original_name, "media_type": revision.media_type,
                                  "parse_status": artifact.parse_status,
+                                 "recognized_table_rows_complete": (
+                                     recognized_table_rows_complete(artifact)
+                                     if artifact.tables else None
+                                 ),
                                  "text_line_count": artifact.text_line_count, "tables": tables})
         self.current_draft = snapshot.draft or snapshot.run.draft
         self.draft_token = self.register("draft", self.draft_pair(self.current_draft))
@@ -477,7 +482,14 @@ class RunReferences:
             return result
         if isinstance(value, SourceExcerpt):
             public_ref = self.public(value.source_ref)
+            catalog_entry = next(
+                item
+                for item in self.catalog
+                if item["source_handle"] == public_ref["source_handle"]
+            )
             item = {"source_handle": public_ref["source_handle"],
+                    "source_name": catalog_entry["name"],
+                    "evidence_handle": public_ref["evidence_handle"],
                     "locator": public_ref["locator"], "status": "read",
                     "truncated": value.truncated}
             if item not in self.coverage:

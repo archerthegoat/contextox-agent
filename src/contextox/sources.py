@@ -98,6 +98,7 @@ _DECIMAL_TOKEN = re.compile(
 )
 _ARRAY_INDEX = re.compile(r"^(?:0|[1-9]\d*)$")
 _CSV_FIELD_LIMIT_LOCK = Lock()
+_NON_ROW_LIMITING_PARSE_ISSUES = frozenset({"json_unsupported_fragment"})
 
 
 def _issue(
@@ -106,6 +107,18 @@ def _issue(
     locator: EvidenceLocator | None = None,
 ) -> SourceIssue:
     return SourceIssue(code=code, locator=locator, message=message)
+
+
+def _issues_preserve_recognized_table_rows(issues: list[SourceIssue]) -> bool:
+    """Whether parser issues are confined to non-tabular sibling fragments."""
+
+    return all(issue.code in _NON_ROW_LIMITING_PARSE_ISSUES for issue in issues)
+
+
+def recognized_table_rows_complete(artifact: SourceArtifact) -> bool:
+    """Report row completeness only for tables the bounded parser recognized."""
+
+    return bool(artifact.tables) and _issues_preserve_recognized_table_rows(artifact.issues)
 
 
 def _identity_values(revision: SourceRevision) -> dict[str, str]:
@@ -1119,8 +1132,22 @@ def inspect_relationship(
         "Rows with missing or null key components are excluded from matching.",
         "Relationship counts are observations and do not approve a business relationship.",
     ]
-    if left_document.status == "partial" or right_document.status == "partial":
-        limitations.append("One or more source parse issues limit the observed rows.")
+    partial_documents = [
+        document
+        for document in (left_document, right_document)
+        if document.status == "partial"
+    ]
+    if partial_documents:
+        if all(
+            _issues_preserve_recognized_table_rows(document.issues)
+            for document in partial_documents
+        ):
+            limitations.append(
+                "Non-tabular JSON members were ignored; all rows in the recognized "
+                "record arrays were inspected."
+            )
+        else:
+            limitations.append("One or more source parse issues limit the observed rows.")
     if not shared:
         limitations.append("No matching non-null keys were observed; cardinality is unknown.")
 

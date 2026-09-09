@@ -211,6 +211,12 @@ P0_RUN += """
 Approved answers are immutable task-local human statements, not observed source facts or approval of your resulting draft. Apply answered items as candidates with their business provenance. An approved unknown remains unresolved with its resolver, required evidence and next action. Never guess values for unknown targets, including new fields that paraphrase an unresolved question. If a later answer becomes available the human must update and approve a whole new version of the original request. You cannot approve answers, resolve an unknown by repeating it in a new request, or complete the Mission.
 """
 P0_RUN_SHA256 = _sha256_text(P0_RUN)
+PRE_CITATION_INDEX_P0_RUN_SHA256 = P0_RUN_SHA256
+P0_RUN += """
+The current context coverage is the citation index for fragments already read in this Run. Each entry retains the exact evidence_handle, source name, locator and truncation flag without repeating source text. Reuse those handles when that exact fragment supports a field, relationship, question or finish answer; the visible product may render the resulting reference as a compact @ label. Do not cite a dataset row for a rule supplied only by task instructions, and do not cite task instructions for an observed dataset value.
+Source parse_status describes the whole imported document. For structured sources, recognized_table_rows_complete states whether every row in the recognized record arrays was inspected. A partial status caused only by ignored non-tabular JSON members does not imply truncated or missing table rows. Preserve the precise tool limitation instead of broadening it.
+"""
+P0_RUN_SHA256 = _sha256_text(P0_RUN)
 
 
 _TOOL_ARGUMENT_TYPES: dict[str, type[BaseModel]] = {
@@ -304,6 +310,7 @@ TOOL_SCHEMA_SHA256 = canonical_sha256({"tools": list(TOOL_DEFINITIONS)})
 # Exact historical pairs, never the cross-product of two independent allowlists.
 SUPPORTED_RUN_HASH_PAIRS = frozenset({
     (P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
+    (PRE_CITATION_INDEX_P0_RUN_SHA256, TOOL_SCHEMA_SHA256),
     ("32a2a89ad05548171db0963bf8543a1b5c1df3e916798306f7867bc68ac5a3af", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
     ("fd4d113705de9c1bd504759f4d55454d88cf8d966287c9b41c34a83af923707a", "902fb158bb36fbfdc7bc021db1739400a3ca6f4b2aa87df2dcca0437a29f8c4e"),
     ("d4f6eb2efe8878d07a06ee9d9eb0f60e81cde55882a81d92d164b645f213d3db", "acaf4fda820b343181fcb19d5efa739b75f54cfa8cb15529f1d3ced74c64657d"),

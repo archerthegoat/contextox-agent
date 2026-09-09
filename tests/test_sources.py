@@ -561,6 +561,35 @@ class SourceBoundaryTests(unittest.TestCase):
 
 
 class RelationshipInspectionTests(unittest.TestCase):
+    def test_non_tabular_json_member_does_not_imply_recognized_row_loss(self) -> None:
+        left_content = (
+            b'{"orders":[{"customer_id":"c1"},{"customer_id":"c2"}],'
+            b'"notice":{"synthetic":true}}'
+        )
+        right_content = b'{"customers":[{"customer_id":"c1"},{"customer_id":"c2"}]}'
+        left_revision = _revision(left_content, "application/json")
+        right_revision = _revision(right_content, "application/json", number=2)
+
+        profile = inspect_relationship(
+            _table_key(left_revision, ["customer_id"], "/orders"),
+            left_revision,
+            left_content,
+            _table_key(right_revision, ["customer_id"], "/customers"),
+            right_revision,
+            right_content,
+        )
+
+        self.assertEqual(profile.left_rows, 2)
+        self.assertEqual(profile.right_rows, 2)
+        self.assertIn(
+            "Non-tabular JSON members were ignored; all rows in the recognized record arrays were inspected.",
+            profile.limitations,
+        )
+        self.assertNotIn(
+            "One or more source parse issues limit the observed rows.",
+            profile.limitations,
+        )
+
     def test_composite_keys_nulls_and_duplicate_join_expansion_are_counted(self) -> None:
         left_content = (
             b'[{"account":1,"region":"us"},{"account":1,"region":"us"},'

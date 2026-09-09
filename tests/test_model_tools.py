@@ -124,12 +124,17 @@ class SourceRegistryTests(unittest.TestCase):
             for item, artifact in zip(registry.catalog, artifacts):
                 self.assertEqual([t["row_count"] for t in item["tables"]], [t.row_count for t in artifact.tables])
                 self.assertEqual(item["text_line_count"], artifact.text_line_count)
+                self.assertTrue(item["recognized_table_rows_complete"])
             source = selected[0]
             locator = CsvRowsLocator(kind="csv_rows", row_start=1, row_end=2, column=None)
             excerpt = store.read_source_excerpt(ws, source.revision_id, locator)
             result = registry.public(excerpt)
             self.assertEqual(registry.resolve(result["evidence_handle"], "evidence"), excerpt.source_ref)
             self.assertEqual(len(registry.coverage), 1)
+            self.assertEqual(registry.coverage[0]["evidence_handle"], result["evidence_handle"])
+            self.assertEqual(registry.coverage[0]["source_name"], registry.catalog[0]["name"])
+            self.assertEqual(registry.context(snapshot)["coverage"], registry.coverage)
+            self.assertNotIn("text", registry.coverage[0])
             registry.public(excerpt)
             self.assertEqual(len(registry.coverage), 1)
             wrong = excerpt.source_ref.model_copy(update={"workspace_id": fixtures._id(999)})
