@@ -14,7 +14,7 @@ from contextox.models import (
     DomainToolCall, UnknownItem, RelationshipCandidate,
     EvidenceLocator, EvidenceRef, Key, SourceArtifact,
     SourceExcerpt, SourceIdentity, SourceRevision, StatementEvidenceStatus,
-    TableKey, Text, AnswerType,
+    TableKey, Text, AnswerType, FinalOutput,
 )
 from contextox.sources import recognized_table_rows_complete
 
@@ -139,6 +139,59 @@ class FinishInput(ContextOxModel):
     outcome: Literal["partial"]
     reason: Text
     evidence_handles: list[Handle]
+
+
+class ContextPlanV1(ContextOxModel):
+    """Bounded, stage-specific application context sent to the semantic model."""
+
+    context_kind: Literal["semantic_context_v1"]
+    mission: dict[str, Any]
+    message_context: dict[str, Any] | None
+    sources: list[dict[str, Any]] = Field(max_length=8)
+    draft: dict[str, Any] | None
+    clarifications: list[dict[str, Any]] = Field(max_length=20)
+    approved_answers: list[dict[str, Any]] = Field(max_length=50)
+
+
+SemanticAction = Literal[
+    "answer_only",
+    "draft_and_clarify",
+    "draft_and_submit",
+    "clarify_only",
+]
+
+
+class SemanticProposalV1(ContextOxModel):
+    """One complete model proposal; the application owns every durable effect."""
+
+    version: Literal["v1"]
+    action: SemanticAction
+    public_answer: FinalOutput
+    fields: list[FieldInput] = Field(default_factory=list, max_length=100)
+    relationships: list[RelationshipInput] = Field(default_factory=list, max_length=100)
+    unresolved_items: list[Text] = Field(default_factory=list, max_length=100)
+    questions: list[QuestionInput] = Field(default_factory=list, max_length=20)
+    evidence_handles: list[Handle] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_action_shape(self) -> SemanticProposalV1:
+        if not self.public_answer.strip():
+            raise ValueError("public_answer must be nonblank")
+        if len(set(self.evidence_handles)) != len(self.evidence_handles):
+            raise ValueError("evidence_handles must be unique")
+        if self.action == "answer_only" and (
+            self.fields or self.relationships or self.unresolved_items or self.questions
+        ):
+            raise ValueError("answer_only cannot contain draft or clarification changes")
+        if self.action == "clarify_only" and (
+            self.fields or self.relationships or self.unresolved_items or not self.questions
+        ):
+            raise ValueError("clarify_only requires questions and no draft changes")
+        if self.action == "draft_and_clarify" and not self.questions:
+            raise ValueError("draft_and_clarify requires questions")
+        if self.action == "draft_and_submit" and self.questions:
+            raise ValueError("draft_and_submit cannot contain questions")
+        return self
 
 
 MODEL_ARGUMENT_TYPES = {
