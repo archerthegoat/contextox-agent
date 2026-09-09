@@ -900,6 +900,7 @@ def _append_model_started(
     run_id: str,
     turn_index: int,
     fallback_of_turn_index: int | None = None,
+    transport: str | None = None,
 ) -> None:
     _append_event(
         store,
@@ -910,7 +911,9 @@ def _append_model_started(
             event_type="model_started",
             public_payload=ModelStartedPayload(
                 turn_index=turn_index,
-                transport="non_stream" if fallback_of_turn_index is not None else "stream",
+                transport=transport or (
+                    "non_stream" if fallback_of_turn_index is not None else "stream"
+                ),
                 fallback_of_turn_index=fallback_of_turn_index,
             ),
         ),
@@ -1448,6 +1451,9 @@ def _run_semantic_agent(
             manifest, manifest_input, workspace_id, mission_id, run_id
         ):
             raise Path2StateError("context_manifest_invalid")
+        running = store.set_run_phase(
+            workspace_id, mission_id, run_id, "synthesize_once"
+        )
     except SemanticProposalFailure as exc:
         _stop_run(store, workspace_id, mission_id, run_id, "blocked", exc.code)
         return
@@ -1462,6 +1468,9 @@ def _run_semantic_agent(
         return
 
     provider = get_provider()
+    _append_model_started(
+        store, workspace_id, mission_id, run_id, 1, transport="non_stream"
+    )
     try:
         proposal, completion = request_semantic_proposal(
             provider,
@@ -1497,6 +1506,13 @@ def _run_semantic_agent(
         return
     except SemanticProposalFailure as exc:
         completion = exc.completion
+        if completion is None:
+            _stop_run(
+                store, workspace_id, mission_id, run_id,
+                "blocked" if exc.code == "context_too_broad" else "failed",
+                exc.code,
+            )
+            return
         receipt = _make_receipt(
             provider=provider, workspace_id=workspace_id, attempt_id=None,
             mission_id=mission_id, run_id=run_id, turn_index=1,
@@ -1534,7 +1550,9 @@ def _run_semantic_agent(
         _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
         return
     try:
+        store.set_run_phase(workspace_id, mission_id, run_id, "validate")
         application = normalize_semantic_proposal(adapter, proposal)
+        store.set_run_phase(workspace_id, mission_id, run_id, "apply")
         terminal = store.apply_semantic_proposal(
             workspace_id, mission_id, run_id, application
         )

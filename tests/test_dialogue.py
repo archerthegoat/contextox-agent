@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from contextox import agent
 from contextox.api import _run_event_stream
-from contextox.models import TaskMessageSendRequest, MessageHistoryRef
+from contextox.models import TaskMessageSendRequest, MessageHistoryRef, RunBudget
 from contextox.provider import ProviderCompletion, ProviderToolCall, ProviderUsage
 from contextox.runtime import Path2Runtime
 from contextox.store import WorkspaceStore, Path2StateError, _EXPECTED_V3_TABLES, _EXPECTED_V3_INDEXES
@@ -46,6 +46,12 @@ class AnswerProvider:
 
 class DialogueTests(unittest.TestCase):
     def setUp(self):
+        budget_patch = patch.object(
+            RunBudget, "deterministic_controller",
+            return_value=RunBudget(max_output_tokens=16384),
+        )
+        budget_patch.start()
+        self.addCleanup(budget_patch.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="contextox-dialogue-", dir="/private/tmp")
         self.addCleanup(self.temp.cleanup)
         self.store = WorkspaceStore.open(self.temp.name)

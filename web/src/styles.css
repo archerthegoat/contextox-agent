@@ -1641,6 +1641,64 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.path2-profile-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line, #d8e1ee);
+}
+
+.path2-profile-actions,
+.path2-profile-summary,
+.path2-profile-interpretation,
+.path2-profile-table {
+  display: grid;
+  gap: 10px;
+}
+
+.path2-profile-actions {
+  grid-template-columns: repeat(auto-fit, minmax(140px, max-content));
+}
+
+.path2-profile-table {
+  padding: 12px;
+  border: 1px solid var(--line, #d8e1ee);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.path2-profile-table > small {
+  color: var(--muted, #5f6b7a);
+}
+
+.path2-profile-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.path2-profile-column {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: rgba(238, 243, 248, 0.78);
+  font-size: 12px;
+}
+
+.path2-profile-column b,
+.path2-profile-column span,
+.path2-profile-column small {
+  overflow-wrap: anywhere;
+}
+
+.path2-profile-column span,
+.path2-profile-column small {
+  color: var(--muted, #5f6b7a);
+}
+
 .path2-artifact-preview {
   display: grid;
   grid-column: 1 / -1;

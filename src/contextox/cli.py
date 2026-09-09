@@ -177,6 +177,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     start = commands.add_parser("start", help="Start the local Workbench server.")
+    start.add_argument("--migrate-profile-interpretations", action="store_true", help="Back up and migrate a stopped v5 store to profile interpretations v6.")
     start.add_argument("--migrate-clarification-answers", action="store_true", help="Back up and migrate a stopped store to clarification answers v5.")
     start.add_argument("--migrate-task-dialogue", action="store_true", help="Explicitly back up and migrate a stopped v3 store to task dialogue v4.")
     start.add_argument("--host", default="127.0.0.1")
@@ -220,7 +221,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("data-dir must resolve to a directory")
         import uvicorn
 
-        app = create_app(static_dir=args.static_dir.resolve(), data_dir=data_dir, migrate_dialogue=args.migrate_task_dialogue, migrate_clarifications=args.migrate_clarification_answers)
+        app = create_app(
+            static_dir=args.static_dir.resolve(), data_dir=data_dir,
+            migrate_dialogue=args.migrate_task_dialogue,
+            migrate_clarifications=args.migrate_clarification_answers,
+            migrate_profiles=args.migrate_profile_interpretations,
+        )
 
         class LocalServer(uvicorn.Server):
             async def shutdown(self, sockets=None):

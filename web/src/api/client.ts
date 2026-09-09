@@ -87,6 +87,10 @@ type SourceUploadRequest = components["schemas"]["SourceUploadRequest"];
 type SourceBatchResult = components["schemas"]["SourceBatchResult"];
 type SourceRevision = components["schemas"]["SourceRevision"];
 type SourceArtifact = components["schemas"]["SourceArtifact"];
+type ProfilePackV1 = components["schemas"]["ProfilePackV1"];
+type ProfileInterpretationCreateRequest =
+  components["schemas"]["ProfileInterpretationCreateRequest"];
+type ProfileInterpretationAttempt = components["schemas"]["ProfileInterpretationAttempt"];
 type SourceExcerptRequest = components["schemas"]["SourceExcerptRequest"];
 type SourceExcerpt = components["schemas"]["SourceExcerpt"];
 type MissionDraftAttemptCreateRequest =
@@ -134,6 +138,61 @@ export async function fetchSourceArtifact(
   const result = await client.GET("/api/workspaces/{workspace_id}/sources/{revision_id}", {
     params: { path: { workspace_id: workspaceId, revision_id: revisionId } },
   });
+  if (!result.response.ok || !result.data) {
+    throwForResult(result);
+  }
+  return result.data;
+}
+
+export async function fetchSourceProfile(
+  workspaceId: string,
+  revisionId: string,
+): Promise<ProfilePackV1> {
+  const result = await client.GET(
+    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile",
+    { params: { path: { workspace_id: workspaceId, revision_id: revisionId } } },
+  );
+  if (!result.response.ok || !result.data) {
+    throwForResult(result);
+  }
+  return result.data;
+}
+
+export async function createProfileInterpretation(
+  workspaceId: string,
+  revisionId: string,
+  request: ProfileInterpretationCreateRequest,
+): Promise<ProfileInterpretationAttempt> {
+  const result = await client.POST(
+    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile-interpretations",
+    {
+      params: { path: { workspace_id: workspaceId, revision_id: revisionId } },
+      body: request,
+    },
+  );
+  if (!result.response.ok || !result.data) {
+    throwForResult(result);
+  }
+  return result.data;
+}
+
+export async function fetchProfileInterpretation(
+  workspaceId: string,
+  revisionId: string,
+  attemptId: string,
+): Promise<ProfileInterpretationAttempt> {
+  const result = await client.GET(
+    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile-interpretations/{attempt_id}",
+    {
+      params: {
+        path: {
+          workspace_id: workspaceId,
+          revision_id: revisionId,
+          attempt_id: attemptId,
+        },
+      },
+    },
+  );
   if (!result.response.ok || !result.data) {
     throwForResult(result);
   }

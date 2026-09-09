@@ -11,6 +11,7 @@ from threading import Event
 from unittest.mock import patch
 
 from contextox import agent
+from contextox.models import RunBudget
 from contextox.provider import (ProviderCompletion, ProviderToolCall, ProviderUsage,
     ProviderContextBudgetError, ProviderStreamInterruptedError, ProviderProtocolError,
     ProviderTimeoutUnknownError, ProviderCancelledError, ProviderError)
@@ -50,6 +51,12 @@ class ScriptedProvider:
 
 class StreamFallbackTests(unittest.TestCase):
     def setUp(self):
+        budget_patch = patch.object(
+            RunBudget, "deterministic_controller",
+            return_value=RunBudget(max_output_tokens=16384),
+        )
+        budget_patch.start()
+        self.addCleanup(budget_patch.stop)
         self.temp = tempfile.TemporaryDirectory(prefix='contextox-fallback-', dir='/private/tmp')
         self.addCleanup(self.temp.cleanup)
         self.store = WorkspaceStore.open(self.temp.name)

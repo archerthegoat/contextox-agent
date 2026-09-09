@@ -36,6 +36,11 @@ from contextox.models import (
     MissionDraftConfirmRequest,
     MissionSnapshot,
     ProviderReceipt,
+    ProfilePackV1,
+    ProfileInterpretationAttempt,
+    ProfileInterpretationCreateRequest,
+    ProfileInterpretationV1,
+    ProviderConfigSnapshot,
     RelationshipProfile,
     RunBudget,
     RunEventEnvelope,
@@ -59,6 +64,7 @@ from contextox.sources import (
     PARSER_VERSION,
     SourceInputError,
     inspect_relationship,
+    build_profile_pack,
     parse_source,
     read_source_fragment,
 )
@@ -67,7 +73,8 @@ from contextox.sources import (
 from contextox import clarifications as r2
 
 DB_FILENAME = "contextox.sqlite3"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+V5_SCHEMA_VERSION = 5
 V3_SCHEMA_VERSION = 3
 V1_SCHEMA_VERSION = 1
 V2_SCHEMA_VERSION = 2
@@ -642,6 +649,11 @@ CREATE TABLE runs (
 )
 """
 
+_EXPECTED_V6_RUNS_SQL = _EXPECTED_RUNS_SQL.replace(
+    "    start_request_sha256 TEXT NOT NULL,",
+    "    start_request_sha256 TEXT NOT NULL, phase TEXT NOT NULL DEFAULT 'prepare_context',",
+)
+
 
 _EXPECTED_RUN_SOURCES_SQL = """
 CREATE TABLE run_sources (
@@ -968,6 +980,41 @@ _EXPECTED_V4_TABLES = (*_EXPECTED_V3_TABLES, ("run_message_inputs", _EXPECTED_ME
 _EXPECTED_V5_MANIFEST_SQL = _EXPECTED_CONTEXT_MANIFESTS_SQL.replace("    sha256 TEXT NOT NULL,", "    sha256 TEXT NOT NULL, approved_answer_refs_json TEXT NOT NULL DEFAULT '[]',")
 _EXPECTED_V5_TABLES = tuple((name, _EXPECTED_V5_MANIFEST_SQL if name == "context_manifests" else sql) for name, sql in _EXPECTED_V4_TABLES) + r2.TABLES
 
+_EXPECTED_PROFILE_INTERPRETATIONS_SQL = """
+CREATE TABLE profile_interpretation_attempts (
+    workspace_id TEXT NOT NULL,
+    revision_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL,
+    client_request_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    profile_hash TEXT NOT NULL,
+    config_json TEXT,
+    config_fingerprint TEXT NOT NULL,
+    prompt_sha256 TEXT NOT NULL,
+    sent_bytes INTEGER NOT NULL,
+    chunk_count INTEGER NOT NULL,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cache_hit INTEGER NOT NULL,
+    cached_from_attempt_id TEXT,
+    interpretation_json TEXT,
+    error_code TEXT,
+    PRIMARY KEY (workspace_id, revision_id, attempt_id),
+    UNIQUE (workspace_id, revision_id, client_request_id),
+    FOREIGN KEY (workspace_id, revision_id)
+        REFERENCES source_revisions(workspace_id, revision_id),
+    FOREIGN KEY (workspace_id, revision_id, cached_from_attempt_id)
+        REFERENCES profile_interpretation_attempts(workspace_id, revision_id, attempt_id)
+)
+"""
+_EXPECTED_V6_TABLES = tuple(
+    (name, _EXPECTED_V6_RUNS_SQL if name == "runs" else sql)
+    for name, sql in _EXPECTED_V5_TABLES
+) + (("profile_interpretation_attempts", _EXPECTED_PROFILE_INTERPRETATIONS_SQL),)
+
 
 _EXPECTED_V3_INDEXES: tuple[tuple[str, str, str], ...] = (
     (
@@ -1060,10 +1107,12 @@ def _schema_is_exact_v2(connection: sqlite3.Connection) -> bool:
 
 
 def _schema_is_exact(connection: sqlite3.Connection) -> bool:
-    """Read exact v3, v4 and v5 stores without silently migrating them."""
+    """Read exact historical and current stores without silently migrating them."""
     return _schema_matches(connection, 3, _EXPECTED_V3_TABLES, _EXPECTED_V3_INDEXES) or _schema_matches(
         connection, 4, _EXPECTED_V4_TABLES, _EXPECTED_V3_INDEXES
-    ) or _schema_matches(connection, 5, _EXPECTED_V5_TABLES, _EXPECTED_V3_INDEXES)
+    ) or _schema_matches(connection, 5, _EXPECTED_V5_TABLES, _EXPECTED_V3_INDEXES) or _schema_matches(
+        connection, 6, _EXPECTED_V6_TABLES, _EXPECTED_V3_INDEXES
+    )
 
 
 def _configure_connection(connection: sqlite3.Connection) -> None:
@@ -1105,13 +1154,15 @@ def _create_v3_tables(
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
-    """Create a new empty database using the complete approved v5 schema."""
+    """Create a new empty database using the complete approved v6 schema."""
 
     _create_v3_tables(connection, include_workspaces=True)
     connection.execute(_EXPECTED_MESSAGE_INPUTS_SQL)
     connection.execute(r2.MANIFEST_ALTER)
     for _, sql in r2.TABLES:
         connection.execute(sql)
+    connection.execute("ALTER TABLE runs ADD COLUMN phase TEXT NOT NULL DEFAULT 'prepare_context'")
+    connection.execute(_EXPECTED_PROFILE_INTERPRETATIONS_SQL)
     connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
@@ -1194,7 +1245,14 @@ class WorkspaceStore:
         self._event_sink = sink
 
     @classmethod
-    def open(cls, data_dir: Path | str, *, migrate_dialogue: bool = False, migrate_clarifications: bool = False) -> "WorkspaceStore":
+    def open(
+        cls,
+        data_dir: Path | str,
+        *,
+        migrate_dialogue: bool = False,
+        migrate_clarifications: bool = False,
+        migrate_profiles: bool = False,
+    ) -> "WorkspaceStore":
         """Open a supported store, atomically initializing a new empty DB."""
 
         canonical = canonical_data_dir(data_dir)
@@ -1262,10 +1320,12 @@ class WorkspaceStore:
         finally:
             if connection is not None:
                 connection.close()
-        if migrate_dialogue or migrate_clarifications:
+        if migrate_dialogue or migrate_clarifications or migrate_profiles:
             store.migrate_task_dialogue()
-        if migrate_clarifications:
+        if migrate_clarifications or migrate_profiles:
             store.migrate_clarification_answers()
+        if migrate_profiles:
+            store.migrate_profile_interpretations()
         store.recover_interrupted_runs()
         return store
 
@@ -1659,6 +1719,271 @@ class WorkspaceStore:
         _, artifact, _ = self._get_source(workspace_id, revision_id)
         return artifact
 
+    def get_source_profile(
+        self,
+        workspace_id: str,
+        revision_id: str,
+    ) -> ProfilePackV1:
+        revision, _artifact, content = self._get_source(workspace_id, revision_id)
+        return build_profile_pack(revision, content)
+
+    def create_profile_interpretation_attempt(
+        self,
+        workspace_id: str,
+        revision_id: str,
+        request: ProfileInterpretationCreateRequest,
+        config: ProviderConfigSnapshot,
+        prompt_sha256: str,
+    ) -> tuple[ProfileInterpretationAttempt, bool]:
+        self._require_path2_workspace(workspace_id)
+        request = ProfileInterpretationCreateRequest.model_validate(
+            request.model_dump(mode="json")
+        )
+        config = ProviderConfigSnapshot.model_validate(config.model_dump(mode="json"))
+        if config.thinking != "disabled" or config.reasoning_effort is not None:
+            raise Path2StateError("profile_provider_config_invalid")
+        profile = self.get_source_profile(workspace_id, revision_id)
+        fingerprint = canonical_sha256(config)
+        try:
+            with self._write_transaction() as connection:
+                if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                    raise Path2StateError("profile_interpretation_not_implemented")
+                existing = connection.execute(
+                    """
+                    SELECT workspace_id, revision_id, attempt_id, client_request_id,
+                           created_at, started_at, finished_at, status, profile_hash,
+                           config_json, config_fingerprint, prompt_sha256, sent_bytes,
+                           chunk_count, input_tokens, output_tokens, cache_hit,
+                           cached_from_attempt_id, interpretation_json, error_code
+                    FROM profile_interpretation_attempts
+                    WHERE workspace_id=? AND revision_id=? AND client_request_id=?
+                    """,
+                    (workspace_id, revision_id, request.client_request_id),
+                ).fetchone()
+                if existing is not None:
+                    return _profile_interpretation_from_row(existing), False
+                cached = connection.execute(
+                    """
+                    SELECT workspace_id, revision_id, attempt_id, client_request_id,
+                           created_at, started_at, finished_at, status, profile_hash,
+                           config_json, config_fingerprint, prompt_sha256, sent_bytes,
+                           chunk_count, input_tokens, output_tokens, cache_hit,
+                           cached_from_attempt_id, interpretation_json, error_code
+                    FROM profile_interpretation_attempts
+                    WHERE workspace_id=? AND revision_id=? AND profile_hash=?
+                      AND config_fingerprint=? AND prompt_sha256=? AND status='succeeded'
+                    ORDER BY rowid DESC LIMIT 1
+                    """,
+                    (workspace_id, revision_id, profile.profile_hash, fingerprint, prompt_sha256),
+                ).fetchone()
+                now = _utc_now()
+                attempt_id = str(uuid4())
+                if cached is not None:
+                    source = _profile_interpretation_from_row(cached)
+                    attempt = ProfileInterpretationAttempt(
+                        workspace_id=workspace_id, revision_id=revision_id,
+                        attempt_id=attempt_id, client_request_id=request.client_request_id,
+                        created_at=now, started_at=now, finished_at=now,
+                        status="succeeded", profile_hash=profile.profile_hash,
+                        config=config, config_fingerprint=fingerprint,
+                        prompt_sha256=prompt_sha256, sent_bytes=0, chunk_count=0,
+                        input_tokens=0, output_tokens=0, cache_hit=True,
+                        cached_from_attempt_id=source.attempt_id,
+                        interpretation=source.interpretation, error_code=None,
+                    )
+                else:
+                    attempt = ProfileInterpretationAttempt(
+                        workspace_id=workspace_id, revision_id=revision_id,
+                        attempt_id=attempt_id, client_request_id=request.client_request_id,
+                        created_at=now, started_at=None, finished_at=None,
+                        status="queued", profile_hash=profile.profile_hash,
+                        config=config, config_fingerprint=fingerprint,
+                        prompt_sha256=prompt_sha256, sent_bytes=0, chunk_count=0,
+                        input_tokens=None, output_tokens=None, cache_hit=False,
+                        cached_from_attempt_id=None, interpretation=None, error_code=None,
+                    )
+                _insert_profile_interpretation_attempt(connection, attempt)
+                return attempt, True
+        except WorkspaceStoreError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise Path2StateError("state_conflict") from exc
+        except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
+            raise WorkspaceStoreUnavailableError() from exc
+
+    def get_profile_interpretation_attempt(
+        self, workspace_id: str, revision_id: str, attempt_id: str,
+    ) -> ProfileInterpretationAttempt:
+        self._require_path2_workspace(workspace_id)
+        self._get_source(workspace_id, revision_id)
+        with self._connection() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                raise Path2StateError("profile_interpretation_not_implemented")
+            row = _profile_interpretation_row(
+                connection, workspace_id, revision_id, attempt_id
+            )
+            if row is None:
+                raise Path2StateError("profile_interpretation_attempt_not_found")
+            return _profile_interpretation_from_row(row)
+
+    def find_profile_interpretation_request(
+        self, workspace_id: str, revision_id: str, client_request_id: str,
+    ) -> ProfileInterpretationAttempt | None:
+        self._require_path2_workspace(workspace_id)
+        self._get_source(workspace_id, revision_id)
+        with self._connection() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                raise Path2StateError("profile_interpretation_not_implemented")
+            row = connection.execute(
+                """
+                SELECT workspace_id, revision_id, attempt_id, client_request_id,
+                       created_at, started_at, finished_at, status, profile_hash,
+                       config_json, config_fingerprint, prompt_sha256, sent_bytes,
+                       chunk_count, input_tokens, output_tokens, cache_hit,
+                       cached_from_attempt_id, interpretation_json, error_code
+                FROM profile_interpretation_attempts
+                WHERE workspace_id=? AND revision_id=? AND client_request_id=?
+                """,
+                (workspace_id, revision_id, client_request_id),
+            ).fetchone()
+            return None if row is None else _profile_interpretation_from_row(row)
+
+    def get_cached_profile_interpretation(
+        self, workspace_id: str, revision_id: str, profile_hash: str,
+    ) -> ProfileInterpretationV1 | None:
+        """Return the newest typed interpretation for this exact local profile."""
+
+        self._require_path2_workspace(workspace_id)
+        self._get_source(workspace_id, revision_id)
+        with self._connection() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                return None
+            row = connection.execute(
+                """
+                SELECT interpretation_json
+                FROM profile_interpretation_attempts
+                WHERE workspace_id=? AND revision_id=? AND profile_hash=?
+                  AND status='succeeded' AND interpretation_json IS NOT NULL
+                ORDER BY rowid DESC LIMIT 1
+                """,
+                (workspace_id, revision_id, profile_hash),
+            ).fetchone()
+            return (
+                None if row is None
+                else ProfileInterpretationV1.model_validate(json.loads(row[0]))
+            )
+
+    def mark_profile_interpretation_running(
+        self, workspace_id: str, revision_id: str, attempt_id: str,
+    ) -> ProfileInterpretationAttempt:
+        self._require_path2_workspace(workspace_id)
+        self._get_source(workspace_id, revision_id)
+        with self._write_transaction() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                raise Path2StateError("profile_interpretation_not_implemented")
+            row = _profile_interpretation_row(
+                connection, workspace_id, revision_id, attempt_id
+            )
+            if row is None:
+                raise Path2StateError("profile_interpretation_attempt_not_found")
+            attempt = _profile_interpretation_from_row(row)
+            if attempt.status != "queued":
+                return attempt
+            changed = connection.execute(
+                """
+                UPDATE profile_interpretation_attempts SET status='running', started_at=?
+                WHERE workspace_id=? AND revision_id=? AND attempt_id=? AND status='queued'
+                """,
+                (_utc_now().isoformat(), workspace_id, revision_id, attempt_id),
+            ).rowcount
+            if changed != 1:
+                raise Path2StateError("state_conflict")
+            return _profile_interpretation_from_row(_profile_interpretation_row(
+                connection, workspace_id, revision_id, attempt_id
+            ))
+
+    def save_profile_interpretation_result(
+        self,
+        workspace_id: str,
+        revision_id: str,
+        attempt_id: str,
+        interpretation: ProfileInterpretationV1,
+        *,
+        sent_bytes: int,
+        chunk_count: int,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> ProfileInterpretationAttempt:
+        self._require_path2_workspace(workspace_id)
+        self._get_source(workspace_id, revision_id)
+        interpretation = ProfileInterpretationV1.model_validate(
+            interpretation.model_dump(mode="json")
+        )
+        with self._write_transaction() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                raise Path2StateError("profile_interpretation_not_implemented")
+            row = _profile_interpretation_row(
+                connection, workspace_id, revision_id, attempt_id
+            )
+            if row is None:
+                raise Path2StateError("profile_interpretation_attempt_not_found")
+            attempt = _profile_interpretation_from_row(row)
+            if attempt.status != "running" or interpretation.profile_hash != attempt.profile_hash:
+                raise Path2StateError("state_conflict")
+            connection.execute(
+                """
+                UPDATE profile_interpretation_attempts
+                SET status='succeeded', finished_at=?, sent_bytes=?, chunk_count=?,
+                    input_tokens=?, output_tokens=?, interpretation_json=?, error_code=NULL
+                WHERE workspace_id=? AND revision_id=? AND attempt_id=? AND status='running'
+                """,
+                (
+                    _utc_now().isoformat(), sent_bytes, chunk_count,
+                    input_tokens, output_tokens, _canonical_json(interpretation),
+                    workspace_id, revision_id, attempt_id,
+                ),
+            )
+            return _profile_interpretation_from_row(_profile_interpretation_row(
+                connection, workspace_id, revision_id, attempt_id
+            ))
+
+    def fail_profile_interpretation_attempt(
+        self,
+        workspace_id: str,
+        revision_id: str,
+        attempt_id: str,
+        status: Literal["blocked", "failed", "cancelled"],
+        error_code: str,
+    ) -> ProfileInterpretationAttempt:
+        self._require_path2_workspace(workspace_id)
+        self._get_source(workspace_id, revision_id)
+        with self._write_transaction() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                raise Path2StateError("profile_interpretation_not_implemented")
+            row = _profile_interpretation_row(
+                connection, workspace_id, revision_id, attempt_id
+            )
+            if row is None:
+                raise Path2StateError("profile_interpretation_attempt_not_found")
+            attempt = _profile_interpretation_from_row(row)
+            if attempt.status in {"succeeded", "blocked", "failed", "cancelled"}:
+                return attempt
+            connection.execute(
+                """
+                UPDATE profile_interpretation_attempts
+                SET status=?, finished_at=?, error_code=?
+                WHERE workspace_id=? AND revision_id=? AND attempt_id=?
+                  AND status IN ('queued','running')
+                """,
+                (
+                    status, _utc_now().isoformat(), error_code,
+                    workspace_id, revision_id, attempt_id,
+                ),
+            )
+            return _profile_interpretation_from_row(_profile_interpretation_row(
+                connection, workspace_id, revision_id, attempt_id
+            ))
+
     def read_source_excerpt(
         self,
         workspace_id: str,
@@ -1675,7 +2000,7 @@ class WorkspaceStore:
         The complete backup remains private beneath the authorized data directory.
         """
         with self._connection() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] in {4, 5}:
+            if connection.execute("PRAGMA user_version").fetchone()[0] in {4, 5, 6}:
                 return None
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1722,7 +2047,7 @@ class WorkspaceStore:
         The complete backup remains private beneath the authorized data directory.
         """
         with self._connection() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] == 5:
+            if connection.execute("PRAGMA user_version").fetchone()[0] in {5, 6}:
                 return None
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1762,6 +2087,62 @@ class WorkspaceStore:
             except BaseException:
                 connection.rollback()
                 # Retain even an incomplete backup for audit; never restore over new writes.
+                raise
+
+    def migrate_profile_interpretations(self) -> Path | None:
+        """Explicitly back up and migrate a stopped v5 Store to v6."""
+
+        with self._connection() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 6:
+                return None
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not _schema_matches(
+                    connection, 5, _EXPECTED_V5_TABLES, _EXPECTED_V3_INDEXES
+                ):
+                    raise WorkspaceSchemaUnsupportedError()
+                if connection.execute(
+                    "SELECT 1 FROM runs WHERE status IN ('queued','running') LIMIT 1"
+                ).fetchone() or connection.execute(
+                    "SELECT 1 FROM mission_draft_attempts WHERE status IN ('queued','running') LIMIT 1"
+                ).fetchone():
+                    raise Path2StateError("run_already_active")
+                backup = self.data_dir / ("profiles-v5-backup-" + str(uuid4()))
+                backup.mkdir(mode=0o700)
+                with closing(sqlite3.connect(self.db_path)) as source, closing(
+                    sqlite3.connect(backup / DB_FILENAME)
+                ) as target:
+                    source.backup(target)
+                (backup / DB_FILENAME).chmod(0o600)
+                manifest = {"schema_version": 5, "files": {}}
+                for ws, revision_id in connection.execute(
+                    "SELECT workspace_id, revision_id FROM source_revisions"
+                ):
+                    revision, _ = _load_source_in_connection(connection, ws, revision_id)
+                    source_path = _source_path(self.data_dir, revision)
+                    content = _read_validated_source_file(source_path, revision)
+                    relative = source_path.relative_to(self.data_dir)
+                    destination = backup / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    destination.write_bytes(content)
+                    destination.chmod(0o600)
+                    manifest["files"][str(relative)] = hashlib.sha256(content).hexdigest()
+                manifest["files"][DB_FILENAME] = hashlib.sha256(
+                    (backup / DB_FILENAME).read_bytes()
+                ).hexdigest()
+                (backup / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+                (backup / "manifest.json").chmod(0o600)
+                connection.execute(
+                    "ALTER TABLE runs ADD COLUMN phase TEXT NOT NULL DEFAULT 'prepare_context'"
+                )
+                connection.execute("UPDATE runs SET phase='legacy_loop'")
+                connection.execute(_EXPECTED_PROFILE_INTERPRETATIONS_SQL)
+                connection.execute("PRAGMA user_version=6")
+                _validate_connection_schema(connection)
+                connection.commit()
+                return backup
+            except BaseException:
+                connection.rollback()
                 raise
 
     def list_clarification_cases(self, workspace_id, mission_id):
@@ -1919,7 +2300,8 @@ class WorkspaceStore:
             replay = self._message_submission(connection, workspace_id, mission_id, request.client_request_id, request)
             if replay is not None:
                 return replay, False
-            if connection.execute("PRAGMA user_version").fetchone()[0] not in {4, 5}:
+            schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if schema_version not in {4, 5, 6}:
                 raise Path2StateError("task_dialogue_not_implemented")
             if mission.state_version != request.expected_state_version:
                 raise Path2StateError("state_conflict")
@@ -1936,7 +2318,10 @@ class WorkspaceStore:
                 "started_at, finished_at, status, budget_json, last_sequence, final_output, error_code, start_request_sha256) "
                 "VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, 0, NULL, NULL, ?)",
                 (workspace_id, mission_id, run_id, request.client_request_id, now,
-                 _canonical_json(RunBudget(max_output_tokens=16384)), canonical_sha256(request)),
+                 _canonical_json(
+                     RunBudget.deterministic_controller()
+                     if schema_version == 6 else RunBudget(max_output_tokens=16384)
+                 ), canonical_sha256(request)),
             )
             connection.executemany(
                 "INSERT INTO run_sources VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -2153,7 +2538,11 @@ class WorkspaceStore:
                         raise Path2StateError("state_conflict")
                 run_id = str(uuid4())
                 created_at = _utc_now()
-                budget = RunBudget(max_output_tokens=16384)
+                budget = (
+                    RunBudget.deterministic_controller()
+                    if connection.execute("PRAGMA user_version").fetchone()[0] == 6
+                    else RunBudget(max_output_tokens=16384)
+                )
                 connection.execute(
                     """
                     INSERT INTO runs
@@ -2599,6 +2988,38 @@ class WorkspaceStore:
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
             raise WorkspaceStoreUnavailableError() from exc
 
+    def set_run_phase(
+        self,
+        workspace_id: str,
+        mission_id: str,
+        run_id: str,
+        phase: Literal["synthesize_once", "validate", "apply"],
+    ) -> RunSnapshot:
+        transitions = {
+            "prepare_context": "synthesize_once",
+            "synthesize_once": "validate",
+            "validate": "apply",
+        }
+        with self._write_transaction() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                raise Path2StateError("state_conflict")
+            run = _load_run(connection, workspace_id, mission_id, run_id)
+            if run.status != "running" or transitions.get(run.phase) != phase:
+                raise Path2StateError("state_conflict")
+            changed = connection.execute(
+                """
+                UPDATE runs SET phase=?
+                WHERE workspace_id=? AND mission_id=? AND run_id=? AND phase=?
+                """,
+                (phase, workspace_id, mission_id, run_id, run.phase),
+            ).rowcount
+            if changed != 1:
+                raise Path2StateError("state_conflict")
+            _append_event_in_transaction(
+                connection, run, "run_phase_changed", {"phase": phase}
+            )
+            return _load_run(connection, workspace_id, mission_id, run_id)
+
     def validate_run_tool_batch(
         self,
         workspace_id: str,
@@ -2734,6 +3155,11 @@ class WorkspaceStore:
             with self._write_transaction() as connection:
                 run = _load_run(connection, workspace_id, mission_id, run_id)
                 if run.status != "running":
+                    raise Path2StateError("state_conflict")
+                if (
+                    connection.execute("PRAGMA user_version").fetchone()[0] == 6
+                    and run.phase != "apply"
+                ):
                     raise Path2StateError("state_conflict")
                 provider_receipts = run.provider_receipts
                 if (
@@ -3406,13 +3832,25 @@ class WorkspaceStore:
              _canonical_json(terminal.tool_receipt_ids),
              _canonical_json(terminal.source_refs)),
         )
-        connection.execute(
-            """
-            UPDATE runs SET status=?, finished_at=?, error_code=NULL
-            WHERE workspace_id=? AND mission_id=? AND run_id=? AND status='running'
-            """,
-            (outcome, now.isoformat(), workspace_id, mission_id, run_id),
-        )
+        if connection.execute("PRAGMA user_version").fetchone()[0] == 6:
+            connection.execute(
+                """
+                UPDATE runs SET status=?, phase='terminal', finished_at=?, error_code=NULL
+                WHERE workspace_id=? AND mission_id=? AND run_id=? AND status='running'
+                """,
+                (outcome, now.isoformat(), workspace_id, mission_id, run_id),
+            )
+            _append_event_in_transaction(
+                connection, run, "run_phase_changed", {"phase": "terminal"}
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE runs SET status=?, finished_at=?, error_code=NULL
+                WHERE workspace_id=? AND mission_id=? AND run_id=? AND status='running'
+                """,
+                (outcome, now.isoformat(), workspace_id, mission_id, run_id),
+            )
         mission_status = "waiting_for_human" if outcome == "waiting_for_human" else "blocked"
         connection.execute(
             """
@@ -3619,14 +4057,27 @@ class WorkspaceStore:
                 if status == "partial":
                     raise Path2StateError("state_conflict")
                 now = _utc_now().isoformat()
-                connection.execute(
-                    """
-                    UPDATE runs SET status=?, finished_at=?, error_code=?
-                    WHERE workspace_id=? AND mission_id=? AND run_id=?
-                      AND status IN ('queued','running')
-                    """,
-                    (status, now, code, workspace_id, mission_id, run_id),
-                )
+                if connection.execute("PRAGMA user_version").fetchone()[0] == 6:
+                    connection.execute(
+                        """
+                        UPDATE runs SET status=?, phase='terminal', finished_at=?, error_code=?
+                        WHERE workspace_id=? AND mission_id=? AND run_id=?
+                          AND status IN ('queued','running')
+                        """,
+                        (status, now, code, workspace_id, mission_id, run_id),
+                    )
+                    _append_event_in_transaction(
+                        connection, run, "run_phase_changed", {"phase": "terminal"}
+                    )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE runs SET status=?, finished_at=?, error_code=?
+                        WHERE workspace_id=? AND mission_id=? AND run_id=?
+                          AND status IN ('queued','running')
+                        """,
+                        (status, now, code, workspace_id, mission_id, run_id),
+                    )
                 connection.execute(
                     """
                     UPDATE missions SET status='blocked', state_version=state_version+1
@@ -3697,6 +4148,19 @@ class WorkspaceStore:
                     stopped = run
                 else:
                     now = _utc_now()
+                    is_v6 = connection.execute("PRAGMA user_version").fetchone()[0] == 6
+                    if is_v6:
+                        connection.execute(
+                            """
+                            UPDATE runs SET phase='terminal'
+                            WHERE workspace_id=? AND mission_id=? AND run_id=?
+                            """,
+                            (workspace_id, mission_id, run_id),
+                        )
+                        _append_event_in_transaction(
+                            connection, run, "run_phase_changed", {"phase": "terminal"}
+                        )
+                        run = _load_run(connection, workspace_id, mission_id, run_id)
                     sequence = run.last_sequence + 1
                     connection.execute(
                         """
@@ -3755,12 +4219,25 @@ class WorkspaceStore:
                     """
                 ).fetchall()
                 now = _utc_now()
+                is_v6 = connection.execute("PRAGMA user_version").fetchone()[0] == 6
                 for workspace_id, mission_id, run_id, last_sequence in rows:
                     active = _load_run(connection, workspace_id, mission_id, run_id)
                     if active.status not in {"queued", "running"}:
                         raise WorkspaceStoreUnavailableError()
                     last_sequence = active.last_sequence
-                    sequence = last_sequence + 1
+                    if is_v6:
+                        connection.execute(
+                            """
+                            UPDATE runs SET phase='terminal'
+                            WHERE workspace_id=? AND mission_id=? AND run_id=?
+                            """,
+                            (workspace_id, mission_id, run_id),
+                        )
+                        _append_event_in_transaction(
+                            connection, active, "run_phase_changed", {"phase": "terminal"}
+                        )
+                        active = _load_run(connection, workspace_id, mission_id, run_id)
+                    sequence = active.last_sequence + 1
                     connection.execute(
                         """
                         UPDATE runs SET status='failed', finished_at=?,
@@ -4055,7 +4532,7 @@ class WorkspaceStore:
                     status="blocked",
                     detail="The Workspace database schema is unsupported.",
                     actual=f"user_version={version}; objects={len(objects)}",
-                    expected=f"user_version={SCHEMA_VERSION}; exact v3, v4 or v5 table set",
+                    expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5 or v6 table set",
                 )
                 readwrite_check = StoreDiagnostic(
                     key="workspace_store_readwrite",
@@ -4088,7 +4565,7 @@ class WorkspaceStore:
                         status="ready",
                         detail=f"The Workspace database uses schema version {version}.",
                         actual=f"user_version={version}",
-                        expected=f"user_version={SCHEMA_VERSION}; exact v3, v4 or v5 table set",
+                        expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5 or v6 table set",
                     )
         except WorkspaceSchemaUnsupportedError:
             schema_check = StoreDiagnostic(
@@ -4096,7 +4573,7 @@ class WorkspaceStore:
                 status="blocked",
                 detail="The Workspace database schema is unsupported.",
                 actual="unsupported",
-                expected=f"user_version={SCHEMA_VERSION}; exact v3, v4 or v5 table set",
+                expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5 or v6 table set",
             )
             readwrite_check = StoreDiagnostic(
                 key="workspace_store_readwrite",
@@ -4629,12 +5106,23 @@ def _load_terminal_receipt(
 
 def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> RunSnapshot:
     try:
+        schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if schema_version == 6:
+            phase_row = connection.execute(
+                "SELECT phase FROM runs WHERE workspace_id=? AND mission_id=? AND run_id=?",
+                (row[0], row[1], row[2]),
+            ).fetchone()
+            if phase_row is None:
+                raise WorkspaceStoreUnavailableError()
+            phase = phase_row[0]
+        else:
+            phase = "legacy_loop"
         run = RunSnapshot(
             workspace_id=row[0], mission_id=row[1], run_id=row[2],
             created_at=_parse_created_at(row[4]),
             started_at=_parse_created_at(row[5]) if row[5] is not None else None,
             finished_at=_parse_created_at(row[6]) if row[6] is not None else None,
-            status=row[7], budget=_json_value(row[8]),
+            status=row[7], phase=phase, budget=_json_value(row[8]),
             source_refs=_run_source_refs(connection, row[0], row[1], row[2]),
             draft=_load_latest_draft(connection, row[0], row[1]),
             clarifications=_load_clarifications(connection, row[0], row[1], row[2]),
@@ -4981,6 +5469,86 @@ def _evidence_refs(value: object) -> list[EvidenceRef]:
     elif isinstance(value, TerminalReceipt):
         refs.extend(value.source_refs)
     return _unique_evidence_refs(refs)
+
+
+def _profile_interpretation_row(
+    connection: sqlite3.Connection,
+    workspace_id: str,
+    revision_id: str,
+    attempt_id: str,
+) -> tuple | None:
+    return connection.execute(
+        """
+        SELECT workspace_id, revision_id, attempt_id, client_request_id,
+               created_at, started_at, finished_at, status, profile_hash,
+               config_json, config_fingerprint, prompt_sha256, sent_bytes,
+               chunk_count, input_tokens, output_tokens, cache_hit,
+               cached_from_attempt_id, interpretation_json, error_code
+        FROM profile_interpretation_attempts
+        WHERE workspace_id=? AND revision_id=? AND attempt_id=?
+        """,
+        (workspace_id, revision_id, attempt_id),
+    ).fetchone()
+
+
+def _profile_interpretation_from_row(row: tuple) -> ProfileInterpretationAttempt:
+    try:
+        config = None if row[9] is None else ProviderConfigSnapshot.model_validate(
+            _json_value(row[9])
+        )
+        interpretation = (
+            None if row[18] is None else ProfileInterpretationV1.model_validate(
+                _json_value(row[18])
+            )
+        )
+        attempt = ProfileInterpretationAttempt(
+            workspace_id=row[0], revision_id=row[1], attempt_id=row[2],
+            client_request_id=row[3], created_at=_parse_created_at(row[4]),
+            started_at=_parse_created_at(row[5]) if row[5] else None,
+            finished_at=_parse_created_at(row[6]) if row[6] else None,
+            status=row[7], profile_hash=row[8], config=config,
+            config_fingerprint=row[10], prompt_sha256=row[11],
+            sent_bytes=row[12], chunk_count=row[13], input_tokens=row[14],
+            output_tokens=row[15], cache_hit=bool(row[16]),
+            cached_from_attempt_id=row[17], interpretation=interpretation,
+            error_code=row[19],
+        )
+        if config is not None and _canonical_json(config) != row[9]:
+            raise WorkspaceStoreUnavailableError()
+        if interpretation is not None and _canonical_json(interpretation) != row[18]:
+            raise WorkspaceStoreUnavailableError()
+        if row[16] not in {0, 1}:
+            raise WorkspaceStoreUnavailableError()
+        return attempt
+    except WorkspaceStoreError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceStoreUnavailableError() from exc
+
+
+def _insert_profile_interpretation_attempt(
+    connection: sqlite3.Connection,
+    attempt: ProfileInterpretationAttempt,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO profile_interpretation_attempts VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            attempt.workspace_id, attempt.revision_id, attempt.attempt_id,
+            attempt.client_request_id, attempt.created_at.isoformat(),
+            attempt.started_at.isoformat() if attempt.started_at else None,
+            attempt.finished_at.isoformat() if attempt.finished_at else None,
+            attempt.status, attempt.profile_hash,
+            _canonical_json(attempt.config) if attempt.config else None,
+            attempt.config_fingerprint, attempt.prompt_sha256, attempt.sent_bytes,
+            attempt.chunk_count, attempt.input_tokens, attempt.output_tokens,
+            int(attempt.cache_hit), attempt.cached_from_attempt_id,
+            _canonical_json(attempt.interpretation) if attempt.interpretation else None,
+            attempt.error_code,
+        ),
+    )
 
 
 def _unique_evidence_refs(refs: list[EvidenceRef]) -> list[EvidenceRef]:

@@ -383,6 +383,28 @@ class SampleRow(ContextOxModel):
     source_refs: list[EvidenceRef]
 
 
+class ProfileValueCount(ContextOxModel):
+    value_kind: ValueKind
+    text: Annotated[StrictStr | None, Field(max_length=256)]
+    count: Count
+    truncated: StrictBool = False
+
+    @model_validator(mode="after")
+    def validate_text(self) -> ProfileValueCount:
+        if self.value_kind in {"missing", "null"} and self.text is not None:
+            raise ValueError("missing and null counts cannot carry text")
+        if self.value_kind not in {"missing", "null"} and self.text is None:
+            raise ValueError("observed value counts require text")
+        if self.truncated and self.text is None:
+            raise ValueError("truncated value counts require text")
+        return self
+
+
+class ProfileTypeCount(ContextOxModel):
+    value_kind: ValueKind
+    count: Count
+
+
 class ColumnProfile(ContextOxModel):
     name: Key
     observed_types: list[Key]
@@ -391,6 +413,16 @@ class ColumnProfile(ContextOxModel):
     distinct_count: Count
     numeric_min: Text | None
     numeric_max: Text | None
+    type_counts: list[ProfileTypeCount] = Field(default_factory=list, max_length=7)
+    numeric_p25: Text | None = None
+    numeric_p50: Text | None = None
+    numeric_p75: Text | None = None
+    date_min: Text | None = None
+    date_max: Text | None = None
+    text_length_min: Count | None = None
+    text_length_max: Count | None = None
+    enum_candidate: StrictBool = False
+    top_values: list[ProfileValueCount] = Field(default_factory=list, max_length=10)
 
 
 class TableProfile(ContextOxModel):
@@ -427,6 +459,15 @@ class SourceArtifact(ContextOxModel):
         if self.source_ref.workspace_id not in workspace_ids:
             raise ValueError("SourceArtifact evidence must match source_ref")
         return self
+
+
+class ProfileTableV1(ContextOxModel):
+    table_id: StrictStr = Field(max_length=4096)
+    row_count: Count
+    column_count: Count
+    duplicate_row_count: Count
+    columns: list[ColumnProfile] = Field(max_length=100)
+    source_refs: list[EvidenceRef]
 
 
 class SourceExcerpt(ContextOxModel):
@@ -471,6 +512,95 @@ class RelationshipProfile(ContextOxModel):
         if len(workspace_ids) > 1:
             raise ValueError("relationship evidence must belong to one Workspace")
         return self
+
+
+class ProfilePackV1(ContextOxModel):
+    version: Literal["v1"]
+    source_ref: SourceIdentity
+    parser_version: Key
+    profile_hash: Hash
+    parse_status: Literal["ready", "partial", "blocked", "failed"]
+    recognized_table_rows_complete: StrictBool
+    stats_mode: Literal["exact", "approximate"]
+    tables: list[ProfileTableV1] = Field(max_length=16)
+    relationships: list[RelationshipProfile] = Field(default_factory=list, max_length=100)
+    limitations: list[Text]
+
+    @model_validator(mode="after")
+    def validate_profile_pack(self) -> ProfilePackV1:
+        workspace_ids = {
+            self.source_ref.workspace_id,
+            *(ref.workspace_id for table in self.tables for ref in table.source_refs),
+            *(
+                relationship.left.source_ref.workspace_id
+                for relationship in self.relationships
+            ),
+            *(
+                relationship.right.source_ref.workspace_id
+                for relationship in self.relationships
+            ),
+        }
+        if workspace_ids != {self.source_ref.workspace_id}:
+            raise ValueError("profile evidence must match the source Workspace")
+        expected = canonical_sha256(self.model_dump(mode="json", exclude={"profile_hash"}))
+        if self.profile_hash != expected:
+            raise ValueError("profile_hash does not match ProfilePackV1")
+        return self
+
+
+class ProfileColumnInterpretationV1(ContextOxModel):
+    table_id: StrictStr = Field(max_length=4096)
+    column_name: Key
+    category: Literal["numeric", "text", "enum", "date", "boolean", "mixed", "unknown"]
+    business_meaning_candidate: Text | None
+    anomalies: list[Text] = Field(max_length=20)
+    unknown_items: list[Text] = Field(max_length=20)
+
+
+class ProfileRelationshipHintV1(ContextOxModel):
+    left_table_id: StrictStr = Field(max_length=4096)
+    right_table_id: StrictStr = Field(max_length=4096)
+    left_columns: list[Key] = Field(min_length=1, max_length=10)
+    right_columns: list[Key] = Field(min_length=1, max_length=10)
+    reason: Text
+
+    @model_validator(mode="after")
+    def validate_arity(self) -> ProfileRelationshipHintV1:
+        if len(self.left_columns) != len(self.right_columns):
+            raise ValueError("relationship hint columns must have equal arity")
+        return self
+
+
+class ProfileInterpretationV1(ContextOxModel):
+    version: Literal["v1"]
+    profile_hash: Hash
+    partial: StrictBool
+    covered_chunks: PositiveInt
+    total_chunks: PositiveInt
+    columns: list[ProfileColumnInterpretationV1] = Field(max_length=400)
+    relationship_hints: list[ProfileRelationshipHintV1] = Field(max_length=100)
+    unknown_items: list[Text] = Field(max_length=100)
+
+    @model_validator(mode="after")
+    def validate_coverage(self) -> ProfileInterpretationV1:
+        if self.covered_chunks > self.total_chunks:
+            raise ValueError("covered_chunks cannot exceed total_chunks")
+        if self.partial != (self.covered_chunks < self.total_chunks):
+            raise ValueError("partial must match chunk coverage")
+        keys = [(item.table_id, item.column_name) for item in self.columns]
+        if len(set(keys)) != len(keys):
+            raise ValueError("column interpretations must be unique")
+        return self
+
+
+class ProfileInterpretationCreateRequest(ContextOxModel):
+    client_request_id: ID
+    provider_send_confirmed: Literal[True]
+
+
+ProfileInterpretationStatus = Literal[
+    "queued", "running", "succeeded", "blocked", "failed", "cancelled"
+]
 
 
 class MissionDraftPayload(ContextOxModel):
@@ -609,6 +739,9 @@ class RunBudget(ContextOxModel):
 RunStatus = Literal[
     "queued", "running", "waiting_for_human", "partial", "completed", "blocked", "failed", "cancelled"
 ]
+RunPhase = Literal[
+    "prepare_context", "synthesize_once", "validate", "apply", "terminal", "legacy_loop"
+]
 
 
 class RunSnapshot(ContextOxModel):
@@ -617,6 +750,7 @@ class RunSnapshot(ContextOxModel):
     mission_id: ID
     run_id: ID
     status: RunStatus
+    phase: RunPhase = "legacy_loop"
     created_at: UTC
     started_at: UTC | None
     finished_at: UTC | None
@@ -1060,8 +1194,58 @@ class AnswerImpact(ContextOxModel):
 class ProviderConfigSnapshot(ContextOxModel):
     endpoint_id: Literal["deepseek_chat_completions"]
     model: Literal["deepseek-v4-flash", "deepseek-v4-pro"]
-    thinking: Literal["enabled"]
-    reasoning_effort: Literal["low", "high", "max"]
+    thinking: Literal["enabled", "disabled"]
+    reasoning_effort: Literal["low", "high", "max"] | None
+
+    @model_validator(mode="after")
+    def validate_thinking_effort(self) -> ProviderConfigSnapshot:
+        if self.thinking == "enabled" and self.reasoning_effort is None:
+            raise ValueError("enabled thinking requires reasoning_effort")
+        if self.thinking == "disabled" and self.reasoning_effort is not None:
+            raise ValueError("disabled thinking cannot carry reasoning_effort")
+        return self
+
+
+class ProfileInterpretationAttempt(ContextOxModel):
+    workspace_id: ID
+    revision_id: ID
+    attempt_id: ID
+    client_request_id: ID
+    created_at: UTC
+    started_at: UTC | None
+    finished_at: UTC | None
+    status: ProfileInterpretationStatus
+    profile_hash: Hash
+    config: ProviderConfigSnapshot | None
+    config_fingerprint: Hash
+    prompt_sha256: Hash
+    sent_bytes: Count
+    chunk_count: Count
+    input_tokens: Count | None
+    output_tokens: Count | None
+    cache_hit: StrictBool
+    cached_from_attempt_id: ID | None
+    interpretation: ProfileInterpretationV1 | None
+    error_code: Key | None
+
+    @model_validator(mode="after")
+    def validate_attempt_state(self) -> ProfileInterpretationAttempt:
+        terminal = self.status in {"succeeded", "blocked", "failed", "cancelled"}
+        if terminal != (self.finished_at is not None):
+            raise ValueError("terminal interpretation attempts require finished_at")
+        if self.status == "queued" and self.started_at is not None:
+            raise ValueError("queued interpretation attempts cannot be started")
+        if self.status == "running" and self.started_at is None:
+            raise ValueError("running interpretation attempts require started_at")
+        if self.status == "succeeded" and self.interpretation is None:
+            raise ValueError("succeeded interpretation attempts require output")
+        if self.status != "succeeded" and self.interpretation is not None:
+            raise ValueError("only succeeded attempts contain interpretation")
+        if self.cache_hit != (self.cached_from_attempt_id is not None):
+            raise ValueError("cache_hit must match cached_from_attempt_id")
+        if self.interpretation and self.interpretation.profile_hash != self.profile_hash:
+            raise ValueError("interpretation must match profile_hash")
+        return self
 
 
 ProviderReceiptStatus = Literal["succeeded", "blocked", "failed", "cancelled"]
@@ -1722,6 +1906,10 @@ class RunStartedPayload(ContextOxModel):
     status: Literal["running"]
 
 
+class RunPhaseChangedPayload(ContextOxModel):
+    phase: RunPhase
+
+
 class MessageCreatedPayload(ContextOxModel):
     message_id: ID
     role: Literal["user", "assistant"]
@@ -1738,8 +1926,6 @@ class ModelStartedPayload(ContextOxModel):
             self.transport != "non_stream" or self.fallback_of_turn_index != self.turn_index - 1
         ):
             raise ValueError("Fallback must identify the immediately preceding stream request.")
-        if self.transport == "non_stream" and self.fallback_of_turn_index is None:
-            raise ValueError("Non-stream Run requests require a fallback origin.")
         return self
 
 
@@ -1810,6 +1996,7 @@ class RunCancelledPayload(RunTerminalPayload):
 
 RunEventType = Literal[
     "run_started",
+    "run_phase_changed",
     "message_created",
     "model_started",
     "model_delta",
@@ -1831,6 +2018,11 @@ RunEventType = Literal[
 class RunStartedEventInput(ContextOxModel):
     event_type: Literal["run_started"]
     public_payload: RunStartedPayload
+
+
+class RunPhaseChangedEventInput(ContextOxModel):
+    event_type: Literal["run_phase_changed"]
+    public_payload: RunPhaseChangedPayload
 
 
 class MessageCreatedEventInput(ContextOxModel):
@@ -1910,6 +2102,7 @@ class RunCancelledEventInput(ContextOxModel):
 
 RunEventInputUnion = Annotated[
     RunStartedEventInput
+    | RunPhaseChangedEventInput
     | MessageCreatedEventInput
     | ModelStartedEventInput
     | ModelDeltaEventInput
@@ -1956,6 +2149,11 @@ class _RunEventEnvelopeBase(ContextOxModel):
 class RunStartedEventEnvelope(_RunEventEnvelopeBase):
     event_type: Literal["run_started"]
     public_payload: RunStartedPayload
+
+
+class RunPhaseChangedEventEnvelope(_RunEventEnvelopeBase):
+    event_type: Literal["run_phase_changed"]
+    public_payload: RunPhaseChangedPayload
 
 
 class MessageCreatedEventEnvelope(_RunEventEnvelopeBase):
@@ -2035,6 +2233,7 @@ class RunCancelledEventEnvelope(_RunEventEnvelopeBase):
 
 RunEventEnvelopeUnion = Annotated[
     RunStartedEventEnvelope
+    | RunPhaseChangedEventEnvelope
     | MessageCreatedEventEnvelope
     | ModelStartedEventEnvelope
     | ModelDeltaEventEnvelope

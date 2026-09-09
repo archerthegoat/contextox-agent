@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 from contextox.api import _event_stream
 from contextox import agent, cli
+from contextox.models import RunBudget
 from contextox.provider import ProviderCancelledError
 from contextox.runtime import Path2Runtime
 from contextox.store import WorkspaceStore
@@ -54,7 +55,9 @@ def child(mode, directory, port):
         return app
 
     provider = WaitingProvider if mode == 'running' else AnswerProvider
-    with patch.object(cli, 'create_app', create), patch.object(agent, 'get_provider', provider):
+    with patch.object(cli, 'create_app', create), patch.object(agent, 'get_provider', provider), \
+         patch.object(RunBudget, 'deterministic_controller',
+                      return_value=RunBudget(max_output_tokens=16384)):
         return cli.main(['start', '--port', port, '--data-dir', directory])
 
 

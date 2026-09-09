@@ -6,12 +6,20 @@ from unittest.mock import patch
 
 import test_agent as fixtures
 from contextox import agent
-from contextox.models import ReadSourceCall
+from contextox.models import ReadSourceCall, RunBudget
 from contextox.provider import ProviderToolCall
 from contextox.store import Path2StateError, WorkspaceStore
 
 
 class SourceBoundsTests(unittest.TestCase):
+    def setUp(self):
+        budget_patch = patch.object(
+            RunBudget, "deterministic_controller",
+            return_value=RunBudget(max_output_tokens=16384),
+        )
+        budget_patch.start()
+        self.addCleanup(budget_patch.stop)
+
     def test_bounds_are_selected_source_only_and_reads_remain_explicit(self):
         cases = [
             ('text/markdown', 'sample.md', b'# Synthetic\n\nText\n\nUnit: yuan\n\nEnd', 'text_lines', 7),

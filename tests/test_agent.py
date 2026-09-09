@@ -647,18 +647,12 @@ class PersistedRunTests(unittest.TestCase):
             RunBudget(max_model_turns=9)
 
     def test_new_and_legacy_runs_preserve_persisted_budget_on_replay_and_restart(self):
-        import contextox.store as store_module
-
         for output_limit in (4096, 16384):
-            with self.subTest(output_limit=output_limit), self.store_case() as (store, ws, mission, refs):
+            with self.subTest(output_limit=output_limit), self.store_case(
+                legacy_output_limit=output_limit
+            ) as (store, ws, mission, refs):
                 request = _start_request(mission, refs)
-                if output_limit == 4096:
-                    # Model the previously shipped creation policy; leave all Store
-                    # serialization, identity, and replay checks in production code.
-                    with patch.object(store_module, "RunBudget", return_value=RunBudget()):
-                        run = store.start_run(ws, mission.mission_id, request)
-                else:
-                    run = store.start_run(ws, mission.mission_id, request)
+                run = store.start_run(ws, mission.mission_id, request)
                 self.assertEqual(run.budget.max_output_tokens, output_limit)
                 self.assertEqual(store.start_run(ws, mission.mission_id, request), run)
                 provider = FakeProvider([_completion("Synthetic answer", (ProviderToolCall(
@@ -964,13 +958,27 @@ class PersistedRunTests(unittest.TestCase):
             self.assertEqual(json.loads(versions[-1][1]), [item.model_dump(mode="json") for item in empty.fields])
 
     @contextmanager
-    def store_case(self, *, with_sources: bool = False):
+    def store_case(
+        self,
+        *,
+        with_sources: bool = False,
+        controller: bool = False,
+        legacy_output_limit: int = 16384,
+    ):
         with tempfile.TemporaryDirectory(prefix="contextox-run-", dir="/private/tmp") as directory:
             store = WorkspaceStore.open(directory)
             workspace_id, mission, refs = _persisted_mission(
                 store, with_sources=with_sources
             )
-            yield store, workspace_id, mission, refs
+            if controller:
+                yield store, workspace_id, mission, refs
+            else:
+                with patch.object(
+                    RunBudget,
+                    "deterministic_controller",
+                    return_value=RunBudget(max_output_tokens=legacy_output_limit),
+                ):
+                    yield store, workspace_id, mission, refs
 
     def test_start_is_exactly_idempotent_and_rejects_conflicts_before_creation(self):
         with self.store_case(with_sources=True) as (store, workspace_id, mission, refs):

@@ -50,6 +50,9 @@ from contextox.models import (
     MissionSnapshot,
     ProviderConfigSnapshot,
     ProviderReceipt,
+    ProfileInterpretationAttempt,
+    ProfileInterpretationCreateRequest,
+    ProfilePackV1,
     ReadinessResponse,
     RelationshipProfile,
     RunEventEnvelope,
@@ -531,12 +534,14 @@ def _workspace_store_error_response(
         not_found = error.code in {
             "mission_draft_attempt_not_found", "mission_not_found", "run_not_found",
             "message_not_found", "message_submission_not_found", "clarification_not_found",
-            "clarification_answer_not_found", "clarification_submission_not_found"
+            "clarification_answer_not_found", "clarification_submission_not_found",
+            "profile_interpretation_attempt_not_found",
         }
         return _workspace_error(
             request,
             status_code=(404 if not_found else 503 if error.code in {
-                "task_dialogue_not_implemented", "message_page_item_too_large", "clarification_answers_not_implemented"
+                "task_dialogue_not_implemented", "message_page_item_too_large",
+                "clarification_answers_not_implemented", "profile_interpretation_not_implemented"
             } else 409 if error.code in {"message_reference_stale",
                 "message_context_scope_mismatch", "task_waiting_for_review",
                 "previous_outcome_unresolved", "idempotency_conflict", "clarification_answer_stale",
@@ -776,6 +781,7 @@ def create_app(
     data_dir: Path | None = None,
     migrate_dialogue: bool = False,
     migrate_clarifications: bool = False,
+    migrate_profiles: bool = False,
 ) -> FastAPI:
     resolved_static_dir = (static_dir or DEFAULT_STATIC_DIR).resolve()
 
@@ -806,7 +812,12 @@ def create_app(
     app.state.path2_runtime = None
     if app.state.data_dir is not None:
         try:
-            app.state.workspace_store = WorkspaceStore.open(app.state.data_dir, migrate_dialogue=migrate_dialogue, migrate_clarifications=migrate_clarifications)
+            app.state.workspace_store = WorkspaceStore.open(
+                app.state.data_dir,
+                migrate_dialogue=migrate_dialogue,
+                migrate_clarifications=migrate_clarifications,
+                migrate_profiles=migrate_profiles,
+            )
         except WorkspaceStoreError as error:
             app.state.workspace_store_error = error
         except (OSError, sqlite3.Error):
@@ -1107,6 +1118,94 @@ def create_app(
             return invalid
         try:
             return _workspace_store(app).get_source_artifact(workspace_id, revision_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/sources/{revision_id}/profile",
+        response_model=ProfilePackV1,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["sources"],
+    )
+    def fetch_source_profile(
+        workspace_id: str,
+        revision_id: str,
+        request: Request,
+    ) -> ProfilePackV1 | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        invalid = _invalid_object_path(request, revision_id)
+        if invalid is not None:
+            return invalid
+        try:
+            return _workspace_store(app).get_source_profile(workspace_id, revision_id)
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.post(
+        "/api/workspaces/{workspace_id}/sources/{revision_id}/profile-interpretations",
+        response_model=ProfileInterpretationAttempt,
+        status_code=202,
+        responses={
+            404: {"model": WorkspaceError},
+            409: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["sources"],
+    )
+    def create_profile_interpretation(
+        workspace_id: str,
+        revision_id: str,
+        payload: ProfileInterpretationCreateRequest,
+        request: Request,
+    ) -> ProfileInterpretationAttempt | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        invalid = _invalid_object_path(request, revision_id)
+        if invalid is not None:
+            return invalid
+        try:
+            attempt, _created = _path2_runtime(app).start_profile_interpretation(
+                workspace_id, revision_id, payload
+            )
+            return attempt
+        except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.get(
+        "/api/workspaces/{workspace_id}/sources/{revision_id}/profile-interpretations/{attempt_id}",
+        response_model=ProfileInterpretationAttempt,
+        responses={
+            404: {"model": WorkspaceError},
+            422: {"model": WorkspaceError},
+            503: {"model": WorkspaceError},
+        },
+        tags=["sources"],
+    )
+    def fetch_profile_interpretation(
+        workspace_id: str,
+        revision_id: str,
+        attempt_id: str,
+        request: Request,
+    ) -> ProfileInterpretationAttempt | JSONResponse:
+        invalid = _invalid_workspace_path(request, workspace_id)
+        if invalid is not None:
+            return invalid
+        for value in (revision_id, attempt_id):
+            invalid = _invalid_object_path(request, value)
+            if invalid is not None:
+                return invalid
+        try:
+            return _workspace_store(app).get_profile_interpretation_attempt(
+                workspace_id, revision_id, attempt_id
+            )
         except WorkspaceStoreError as error:
             return _workspace_store_error_response(request, error)
 

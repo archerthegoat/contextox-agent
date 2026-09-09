@@ -14,7 +14,9 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from math import ceil
 from threading import Lock
 from typing import Any
 
@@ -27,6 +29,10 @@ from contextox.models import (
     EvidenceRef,
     JsonPointerLocator,
     Key,
+    ProfilePackV1,
+    ProfileTableV1,
+    ProfileTypeCount,
+    ProfileValueCount,
     RelationshipProfile,
     SampleCell,
     SampleRow,
@@ -38,6 +44,7 @@ from contextox.models import (
     TableKey,
     TableProfile,
     TextLinesLocator,
+    canonical_sha256,
 )
 
 
@@ -96,6 +103,7 @@ _INTEGER_TOKEN = re.compile(r"^[+-]?\d+$")
 _DECIMAL_TOKEN = re.compile(
     r"^[+-]?(?:(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?|\d+[eE][+-]?\d+)$"
 )
+_ISO_DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}(?:$|[T ])")
 _ARRAY_INDEX = re.compile(r"^(?:0|[1-9]\d*)$")
 _CSV_FIELD_LIMIT_LOCK = Lock()
 _NON_ROW_LIMITING_PARSE_ISSUES = frozenset({"json_unsupported_fragment"})
@@ -324,6 +332,56 @@ def _numeric_bounds(values: list[_Cell]) -> tuple[str | None, str | None]:
     return minimum, maximum
 
 
+def _numeric_quantiles(values: list[_Cell]) -> tuple[str | None, str | None, str | None]:
+    numeric: list[tuple[Decimal, str]] = []
+    for value in values:
+        if value.kind not in {"integer", "decimal"} or value.text is None:
+            continue
+        try:
+            parsed = Decimal(value.text)
+        except InvalidOperation:
+            continue
+        if parsed.is_finite():
+            numeric.append((parsed, value.text))
+    if not numeric:
+        return None, None, None
+    numeric.sort(key=lambda item: (item[0], item[1]))
+
+    def nearest_rank(quantile: Decimal) -> str:
+        index = max(0, ceil(len(numeric) * quantile) - 1)
+        return numeric[index][1]
+
+    return (
+        nearest_rank(Decimal("0.25")),
+        nearest_rank(Decimal("0.50")),
+        nearest_rank(Decimal("0.75")),
+    )
+
+
+def _date_bounds(values: list[_Cell]) -> tuple[str | None, str | None]:
+    parsed_values: list[tuple[datetime | date, str]] = []
+    for value in values:
+        if value.kind != "string" or value.text is None or not _ISO_DATE_PREFIX.match(value.text):
+            continue
+        try:
+            parsed: datetime | date
+            if len(value.text) == 10:
+                parsed = date.fromisoformat(value.text)
+            else:
+                parsed = datetime.fromisoformat(value.text.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        parsed_values.append((parsed, value.text))
+    if not parsed_values:
+        return None, None
+    try:
+        parsed_values.sort(key=lambda item: item[0])
+    except TypeError:
+        # Mixed timezone-aware and naive timestamps have no deterministic order.
+        return None, None
+    return parsed_values[0][1], parsed_values[-1][1]
+
+
 def _profile_table(table: _Table, revision: SourceRevision) -> TableProfile:
     columns: list[ColumnProfile] = []
     for name in table.columns:
@@ -332,7 +390,11 @@ def _profile_table(table: _Table, revision: SourceRevision) -> TableProfile:
         distinct_values: set[tuple[str, str | None]] = set()
         missing_count = 0
         null_count = 0
+        type_counts: Counter[str] = Counter()
+        value_counts: Counter[tuple[str, str]] = Counter()
+        text_lengths: list[int] = []
         for value in values:
+            type_counts[value.kind] += 1
             if value.kind == "missing":
                 missing_count += 1
                 continue
@@ -342,7 +404,30 @@ def _profile_table(table: _Table, revision: SourceRevision) -> TableProfile:
             if value.kind not in observed_types:
                 observed_types.append(value.kind)
             distinct_values.add((value.kind, value.text))
+            if value.text is not None:
+                value_counts[(value.kind, value.text)] += 1
+                if value.kind == "string":
+                    text_lengths.append(len(value.text))
         numeric_min, numeric_max = _numeric_bounds(values)
+        numeric_p25, numeric_p50, numeric_p75 = _numeric_quantiles(values)
+        date_min, date_max = _date_bounds(values)
+        observed_count = len(values) - missing_count - null_count
+        enum_candidate = (
+            observed_count >= 10
+            and 0 < len(distinct_values) <= 20
+            and len(distinct_values) * 5 <= observed_count
+        )
+        top_values = []
+        for (value_kind, raw), count in sorted(
+            value_counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1])
+        )[:10]:
+            rendered, truncated = _bounded_text(raw, 256)
+            top_values.append(ProfileValueCount(
+                value_kind=value_kind,
+                text=rendered,
+                count=count,
+                truncated=truncated,
+            ))
         columns.append(
             ColumnProfile(
                 name=name,
@@ -352,6 +437,20 @@ def _profile_table(table: _Table, revision: SourceRevision) -> TableProfile:
                 distinct_count=len(distinct_values),
                 numeric_min=numeric_min,
                 numeric_max=numeric_max,
+                type_counts=[
+                    ProfileTypeCount(value_kind=kind, count=type_counts[kind])
+                    for kind in ("missing", "null", "string", "integer", "decimal", "boolean", "json")
+                    if type_counts[kind]
+                ],
+                numeric_p25=numeric_p25,
+                numeric_p50=numeric_p50,
+                numeric_p75=numeric_p75,
+                date_min=date_min,
+                date_max=date_max,
+                text_length_min=min(text_lengths) if text_lengths else None,
+                text_length_max=max(text_lengths) if text_lengths else None,
+                enum_candidate=enum_candidate,
+                top_values=top_values,
             )
         )
 
@@ -851,6 +950,44 @@ def parse_source(revision: SourceRevision, content: bytes) -> SourceArtifact:
         text_line_count=document.text_line_count,
         issues=document.issues,
     )
+
+
+def build_profile_pack(revision: SourceRevision, content: bytes) -> ProfilePackV1:
+    """Build a versioned exact profile without sending source rows externally."""
+
+    artifact = parse_source(revision, content)
+    payload = {
+        "version": "v1",
+        "source_ref": artifact.source_ref,
+        "parser_version": artifact.parser_version,
+        "parse_status": artifact.parse_status,
+        "recognized_table_rows_complete": recognized_table_rows_complete(artifact),
+        "stats_mode": "exact",
+        "tables": [
+            ProfileTableV1(
+                table_id=table.table_id,
+                row_count=table.row_count,
+                column_count=len(table.columns),
+                duplicate_row_count=table.duplicate_row_count,
+                columns=table.columns,
+                source_refs=table.source_refs,
+            )
+            for table in artifact.tables
+        ],
+        "relationships": [],
+        "limitations": [
+            "Statistics are exact within the current 5,000-row and 100-column admission limits.",
+            "Top values are local observations, not approved business semantics.",
+            "Relationship statistics require an explicit pair of table keys and are not inferred here.",
+        ],
+    }
+    plain = {
+        **payload,
+        "source_ref": artifact.source_ref.model_dump(mode="json"),
+        "tables": [item.model_dump(mode="json") for item in payload["tables"]],
+        "relationships": [],
+    }
+    return ProfilePackV1(**plain, profile_hash=canonical_sha256(plain))
 
 
 def _require_locator_for_media(

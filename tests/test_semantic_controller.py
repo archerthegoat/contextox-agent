@@ -50,6 +50,7 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             run.run_id,
             agent._context_manifest(snapshot, turn_index=1, tool_receipt_ids=[]),
         )
+        store.set_run_phase(ws, mission.mission_id, run.run_id, "synthesize_once")
         receipt = agent._make_receipt(
             provider=fixtures.FakeProvider([]),
             workspace_id=ws,
@@ -64,16 +65,18 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
         )
         store.record_provider_receipt(ws, mission.mission_id, run.run_id, receipt)
+        store.set_run_phase(ws, mission.mission_id, run.run_id, "validate")
+        store.set_run_phase(ws, mission.mission_id, run.run_id, "apply")
         return running, snapshot
 
     def test_one_high_json_request_has_no_tool_schema(self):
-        with fixtures.PersistedRunTests().store_case(with_sources=True) as (store, ws, mission, refs):
+        with fixtures.PersistedRunTests().store_case(
+            with_sources=True, controller=True
+        ) as (store, ws, mission, refs):
             run = store.start_run(ws, mission.mission_id, fixtures._start_request(mission, refs))
             snapshot = store.get_context_snapshot(ws, mission.mission_id, run.run_id)
             plan, _ = build_context_plan(snapshot, store)
-            evidence = plan.sources[0]["profiles"][plan.sources[0]["tables"][0]["table_id"]][
-                "evidence_handles"
-            ]
+            evidence = plan.sources[0]["profile_pack"]["tables"][0]["evidence_handles"]
             provider = ProposalProvider(json.dumps({
                 "version": "v1",
                 "action": "answer_only",
@@ -144,12 +147,14 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             semantic_messages(plan)
 
     def test_draft_and_clarification_are_applied_in_one_transaction(self):
-        with fixtures.PersistedRunTests().store_case(with_sources=True) as (store, ws, mission, refs):
+        with fixtures.PersistedRunTests().store_case(
+            with_sources=True, controller=True
+        ) as (store, ws, mission, refs):
             run, snapshot = self._running_semantic_case(store, ws, mission, refs)
             plan, adapter = build_context_plan(snapshot.model_copy(update={"run": run}), store)
             source = plan.sources[0]
             table = source["tables"][0]
-            profile = source["profiles"][table["table_id"]]
+            profile = source["profile_pack"]["tables"][0]
             column_handle = table["columns"][0]["column_handle"]
             evidence_handle = profile["evidence_handles"][0]
             missing = ["meaning", "grain", "rule", "time_basis", "null_handling"]
@@ -203,7 +208,9 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             self.assertEqual(page.items[-1].content, proposal.public_answer)
 
     def test_store_rejects_stale_draft_cas_with_zero_domain_writes(self):
-        with fixtures.PersistedRunTests().store_case(with_sources=True) as (store, ws, mission, refs):
+        with fixtures.PersistedRunTests().store_case(
+            with_sources=True, controller=True
+        ) as (store, ws, mission, refs):
             run, _snapshot = self._running_semantic_case(store, ws, mission, refs)
             application = SemanticApplicationInput(
                 action="clarify_only",
@@ -235,15 +242,12 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
     def test_controller_dispatch_makes_one_request_and_finishes_without_model_tools(self):
         import contextox.store as store_module
 
-        with fixtures.PersistedRunTests().store_case(with_sources=True) as (store, ws, mission, refs):
-            with patch.object(
-                store_module,
-                "RunBudget",
-                return_value=fixtures.RunBudget.deterministic_controller(),
-            ):
-                run = store.start_run(
-                    ws, mission.mission_id, fixtures._start_request(mission, refs)
-                )
+        with fixtures.PersistedRunTests().store_case(
+            with_sources=True, controller=True
+        ) as (store, ws, mission, refs):
+            run = store.start_run(
+                ws, mission.mission_id, fixtures._start_request(mission, refs)
+            )
             provider = fixtures.FakeProvider([ProviderCompletion(
                 completion_id="one-semantic-request",
                 content=json.dumps({
@@ -281,15 +285,12 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
     def test_invalid_json_records_the_single_call_and_leaves_domain_state_empty(self):
         import contextox.store as store_module
 
-        with fixtures.PersistedRunTests().store_case(with_sources=True) as (store, ws, mission, refs):
-            with patch.object(
-                store_module,
-                "RunBudget",
-                return_value=fixtures.RunBudget.deterministic_controller(),
-            ):
-                run = store.start_run(
-                    ws, mission.mission_id, fixtures._start_request(mission, refs)
-                )
+        with fixtures.PersistedRunTests().store_case(
+            with_sources=True, controller=True
+        ) as (store, ws, mission, refs):
+            run = store.start_run(
+                ws, mission.mission_id, fixtures._start_request(mission, refs)
+            )
             provider = fixtures.FakeProvider([ProviderCompletion(
                 completion_id="invalid-semantic-json",
                 content="{",

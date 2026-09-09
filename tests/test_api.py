@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -605,6 +606,74 @@ class SharedModelTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    def test_profile_routes_require_send_confirmation_and_preserve_scope(self) -> None:
+        from contextox import profile_interpretation
+
+        with tempfile.TemporaryDirectory(prefix="contextox-profile-api-") as directory:
+            app = create_app(static_dir=Path(directory), data_dir=Path(directory))
+            store = app.state.workspace_store
+            workspace_id = store.create_workspace("Profiles").workspace_id
+            other_workspace_id = store.create_workspace("Other").workspace_id
+            revision, _ = store.import_source_revision(
+                workspace_id, "input.csv", "text/csv",
+                b"id,status\n1,open\n2,closed\n",
+            )
+            base = (
+                f"/api/workspaces/{workspace_id}/sources/"
+                f"{revision.revision_id}"
+            )
+            status, body = asyncio.run(_asgi_request(app, "GET", base + "/profile"))
+            self.assertEqual(status, 200)
+            profile = json.loads(body)
+            self.assertEqual(profile["source_ref"]["revision_id"], revision.revision_id)
+            self.assertEqual(profile["stats_mode"], "exact")
+
+            rejected_status, _ = asyncio.run(_asgi_request(
+                app, "POST", base + "/profile-interpretations",
+                json.dumps({
+                    "client_request_id": str(uuid4()),
+                    "provider_send_confirmed": False,
+                }).encode(),
+            ))
+            self.assertEqual(rejected_status, 422)
+
+            def create_attempt(workspace_id, revision_id, payload):
+                return store.create_profile_interpretation_attempt(
+                    workspace_id, revision_id, payload,
+                    profile_interpretation.profile_provider_config(),
+                    profile_interpretation.PROFILE_INTERPRETATION_P0_SHA256,
+                )
+
+            with patch.object(
+                app.state.path2_runtime,
+                "start_profile_interpretation",
+                side_effect=create_attempt,
+            ):
+                created_status, created_body = asyncio.run(_asgi_request(
+                    app, "POST", base + "/profile-interpretations",
+                    json.dumps({
+                        "client_request_id": str(uuid4()),
+                        "provider_send_confirmed": True,
+                    }).encode(),
+                ))
+            self.assertEqual(created_status, 202)
+            attempt = json.loads(created_body)
+            self.assertEqual(attempt["status"], "queued")
+            fetched_status, fetched_body = asyncio.run(_asgi_request(
+                app, "GET",
+                base + "/profile-interpretations/" + attempt["attempt_id"],
+            ))
+            self.assertEqual((fetched_status, json.loads(fetched_body)), (
+                200, attempt
+            ))
+            cross_status, _ = asyncio.run(_asgi_request(
+                app, "GET",
+                f"/api/workspaces/{other_workspace_id}/sources/"
+                f"{revision.revision_id}/profile-interpretations/"
+                f"{attempt['attempt_id']}",
+            ))
+            self.assertEqual(cross_status, 404)
+
     def test_openapi_contains_n2a_public_seams(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-api-no-assets-") as directory:
             schema = create_app(static_dir=Path(directory)).openapi()
@@ -634,6 +703,9 @@ class ApiTests(unittest.TestCase):
                 {
                     "/api/workspaces/{workspace_id}/sources",
                     "/api/workspaces/{workspace_id}/sources/{revision_id}",
+                    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile",
+                    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile-interpretations",
+                    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile-interpretations/{attempt_id}",
                     "/api/workspaces/{workspace_id}/sources/{revision_id}/read",
                     "/api/workspaces/{workspace_id}/mission-draft-attempts",
                     "/api/workspaces/{workspace_id}/mission-draft-attempts/{attempt_id}",
@@ -1269,8 +1341,12 @@ class ApiTests(unittest.TestCase):
             self.assertIn(b"event: model_delta", event_body)
             self.assertIn(b"event: run_cancelled", event_body)
             self.assertNotIn("梳理数据关系", event_body.decode())
+            latest_sequence = store.get_run_snapshot(
+                workspace_id, mission.mission_id, run.run_id
+            ).last_sequence
             resumed_status, resumed_body = asyncio.run(_asgi_finite_stream(
-                app, events_path, [(b"last-event-id", b"2")]
+                app, events_path,
+                [(b"last-event-id", str(latest_sequence).encode())],
             ))
             self.assertEqual((resumed_status, resumed_body), (200, b""))
             invalid_status, invalid_body, _ = asyncio.run(_asgi_chunked_request(

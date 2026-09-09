@@ -9,9 +9,12 @@ from typing import Callable, Literal
 from uuid import uuid4
 
 from contextox import agent
+from contextox import profile_interpretation
 from contextox.models import (
     TaskMessageSendRequest, TaskMessageSendReceipt,
     MissionDraftAttempt,
+    ProfileInterpretationAttempt,
+    ProfileInterpretationCreateRequest,
     RunEventEnvelope,
     RunFailedEventInput,
     RunFailedPayload,
@@ -30,7 +33,7 @@ from contextox.store import (
 @dataclass
 class _ActiveTask:
     token: str
-    kind: Literal["attempt", "run"]
+    kind: Literal["attempt", "run", "profile"]
     workspace_id: str | None
     mission_id: str | None
     object_id: str | None
@@ -57,7 +60,7 @@ class Path2Runtime:
         self._event_condition = Condition()
         self.store.set_event_sink(self.publish_event)
 
-    def _reserve(self, kind: Literal["attempt", "run"]) -> _ActiveTask:
+    def _reserve(self, kind: Literal["attempt", "run", "profile"]) -> _ActiveTask:
         with self._slot_lock:
             if self._closed or self._active is not None:
                 raise WorkspaceStoreBusyError()
@@ -170,6 +173,56 @@ class Path2Runtime:
                 raise
             raise WorkspaceStoreUnavailableError() from exc
 
+    def start_profile_interpretation(
+        self,
+        workspace_id: str,
+        revision_id: str,
+        request: ProfileInterpretationCreateRequest,
+    ) -> tuple[ProfileInterpretationAttempt, bool]:
+        with self._slot_lock:
+            busy = self._closed or self._active is not None
+        if busy:
+            replay = self.store.find_profile_interpretation_request(
+                workspace_id, revision_id, request.client_request_id
+            )
+            if replay is not None:
+                return replay, False
+            raise WorkspaceStoreBusyError()
+        task = self._reserve("profile")
+        attempt: ProfileInterpretationAttempt | None = None
+        try:
+            attempt, created = self.store.create_profile_interpretation_attempt(
+                workspace_id,
+                revision_id,
+                request,
+                profile_interpretation.profile_provider_config(),
+                profile_interpretation.PROFILE_INTERPRETATION_P0_SHA256,
+            )
+            if not created or attempt.status != "queued":
+                self._release(task.token)
+                return attempt, created
+            task.workspace_id = workspace_id
+            task.mission_id = revision_id
+            task.object_id = attempt.attempt_id
+            self._start_thread(task, lambda: profile_interpretation.run_profile_interpretation(
+                self.store, workspace_id, revision_id, attempt.attempt_id,
+                task.cancel_event,
+            ))
+            return attempt, True
+        except BaseException as exc:
+            if attempt is not None and attempt.status == "queued":
+                try:
+                    self.store.fail_profile_interpretation_attempt(
+                        workspace_id, revision_id, attempt.attempt_id,
+                        "failed", "agent_start_failed",
+                    )
+                except WorkspaceStoreError:
+                    pass
+            self._release(task.token)
+            if isinstance(exc, WorkspaceStoreError):
+                raise
+            raise WorkspaceStoreUnavailableError() from exc
+
     def send_task_message(
         self, workspace_id: str, mission_id: str, request: TaskMessageSendRequest,
     ) -> tuple[TaskMessageSendReceipt, bool]:
@@ -241,6 +294,19 @@ class Path2Runtime:
                     self.store.fail_mission_draft_attempt(
                         task.workspace_id, task.object_id, "failed",
                         "agent_worker_failed", None,
+                    )
+                except WorkspaceStoreError:
+                    pass
+            elif (
+                task.kind == "profile"
+                and task.workspace_id is not None
+                and task.mission_id is not None
+                and task.object_id is not None
+            ):
+                try:
+                    self.store.fail_profile_interpretation_attempt(
+                        task.workspace_id, task.mission_id, task.object_id,
+                        "failed", "agent_worker_failed",
                     )
                 except WorkspaceStoreError:
                     pass
@@ -325,6 +391,15 @@ class Path2Runtime:
                 ):
                     self.store.fail_mission_draft_attempt(
                         task.workspace_id, task.object_id, "cancelled", "cancelled", None
+                    )
+                elif (
+                    task.kind == "profile" and task.workspace_id is not None
+                    and task.mission_id is not None and task.object_id is not None
+                ):
+                    task.cancel_event.set()
+                    self.store.fail_profile_interpretation_attempt(
+                        task.workspace_id, task.mission_id, task.object_id,
+                        "cancelled", "cancelled",
                     )
             except WorkspaceStoreError:
                 pass

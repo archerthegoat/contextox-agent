@@ -14,11 +14,14 @@ import {
   cancelRun,
   confirmMissionDraftAttempt,
   createMissionDraftAttempt,
+  createProfileInterpretation,
   fetchMissionDraftAttempt,
   fetchMissionSnapshot,
+  fetchProfileInterpretation,
   fetchMissions,
   fetchRunSnapshot,
   fetchSourceArtifact,
+  fetchSourceProfile,
   fetchSources,
   readSourceExcerpt,
   runEventsUrl,
@@ -33,6 +36,8 @@ export type SourceUploadFile = components["schemas"]["SourceUploadFile"];
 export type SourceBatchResult = components["schemas"]["SourceBatchResult"];
 export type SourceRevision = components["schemas"]["SourceRevision"];
 export type SourceArtifact = components["schemas"]["SourceArtifact"];
+export type ProfilePackV1 = components["schemas"]["ProfilePackV1"];
+export type ProfileInterpretationAttempt = components["schemas"]["ProfileInterpretationAttempt"];
 export type SourceExcerpt = components["schemas"]["SourceExcerpt"];
 export type SourceExcerptRequest = components["schemas"]["SourceExcerptRequest"];
 export type MissionDraftAttempt = components["schemas"]["MissionDraftAttempt"];
@@ -3444,12 +3449,225 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
                       ) : null}
                     </div>
                   ) : null}
+                  {state.workspaceId ? (
+                    <SourceProfilePanel
+                      workspaceId={state.workspaceId}
+                      revision={revision}
+                    />
+                  ) : null}
                 </article>
               );
             })}
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function SourceProfilePanel({
+  workspaceId,
+  revision,
+}: {
+  workspaceId: string;
+  revision: SourceRevision;
+}) {
+  const [profile, setProfile] = useState<ProfilePackV1 | null>(null);
+  const [attempt, setAttempt] = useState<ProfileInterpretationAttempt | null>(null);
+  const [sendConfirmed, setSendConfirmed] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [issue, setIssue] = useState<ApiIssue | null>(null);
+  const generationRef = useRef(0);
+  const pollCountRef = useRef(0);
+
+  useEffect(() => {
+    generationRef.current += 1;
+    pollCountRef.current = 0;
+    setProfile(null);
+    setAttempt(null);
+    setSendConfirmed(false);
+    setIssue(null);
+  }, [workspaceId, revision.revision_id]);
+
+  const responseMatches = useCallback((value: {
+    workspace_id: string;
+    revision_id: string;
+  }): boolean => (
+    value.workspace_id === workspaceId && value.revision_id === revision.revision_id
+  ), [revision.revision_id, workspaceId]);
+
+  const loadProfile = useCallback(async () => {
+    const generation = ++generationRef.current;
+    setLoadingProfile(true);
+    setIssue(null);
+    try {
+      const next = await fetchSourceProfile(workspaceId, revision.revision_id);
+      if (generation !== generationRef.current) return;
+      if (
+        next.source_ref.workspace_id !== workspaceId ||
+        next.source_ref.revision_id !== revision.revision_id ||
+        next.source_ref.source_id !== revision.source_id ||
+        next.source_ref.sha256 !== revision.sha256
+      ) {
+        setIssue(scopeIssue());
+        return;
+      }
+      setProfile(next);
+    } catch (error: unknown) {
+      if (generation === generationRef.current) setIssue(issueFromError(error));
+    } finally {
+      if (generation === generationRef.current) setLoadingProfile(false);
+    }
+  }, [revision, workspaceId]);
+
+  const requestInterpretation = useCallback(async () => {
+    if (!sendConfirmed || submitting) return;
+    const generation = ++generationRef.current;
+    setSubmitting(true);
+    setIssue(null);
+    pollCountRef.current = 0;
+    try {
+      const next = await createProfileInterpretation(
+        workspaceId,
+        revision.revision_id,
+        { client_request_id: createClientRequestId(), provider_send_confirmed: true },
+      );
+      if (generation !== generationRef.current) return;
+      if (!responseMatches(next)) {
+        setIssue(scopeIssue());
+        return;
+      }
+      setAttempt(next);
+    } catch (error: unknown) {
+      if (generation === generationRef.current) setIssue(issueFromError(error));
+    } finally {
+      if (generation === generationRef.current) setSubmitting(false);
+    }
+  }, [responseMatches, revision.revision_id, sendConfirmed, submitting, workspaceId]);
+
+  useEffect(() => {
+    if (!attempt || !["queued", "running"].includes(attempt.status)) return;
+    if (pollCountRef.current >= 130) {
+      setIssue({
+        kind: "blocked",
+        code: "profile_interpretation_readback_timeout",
+        message: "画像解释仍未返回终态。没有自动重发 Provider 请求；请稍后手动刷新状态。",
+      });
+      return;
+    }
+    const generation = generationRef.current;
+    const timer = window.setTimeout(() => {
+      pollCountRef.current += 1;
+      void fetchProfileInterpretation(
+        workspaceId, revision.revision_id, attempt.attempt_id,
+      ).then((next) => {
+        if (generation !== generationRef.current) return;
+        if (!responseMatches(next)) {
+          setIssue(scopeIssue());
+          return;
+        }
+        setAttempt(next);
+      }).catch((error: unknown) => {
+        if (generation === generationRef.current) setIssue(issueFromError(error));
+      });
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [attempt, responseMatches, revision.revision_id, workspaceId]);
+
+  const refreshAttempt = useCallback(async () => {
+    if (!attempt) return;
+    setIssue(null);
+    try {
+      const next = await fetchProfileInterpretation(
+        workspaceId, revision.revision_id, attempt.attempt_id,
+      );
+      if (!responseMatches(next)) {
+        setIssue(scopeIssue());
+        return;
+      }
+      setAttempt(next);
+    } catch (error: unknown) {
+      setIssue(issueFromError(error));
+    }
+  }, [attempt, responseMatches, revision.revision_id, workspaceId]);
+
+  return (
+    <div className="path2-profile-panel">
+      <div className="path2-profile-actions">
+        <button type="button" className="path2-secondary-button" onClick={() => void loadProfile()} disabled={loadingProfile}>
+          {loadingProfile ? "统计中…" : profile ? "重新读取画像" : "查看数据画像"}
+        </button>
+        {attempt ? (
+          <button type="button" className="path2-secondary-button" onClick={() => void refreshAttempt()}>
+            刷新解释状态
+          </button>
+        ) : null}
+      </div>
+      {issue ? <IssueCallout issue={issue} title="画像状态" /> : null}
+      {profile ? (
+        <div className="path2-profile-summary">
+          <div className="path2-artifact-meta">
+            <span>ProfilePackV1 · {profile.stats_mode === "exact" ? "精确统计" : "近似统计"}</span>
+            <span>{profile.tables.length} 张表</span>
+            <code title={profile.profile_hash}>{profile.profile_hash.slice(0, 12)}…</code>
+          </div>
+          {profile.tables.map((table) => (
+            <section className="path2-profile-table" key={table.table_id}>
+              <strong>{table.table_id || "根表"}</strong>
+              <small>{table.row_count.toLocaleString()} 行 · {table.column_count} 列 · 重复行 {table.duplicate_row_count.toLocaleString()}</small>
+              <div className="path2-profile-columns">
+                {table.columns.map((column) => (
+                  <div className="path2-profile-column" key={column.name}>
+                    <b>@{revision.original_name}/{table.table_id || "根表"}/{column.name}</b>
+                    <span>类型 {column.observed_types.join(" / ") || "未知"}</span>
+                    <span>缺失 {column.missing_count} · 空值 {column.null_count} · distinct {column.distinct_count}</span>
+                    {column.numeric_min !== null ? <span>范围 {column.numeric_min} – {column.numeric_max}</span> : null}
+                    {column.date_min ? <span>日期 {column.date_min} – {column.date_max}</span> : null}
+                    {column.enum_candidate ? <span>枚举候选</span> : null}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+          <label className="path2-confirmation-row">
+            <input type="checkbox" checked={sendConfirmed} onChange={(event) => setSendConfirmed(event.target.checked)} />
+            <span>我确认把这份统计画像发送给当前 Provider 生成候选解释；不发送整表和原始行。</span>
+          </label>
+          <button
+            type="button"
+            className="path2-primary-button"
+            disabled={!sendConfirmed || submitting || attempt?.status === "queued" || attempt?.status === "running"}
+            onClick={() => void requestInterpretation()}
+          >
+            {submitting ? "提交中…" : "生成画像解释"}
+          </button>
+        </div>
+      ) : null}
+      {attempt ? (
+        <div className="path2-profile-interpretation" aria-live="polite">
+          <div className="path2-artifact-meta">
+            <StatusPill status={attempt.status}>{statusLabel(attempt.status)}</StatusPill>
+            <span>{attempt.cache_hit ? "命中缓存，未产生新 Provider 调用" : `${attempt.chunk_count} 个已完成分片`}</span>
+            {attempt.error_code ? <code>{attempt.error_code}</code> : null}
+          </div>
+          {attempt.interpretation ? (
+            <>
+              {attempt.interpretation.partial ? <p>解释仅覆盖 {attempt.interpretation.covered_chunks}/{attempt.interpretation.total_chunks} 个分片，保持 partial。</p> : null}
+              <div className="path2-profile-columns">
+                {attempt.interpretation.columns.map((column) => (
+                  <div className="path2-profile-column" key={`${column.table_id}-${column.column_name}`}>
+                    <b>@{revision.original_name}/{column.table_id || "根表"}/{column.column_name}</b>
+                    <span>{column.category}</span>
+                    <span>{column.business_meaning_candidate ?? "业务含义待确认"}</span>
+                    {column.unknown_items.map((item) => <small key={item}>{item}</small>)}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3502,6 +3720,7 @@ function RunStatusCard({ state }: { state: Path2WorkbenchState }) {
       </div>
       <div className="path2-run-meta">
         <span>run <code>{run.run_id}</code></span>
+        <span>phase <code>{run.phase}</code></span>
         <span>sequence {run.last_sequence}</span>
         <span>SSE {state.runConnectionState}</span>
       </div>
@@ -3937,9 +4156,12 @@ export function Path2Workbench({ state, activeArea }: { state: Path2WorkbenchSta
 function eventSummary(event: RunEventEnvelope, replacedTurns: ReadonlySet<number>): string {
   switch (event.event_type) {
     case "run_started": return "Run 已进入运行阶段";
+    case "run_phase_changed": return `Run 阶段：${event.public_payload.phase}`;
     case "message_created": return `公开消息已创建（${event.public_payload.role}）`;
     case "model_started": return event.public_payload.transport === "non_stream"
-      ? `模型请求 ${event.public_payload.turn_index} 开始非流式降级，替代流式请求 ${event.public_payload.fallback_of_turn_index}；原请求的部分输出不作为结果。`
+      ? event.public_payload.fallback_of_turn_index
+        ? `模型请求 ${event.public_payload.turn_index} 开始非流式降级，替代流式请求 ${event.public_payload.fallback_of_turn_index}；原请求的部分输出不作为结果。`
+        : `模型请求 ${event.public_payload.turn_index} 开始单次非流式语义提案`
       : `模型轮次 ${event.public_payload.turn_index} 开始`;
     case "model_delta": return replacedTurns.has(event.public_payload.turn_index)
       ? `原流式请求 ${event.public_payload.turn_index} 的部分输出（已停止并降级，不作为结果）：${event.public_payload.content}`

@@ -115,6 +115,7 @@ const run: RunSnapshot = {
   mission_id: missionId,
   run_id: runId,
   status: "running",
+  phase: "legacy_loop",
   created_at: "2026-09-03T10:00:00Z",
   started_at: "2026-09-03T10:00:01Z",
   finished_at: null,

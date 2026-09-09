@@ -215,32 +215,32 @@ def normalize_semantic_proposal(
 
 
 def _source_plans(adapter: ToolAdapter, snapshot: ContextSnapshot, store: Any) -> list[dict[str, Any]]:
-    artifacts = {
-        ref.revision_id: store.get_source_artifact(snapshot.mission.workspace_id, ref.revision_id)
+    packs = {
+        ref.revision_id: store.get_source_profile(snapshot.mission.workspace_id, ref.revision_id)
         for ref in snapshot.run.source_refs
     }
     plans: list[dict[str, Any]] = []
     for source in adapter.catalog:
         source_plan = dict(source)
         revision_id = adapter.resolve(source["source_handle"], "source").revision_id
-        artifact = artifacts[revision_id]
-        profiles: dict[str, dict[str, Any]] = {}
-        for table in artifact.tables:
-            profiles[table.table_id] = {
-                "row_count": table.row_count,
-                "duplicate_row_count": table.duplicate_row_count,
-                "columns": [column.model_dump(mode="json") for column in table.columns],
+        pack = packs[revision_id]
+        profile = pack.model_dump(mode="json", exclude={"source_ref", "tables", "relationships"})
+        profile["tables"] = [
+            {
+                **table.model_dump(mode="json", exclude={"source_refs"}),
                 "evidence_handles": [adapter.evidence(ref) for ref in table.source_refs],
-                "sample_rows": [
-                    {
-                        "row_number": row.row_number,
-                        "cells": [cell.model_dump(mode="json") for cell in row.cells],
-                        "evidence_handles": [adapter.evidence(ref) for ref in row.source_refs],
-                    }
-                    for row in table.sample_rows
-                ],
             }
-        source_plan["profiles"] = profiles
+            for table in pack.tables
+        ]
+        profile["relationships"] = []
+        source_plan["profile_pack"] = profile
+        interpretation = store.get_cached_profile_interpretation(
+            snapshot.mission.workspace_id, revision_id, pack.profile_hash
+        )
+        source_plan["profile_interpretation"] = (
+            None if interpretation is None
+            else interpretation.model_dump(mode="json")
+        )
         plans.append(source_plan)
     return plans
 
@@ -265,13 +265,13 @@ def build_context_plan(
     return plan, adapter
 
 
-def semantic_messages(plan: ContextPlanV1) -> list[dict[str, Any]]:
-    messages = [
+def _render_semantic_messages(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
         {"role": "system", "content": P0_SEMANTIC_PROPOSAL},
         {
             "role": "user",
             "content": json.dumps(
-                plan.model_dump(mode="json"),
+                payload,
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -279,7 +279,10 @@ def semantic_messages(plan: ContextPlanV1) -> list[dict[str, Any]]:
             ),
         },
     ]
-    size = len(
+
+
+def _messages_size(messages: list[dict[str, Any]]) -> int:
+    return len(
         json.dumps(
             messages,
             ensure_ascii=False,
@@ -288,7 +291,43 @@ def semantic_messages(plan: ContextPlanV1) -> list[dict[str, Any]]:
             allow_nan=False,
         ).encode("utf-8")
     )
-    if size > SEMANTIC_MESSAGE_MAX_BYTES:
+
+
+def semantic_messages(plan: ContextPlanV1) -> list[dict[str, Any]]:
+    payload = plan.model_dump(mode="json")
+    messages = _render_semantic_messages(payload)
+    if _messages_size(messages) <= SEMANTIC_MESSAGE_MAX_BYTES:
+        return messages
+
+    # Remove reproducible presentation detail before rejecting the request.
+    # Table/column identities, bounds, unknowns, handles, the current request,
+    # draft token and all business provenance remain intact.
+    for source in payload["sources"]:
+        profile = source.get("profile_pack") or {}
+        profile["limitations"] = []
+        for table in profile.get("tables", []):
+            for column in table.get("columns", []):
+                column["top_values"] = []
+        interpretation = source.get("profile_interpretation")
+        if interpretation:
+            for column in interpretation.get("columns", []):
+                column["anomalies"] = []
+    messages = _render_semantic_messages(payload)
+    if _messages_size(messages) <= SEMANTIC_MESSAGE_MAX_BYTES:
+        return messages
+
+    for source in payload["sources"]:
+        profile = source.get("profile_pack") or {}
+        for table in profile.get("tables", []):
+            for column in table.get("columns", []):
+                column["type_counts"] = []
+                for key in (
+                    "numeric_p25", "numeric_p50", "numeric_p75",
+                    "text_length_min", "text_length_max",
+                ):
+                    column[key] = None
+    messages = _render_semantic_messages(payload)
+    if _messages_size(messages) > SEMANTIC_MESSAGE_MAX_BYTES:
         raise SemanticProposalFailure("context_too_broad")
     return messages
 

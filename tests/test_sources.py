@@ -24,6 +24,7 @@ from contextox.sources import (
     MAX_TABLE_COLUMNS,
     MAX_TABLE_ROWS,
     SourceInputError,
+    build_profile_pack,
     inspect_relationship,
     parse_source,
     read_source_fragment,
@@ -98,6 +99,42 @@ def _assert_source_error(
 
 
 class SourceParsingTests(unittest.TestCase):
+    def test_profile_pack_scans_all_admitted_rows_and_binds_revision_hash(self) -> None:
+        content = (
+            "id,amount,status,event_date\n"
+            + "\n".join(
+                f"{index},{index * 10},{'open' if index < 8 else 'closed'},2026-09-{index:02d}"
+                for index in range(1, 11)
+            )
+            + "\n"
+        ).encode()
+        revision = _revision(content, "text/csv")
+
+        pack = build_profile_pack(revision, content)
+
+        self.assertEqual(pack.version, "v1")
+        self.assertEqual(pack.source_ref.sha256, revision.sha256)
+        self.assertEqual(pack.stats_mode, "exact")
+        self.assertTrue(pack.recognized_table_rows_complete)
+        self.assertEqual((pack.tables[0].row_count, pack.tables[0].column_count), (10, 4))
+        amount = next(item for item in pack.tables[0].columns if item.name == "amount")
+        self.assertEqual(
+            (amount.numeric_min, amount.numeric_p25, amount.numeric_p50,
+             amount.numeric_p75, amount.numeric_max),
+            ("10", "30", "50", "80", "100"),
+        )
+        status = next(item for item in pack.tables[0].columns if item.name == "status")
+        self.assertTrue(status.enum_candidate)
+        self.assertEqual([(item.text, item.count) for item in status.top_values], [
+            ("open", 7), ("closed", 3)
+        ])
+        event_date = next(
+            item for item in pack.tables[0].columns if item.name == "event_date"
+        )
+        self.assertEqual((event_date.date_min, event_date.date_max), (
+            "2026-09-01", "2026-09-10"
+        ))
+
     def test_csv_profile_preserves_quoted_rows_numeric_lexemes_and_duplicate_rows(self) -> None:
         content = (
             b"id,name,amount,flag\n"

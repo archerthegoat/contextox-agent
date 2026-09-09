@@ -12,7 +12,7 @@ from uuid import uuid4
 from contextox import agent, store as db
 from contextox.clarifications import draft_ref, refs
 from contextox.models import (AnswerItem, ClarificationAnswerSaveRequest, ClarificationAnswerApproveRequest,
-    UpdateDefinitionDraftCall, CreateClarificationCall, TaskMessageSendRequest, canonical_sha256)
+    UpdateDefinitionDraftCall, CreateClarificationCall, TaskMessageSendRequest, RunBudget, canonical_sha256)
 from test_agent import _persisted_mission, _start_request
 from test_dialogue import AnswerProvider
 
@@ -29,6 +29,10 @@ def field(key="window", **changes):
 
 def strip_r2_fixture(connection):
     """Only synthetic test databases: reconstruct exact historical schema."""
+    if connection.execute("PRAGMA user_version").fetchone()[0] == 6:
+        connection.execute("DROP TABLE profile_interpretation_attempts")
+        connection.execute("ALTER TABLE runs DROP COLUMN phase")
+        connection.execute("PRAGMA user_version=5")
     if connection.execute("PRAGMA user_version").fetchone()[0] == 5:
         for name,_ in reversed(db.r2.TABLES):
             connection.execute("DROP TABLE " + name)
@@ -38,6 +42,12 @@ def strip_r2_fixture(connection):
 
 class ClarificationTests(unittest.TestCase):
     def setUp(self):
+        budget_patch = patch.object(
+            RunBudget, "deterministic_controller",
+            return_value=RunBudget(max_output_tokens=16384),
+        )
+        budget_patch.start()
+        self.addCleanup(budget_patch.stop)
         self.temp=tempfile.TemporaryDirectory(prefix="contextox-r2-",dir="/private/tmp")
         self.addCleanup(self.temp.cleanup)
         self.store=db.WorkspaceStore.open(self.temp.name)

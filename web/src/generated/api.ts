@@ -125,6 +125,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch Source Profile */
+        get: operations["fetch_source_profile_api_workspaces__workspace_id__sources__revision_id__profile_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile-interpretations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Profile Interpretation */
+        post: operations["create_profile_interpretation_api_workspaces__workspace_id__sources__revision_id__profile_interpretations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/sources/{revision_id}/profile-interpretations/{attempt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Fetch Profile Interpretation */
+        get: operations["fetch_profile_interpretation_api_workspaces__workspace_id__sources__revision_id__profile_interpretations__attempt_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/sources/{revision_id}/read": {
         parameters: {
             query?: never;
@@ -772,6 +823,29 @@ export interface components {
             numeric_min: string | null;
             /** Numeric Max */
             numeric_max: string | null;
+            /** Type Counts */
+            type_counts?: components["schemas"]["ProfileTypeCount"][];
+            /** Numeric P25 */
+            numeric_p25?: string | null;
+            /** Numeric P50 */
+            numeric_p50?: string | null;
+            /** Numeric P75 */
+            numeric_p75?: string | null;
+            /** Date Min */
+            date_min?: string | null;
+            /** Date Max */
+            date_max?: string | null;
+            /** Text Length Min */
+            text_length_min?: number | null;
+            /** Text Length Max */
+            text_length_max?: number | null;
+            /**
+             * Enum Candidate
+             * @default false
+             */
+            enum_candidate: boolean;
+            /** Top Values */
+            top_values?: components["schemas"]["ProfileValueCount"][];
         };
         /** ColumnRef */
         ColumnRef: {
@@ -1293,6 +1367,189 @@ export interface components {
              */
             fallback_of_turn_index: number | null;
         };
+        /** ProfileColumnInterpretationV1 */
+        ProfileColumnInterpretationV1: {
+            /** Table Id */
+            table_id: string;
+            /** Column Name */
+            column_name: string;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "numeric" | "text" | "enum" | "date" | "boolean" | "mixed" | "unknown";
+            /** Business Meaning Candidate */
+            business_meaning_candidate: string | null;
+            /** Anomalies */
+            anomalies: string[];
+            /** Unknown Items */
+            unknown_items: string[];
+        };
+        /** ProfileInterpretationAttempt */
+        ProfileInterpretationAttempt: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Revision Id */
+            revision_id: string;
+            /** Attempt Id */
+            attempt_id: string;
+            /** Client Request Id */
+            client_request_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "blocked" | "failed" | "cancelled";
+            /** Profile Hash */
+            profile_hash: string;
+            config: components["schemas"]["ProviderConfigSnapshot"] | null;
+            /** Config Fingerprint */
+            config_fingerprint: string;
+            /** Prompt Sha256 */
+            prompt_sha256: string;
+            /** Sent Bytes */
+            sent_bytes: number;
+            /** Chunk Count */
+            chunk_count: number;
+            /** Input Tokens */
+            input_tokens: number | null;
+            /** Output Tokens */
+            output_tokens: number | null;
+            /** Cache Hit */
+            cache_hit: boolean;
+            /** Cached From Attempt Id */
+            cached_from_attempt_id: string | null;
+            interpretation: components["schemas"]["ProfileInterpretationV1"] | null;
+            /** Error Code */
+            error_code: string | null;
+        };
+        /** ProfileInterpretationCreateRequest */
+        ProfileInterpretationCreateRequest: {
+            /** Client Request Id */
+            client_request_id: string;
+            /**
+             * Provider Send Confirmed
+             * @constant
+             */
+            provider_send_confirmed: true;
+        };
+        /** ProfileInterpretationV1 */
+        ProfileInterpretationV1: {
+            /**
+             * Version
+             * @constant
+             */
+            version: "v1";
+            /** Profile Hash */
+            profile_hash: string;
+            /** Partial */
+            partial: boolean;
+            /** Covered Chunks */
+            covered_chunks: number;
+            /** Total Chunks */
+            total_chunks: number;
+            /** Columns */
+            columns: components["schemas"]["ProfileColumnInterpretationV1"][];
+            /** Relationship Hints */
+            relationship_hints: components["schemas"]["ProfileRelationshipHintV1"][];
+            /** Unknown Items */
+            unknown_items: string[];
+        };
+        /** ProfilePackV1 */
+        ProfilePackV1: {
+            /**
+             * Version
+             * @constant
+             */
+            version: "v1";
+            source_ref: components["schemas"]["SourceIdentity"];
+            /** Parser Version */
+            parser_version: string;
+            /** Profile Hash */
+            profile_hash: string;
+            /**
+             * Parse Status
+             * @enum {string}
+             */
+            parse_status: "ready" | "partial" | "blocked" | "failed";
+            /** Recognized Table Rows Complete */
+            recognized_table_rows_complete: boolean;
+            /**
+             * Stats Mode
+             * @enum {string}
+             */
+            stats_mode: "exact" | "approximate";
+            /** Tables */
+            tables: components["schemas"]["ProfileTableV1"][];
+            /** Relationships */
+            relationships?: components["schemas"]["RelationshipProfile"][];
+            /** Limitations */
+            limitations: string[];
+        };
+        /** ProfileRelationshipHintV1 */
+        ProfileRelationshipHintV1: {
+            /** Left Table Id */
+            left_table_id: string;
+            /** Right Table Id */
+            right_table_id: string;
+            /** Left Columns */
+            left_columns: string[];
+            /** Right Columns */
+            right_columns: string[];
+            /** Reason */
+            reason: string;
+        };
+        /** ProfileTableV1 */
+        ProfileTableV1: {
+            /** Table Id */
+            table_id: string;
+            /** Row Count */
+            row_count: number;
+            /** Column Count */
+            column_count: number;
+            /** Duplicate Row Count */
+            duplicate_row_count: number;
+            /** Columns */
+            columns: components["schemas"]["ColumnProfile"][];
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+        };
+        /** ProfileTypeCount */
+        ProfileTypeCount: {
+            /**
+             * Value Kind
+             * @enum {string}
+             */
+            value_kind: "missing" | "null" | "string" | "integer" | "decimal" | "boolean" | "json";
+            /** Count */
+            count: number;
+        };
+        /** ProfileValueCount */
+        ProfileValueCount: {
+            /**
+             * Value Kind
+             * @enum {string}
+             */
+            value_kind: "missing" | "null" | "string" | "integer" | "decimal" | "boolean" | "json";
+            /** Text */
+            text: string | null;
+            /** Count */
+            count: number;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
         /** ProviderConfigSnapshot */
         ProviderConfigSnapshot: {
             /**
@@ -1307,14 +1564,11 @@ export interface components {
             model: "deepseek-v4-flash" | "deepseek-v4-pro";
             /**
              * Thinking
-             * @constant
-             */
-            thinking: "enabled";
-            /**
-             * Reasoning Effort
              * @enum {string}
              */
-            reasoning_effort: "low" | "high" | "max";
+            thinking: "enabled" | "disabled";
+            /** Reasoning Effort */
+            reasoning_effort: ("low" | "high" | "max") | null;
         };
         /** ProviderReceipt */
         ProviderReceipt: {
@@ -1419,6 +1673,40 @@ export interface components {
             /** Unknowns */
             unknowns: components["schemas"]["UnknownItem"][];
         };
+        /** RelationshipProfile */
+        RelationshipProfile: {
+            left: components["schemas"]["TableKey"];
+            right: components["schemas"]["TableKey"];
+            /** Left Rows */
+            left_rows: number;
+            /** Right Rows */
+            right_rows: number;
+            /** Left Distinct Keys */
+            left_distinct_keys: number;
+            /** Right Distinct Keys */
+            right_distinct_keys: number;
+            /** Left Null Keys */
+            left_null_keys: number;
+            /** Right Null Keys */
+            right_null_keys: number;
+            /** Matched Distinct Keys */
+            matched_distinct_keys: number;
+            /** Unmatched Left Rows */
+            unmatched_left_rows: number;
+            /** Unmatched Right Rows */
+            unmatched_right_rows: number;
+            /** Prospective Join Rows */
+            prospective_join_rows: number;
+            /**
+             * Observed Cardinality
+             * @enum {string}
+             */
+            observed_cardinality: "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many" | "unknown";
+            /** Source Refs */
+            source_refs: components["schemas"]["EvidenceRef"][];
+            /** Limitations */
+            limitations: string[];
+        };
         /** RemainingAnswerBlocker */
         RemainingAnswerBlocker: {
             /** Origin Run Id */
@@ -1472,21 +1760,21 @@ export interface components {
             /**
              * Max Model Turns
              * @default 8
-             * @constant
+             * @enum {integer}
              */
-            max_model_turns: 8;
+            max_model_turns: 1 | 8;
             /**
              * Max Tool Calls
              * @default 24
-             * @constant
+             * @enum {integer}
              */
-            max_tool_calls: 24;
+            max_tool_calls: 2 | 24;
             /**
              * Max Elapsed Ms
              * @default 300000
-             * @constant
+             * @enum {integer}
              */
-            max_elapsed_ms: 300000;
+            max_elapsed_ms: 75000 | 300000;
             /**
              * Max Output Tokens
              * @default 4096
@@ -1520,15 +1808,15 @@ export interface components {
             /**
              * Total Timeout Ms
              * @default 120000
-             * @constant
+             * @enum {integer}
              */
-            total_timeout_ms: 120000;
+            total_timeout_ms: 70000 | 120000;
             /**
              * Max Context Bytes
              * @default 262144
-             * @constant
+             * @enum {integer}
              */
-            max_context_bytes: 262144;
+            max_context_bytes: 65536 | 262144;
         };
         /** RunCancelledEventEnvelope */
         RunCancelledEventEnvelope: {
@@ -1603,7 +1891,7 @@ export interface components {
             error_code: string | null;
         };
         /** RunEventEnvelope */
-        RunEventEnvelope: components["schemas"]["RunStartedEventEnvelope"] | components["schemas"]["MessageCreatedEventEnvelope"] | components["schemas"]["ModelStartedEventEnvelope"] | components["schemas"]["ModelDeltaEventEnvelope"] | components["schemas"]["ModelCompletedEventEnvelope"] | components["schemas"]["ToolRequestedEventEnvelope"] | components["schemas"]["ToolStartedEventEnvelope"] | components["schemas"]["ToolCompletedEventEnvelope"] | components["schemas"]["ToolFailedEventEnvelope"] | components["schemas"]["DraftUpdatedEventEnvelope"] | components["schemas"]["ClarificationRequestedEventEnvelope"] | components["schemas"]["RunCompletedEventEnvelope"] | components["schemas"]["RunPartialEventEnvelope"] | components["schemas"]["RunBlockedEventEnvelope"] | components["schemas"]["RunFailedEventEnvelope"] | components["schemas"]["RunCancelledEventEnvelope"];
+        RunEventEnvelope: components["schemas"]["RunStartedEventEnvelope"] | components["schemas"]["RunPhaseChangedEventEnvelope"] | components["schemas"]["MessageCreatedEventEnvelope"] | components["schemas"]["ModelStartedEventEnvelope"] | components["schemas"]["ModelDeltaEventEnvelope"] | components["schemas"]["ModelCompletedEventEnvelope"] | components["schemas"]["ToolRequestedEventEnvelope"] | components["schemas"]["ToolStartedEventEnvelope"] | components["schemas"]["ToolCompletedEventEnvelope"] | components["schemas"]["ToolFailedEventEnvelope"] | components["schemas"]["DraftUpdatedEventEnvelope"] | components["schemas"]["ClarificationRequestedEventEnvelope"] | components["schemas"]["RunCompletedEventEnvelope"] | components["schemas"]["RunPartialEventEnvelope"] | components["schemas"]["RunBlockedEventEnvelope"] | components["schemas"]["RunFailedEventEnvelope"] | components["schemas"]["RunCancelledEventEnvelope"];
         /** RunFailedEventEnvelope */
         RunFailedEventEnvelope: {
             /** Event Id */
@@ -1676,6 +1964,38 @@ export interface components {
             /** Error Code */
             error_code: string | null;
         };
+        /** RunPhaseChangedEventEnvelope */
+        RunPhaseChangedEventEnvelope: {
+            /** Event Id */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_phase_changed";
+            public_payload: components["schemas"]["RunPhaseChangedPayload"];
+        };
+        /** RunPhaseChangedPayload */
+        RunPhaseChangedPayload: {
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "prepare_context" | "synthesize_once" | "validate" | "apply" | "terminal" | "legacy_loop";
+        };
         /** RunSnapshot */
         RunSnapshot: {
             /** Approved Answers */
@@ -1691,6 +2011,12 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "running" | "waiting_for_human" | "partial" | "completed" | "blocked" | "failed" | "cancelled";
+            /**
+             * Phase
+             * @default legacy_loop
+             * @enum {string}
+             */
+            phase: "prepare_context" | "synthesize_once" | "validate" | "apply" | "terminal" | "legacy_loop";
             /**
              * Created At
              * Format: date-time
@@ -2325,40 +2651,6 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
-        /** RelationshipProfile */
-        RelationshipProfile: {
-            left: components["schemas"]["TableKey"];
-            right: components["schemas"]["TableKey"];
-            /** Left Rows */
-            left_rows: number;
-            /** Right Rows */
-            right_rows: number;
-            /** Left Distinct Keys */
-            left_distinct_keys: number;
-            /** Right Distinct Keys */
-            right_distinct_keys: number;
-            /** Left Null Keys */
-            left_null_keys: number;
-            /** Right Null Keys */
-            right_null_keys: number;
-            /** Matched Distinct Keys */
-            matched_distinct_keys: number;
-            /** Unmatched Left Rows */
-            unmatched_left_rows: number;
-            /** Unmatched Right Rows */
-            unmatched_right_rows: number;
-            /** Prospective Join Rows */
-            prospective_join_rows: number;
-            /**
-             * Observed Cardinality
-             * @enum {string}
-             */
-            observed_cardinality: "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many" | "unknown";
-            /** Source Refs */
-            source_refs: components["schemas"]["EvidenceRef"][];
-            /** Limitations */
-            limitations: string[];
-        };
         /** ToolReceipt */
         ToolReceipt: {
             /** Workspace Id */
@@ -2757,6 +3049,15 @@ export interface components {
             event_type: "run_partial";
             public_payload: components["schemas"]["RunPartialPayload"];
         };
+        /** RunPhaseChangedEventInput */
+        RunPhaseChangedEventInput: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            event_type: "run_phase_changed";
+            public_payload: components["schemas"]["RunPhaseChangedPayload"];
+        };
         /** RunStartedEventInput */
         RunStartedEventInput: {
             /**
@@ -2803,7 +3104,7 @@ export interface components {
             public_payload: components["schemas"]["ToolRequestedPayload"];
         };
         /** RunEventInput */
-        RunEventInput: components["schemas"]["RunStartedEventInput"] | components["schemas"]["MessageCreatedEventInput"] | components["schemas"]["ModelStartedEventInput"] | components["schemas"]["ModelDeltaEventInput"] | components["schemas"]["ModelCompletedEventInput"] | components["schemas"]["ToolRequestedEventInput"] | components["schemas"]["ToolStartedEventInput"] | components["schemas"]["ToolCompletedEventInput"] | components["schemas"]["ToolFailedEventInput"] | components["schemas"]["DraftUpdatedEventInput"] | components["schemas"]["ClarificationRequestedEventInput"] | components["schemas"]["RunCompletedEventInput"] | components["schemas"]["RunPartialEventInput"] | components["schemas"]["RunBlockedEventInput"] | components["schemas"]["RunFailedEventInput"] | components["schemas"]["RunCancelledEventInput"];
+        RunEventInput: components["schemas"]["RunStartedEventInput"] | components["schemas"]["RunPhaseChangedEventInput"] | components["schemas"]["MessageCreatedEventInput"] | components["schemas"]["ModelStartedEventInput"] | components["schemas"]["ModelDeltaEventInput"] | components["schemas"]["ModelCompletedEventInput"] | components["schemas"]["ToolRequestedEventInput"] | components["schemas"]["ToolStartedEventInput"] | components["schemas"]["ToolCompletedEventInput"] | components["schemas"]["ToolFailedEventInput"] | components["schemas"]["DraftUpdatedEventInput"] | components["schemas"]["ClarificationRequestedEventInput"] | components["schemas"]["RunCompletedEventInput"] | components["schemas"]["RunPartialEventInput"] | components["schemas"]["RunBlockedEventInput"] | components["schemas"]["RunFailedEventInput"] | components["schemas"]["RunCancelledEventInput"];
         /** AgentRunResult */
         AgentRunResult: {
             /**
@@ -3127,6 +3428,170 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceArtifact"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    fetch_source_profile_api_workspaces__workspace_id__sources__revision_id__profile_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfilePackV1"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    create_profile_interpretation_api_workspaces__workspace_id__sources__revision_id__profile_interpretations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileInterpretationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileInterpretationAttempt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    fetch_profile_interpretation_api_workspaces__workspace_id__sources__revision_id__profile_interpretations__attempt_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                revision_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileInterpretationAttempt"];
                 };
             };
             /** @description Not Found */

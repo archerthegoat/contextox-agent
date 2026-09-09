@@ -58,7 +58,7 @@ MANIFEST_ALTER = "ALTER TABLE context_manifests ADD COLUMN approved_answer_refs_
 
 
 def enabled(connection):
-    return connection.execute("PRAGMA user_version").fetchone()[0] == 5
+    return connection.execute("PRAGMA user_version").fetchone()[0] in {5, 6}
 
 
 def draft_ref(draft):
