@@ -41,6 +41,23 @@
 .dialog-actions .primary-button { padding: 10px 14px; border-radius: 6px; background: var(--blue); color: white; }
 .workbench-dialog button:disabled { opacity: .5; cursor: default; }
 .topbar-actions a.utility-button { text-decoration: none; white-space: nowrap; }
+.demo-dialog { width: min(840px, calc(100vw - 32px)); }
+.demo-dialog .demo-disclosure { color: #526277; padding-bottom: 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.demo-files, .candidate-export { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.demo-files { margin: 14px 0; }
+.demo-source { padding: 8px 14px; background: var(--canvas); border-radius: 6px; }
+.demo-source pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.65; }
+.demo-table-wrap { overflow-x: auto; margin: 16px 0; }
+.demo-table-wrap table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; line-height: 1.6; }
+.demo-table-wrap th, .demo-table-wrap td { border-bottom: 1px solid var(--line); padding: 10px 8px; vertical-align: top; }
+.demo-table-wrap th:first-child { min-width: 95px; }
+.demo-table-wrap th:last-child { min-width: 135px; }
+.demo-table-wrap small { display: block; color: #526277; }
+.demo-citation { color: #1764bd; background: transparent; padding: 0; }
+.demo-dialog details { margin: 14px 0; font-size: 13px; line-height: 1.7; }
+.demo-dialog footer p { margin: 0; }
+.candidate-export { margin: 0 0 12px; }
+.candidate-export p { width: 100%; color: #b02a38; }
 
 * {
   box-sizing: border-box;
@@ -2301,9 +2318,9 @@ a:focus-visible {
   .primary-nav-label { font-size: 11px; }
 }
 @media (max-width: 900px) {
-  :root { --topbar-height: 62px; }
-  .topbar { grid-template-columns: 1fr 1fr; min-width: 0; }
-  .topbar-actions { display: none; }
+  :root { --topbar-height: 104px; }
+  .topbar { grid-template-columns: 1fr 1fr; grid-template-rows: 62px 42px; min-width: 0; }
+  .topbar-actions { display: flex; grid-column: 1 / -1; padding: 0 14px; border-left: 0; border-top: 1px solid var(--line); gap: 18px; }
   .brand { padding-left: 14px; }
   .compact-controls { display: flex; align-items: center; gap: 8px; height: 44px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
   .compact-controls button { padding: 6px 12px; border-radius: 5px; background: #edf2f8; font-size: 12px; }

@@ -1,0 +1,16 @@
+{
+  "title": "按地区理解订单金额口径",
+  "request": "请根据 orders.csv、customers.csv 和 notes.md，整理用于按地区汇总订单金额的字段与表关系草案。覆盖订单标识、客户标识、金额、订单状态、支付时间、客户名称和地区。引用说明文档已经明确的口径；对尚不明确的业务规则提出最多三个具体问题。不要自行决定统计范围、退款处理或归属日期。",
+  "fields": [
+    {"name":"订单标识","meaning":"一笔订单的标识；样例中唯一。","file":"orders.csv","location":"order_id 列"},
+    {"name":"客户标识","meaning":"订单与客户的连接键。","file":"notes.md","location":"第 5 行"},
+    {"name":"订单金额","meaning":"人民币元；是否包含税费及折扣待确认。","file":"notes.md","location":"第 6 行"},
+    {"name":"订单状态","meaning":"样例含 paid、refunded、pending；完整枚举待确认。","file":"notes.md","location":"第 7 行"},
+    {"name":"支付时间","meaning":"记录支付时间，带 UTC+08:00 偏移；未支付时可为空。","file":"notes.md","location":"第 8 行"},
+    {"name":"客户名称","meaning":"仅作展示，不能代替 customer_id 连接。","file":"notes.md","location":"第 5 行"},
+    {"name":"客户地区","meaning":"样例客户所属地区；业务地区划分规则尚未说明。","file":"customers.csv","location":"region 列"}
+  ],
+  "relationship": "orders.customer_id → customers.customer_id；本例观测到多对一，6 笔订单均能匹配到 3 个客户。",
+  "questions": ["统计金额纳入哪些订单状态？退款订单如何处理？", "订单金额按哪个时间字段、哪个时区归属日期？"],
+  "remaining_unknowns": ["amount 是否包含税费及折扣", "订单状态的完整枚举", "地区划分的业务规则"]
+}

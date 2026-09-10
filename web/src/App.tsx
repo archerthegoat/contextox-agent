@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { fetchWorkbench, type WorkbenchSnapshot, type Workspace } from "./api/client";
 import {
@@ -14,6 +14,8 @@ import {
 import { useTaskDialogue, ReferenceInspector, TaskConversation, TaskExecutionHistory, type DialogueState, type MessageReference } from "./TaskDialogue";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
 import { ModelSettings } from "./ModelSettings";
+import { DemoEntry } from "./DemoEntry";
+import { CandidateExport } from "./CandidateExport";
 import "./styles.css";
 
 export { WORKSPACE_STORAGE_KEY } from "./WorkspaceSwitcher";
@@ -152,9 +154,11 @@ function Brand() {
 function Topbar({
   selectedWorkspace,
   onWorkspaceChange,
+  onDemoLoaded,
 }: {
   selectedWorkspace: Workspace | null;
   onWorkspaceChange: (workspace: Workspace | null) => void;
+  onDemoLoaded: (workspace: Workspace, task: string, revisions: string[]) => void;
 }) {
   return (
     <header className="topbar">
@@ -169,6 +173,7 @@ function Topbar({
       </div>
       <div className="topbar-actions" aria-label="工作区工具">
         <ModelSettings />
+        <DemoEntry onLoaded={onDemoLoaded} />
         <a className="utility-button" href="https://github.com/archerthegoat/contextox-agent#readme" target="_blank" rel="noreferrer">使用帮助 ↗</a>
       </div>
     </header>
@@ -364,6 +369,7 @@ export function RelationshipGraph({ path2, onReference }: {
   const sourceName = (table: RelationshipCandidate["left"]) => path2.sourceState.items.find(s =>
     sourceIdentityEquals(table.source_ref, sourceIdentityFromRevision(s)))?.original_name ?? "来源未匹配";
   return <section className="task-results" aria-label="关系与字段结果">
+    <CandidateExport draft={draft} />
     <p>关系连接来自当前任务草案。基数是观测或候选结果，业务含义仍待确认。</p>
     {!draft?.relationships.length && <div className="conversation-empty"><h3>尚无关系候选</h3><p>导入资料并分析后，在这里查看实际表与表之间的关系。</p></div>}
     {draft?.relationships.map((relationship, index) => <article className="relationship-result" key={relationship.relationship_key}>
@@ -469,7 +475,16 @@ function App() {
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshot | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
-  const path2 = usePath2Workbench(selectedWorkspace);
+  const [demoSetup, setDemoSetup] = useState<{workspaceId: string; task: string; revisions: string[]} | null>(null);
+  const basePath2 = usePath2Workbench(selectedWorkspace);
+  const path2 = { ...basePath2, suggestedTask: demoSetup?.workspaceId === basePath2.workspaceId ? demoSetup.task : undefined };
+  const selectedDemo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!demoSetup || basePath2.workspaceId !== demoSetup.workspaceId || selectedDemo.current === demoSetup.workspaceId ||
+        !demoSetup.revisions.length || !demoSetup.revisions.every(id => basePath2.sourceState.items.some(source => source.revision_id === id))) return;
+    selectedDemo.current = demoSetup.workspaceId;
+    demoSetup.revisions.forEach(id => { if (!basePath2.selectedSourceIds.includes(id)) basePath2.toggleSource(id); });
+  }, [demoSetup, basePath2]);
   const dialogue = useTaskDialogue(path2);
   const [focusedReference, setFocusedReference] = useState<MessageReference | null>(null);
   useEffect(() => {setFocusedReference(null);}, [path2.workspaceId, path2.selectedMission?.mission_id]);
@@ -545,6 +560,10 @@ function App() {
       <Topbar
         selectedWorkspace={selectedWorkspace}
         onWorkspaceChange={setSelectedWorkspace}
+        onDemoLoaded={(workspace, task, revisions) => {
+          setSelectedWorkspace(workspace); setDemoSetup({workspaceId: workspace.workspace_id, task, revisions});
+          setActiveArea("mission"); setActiveTab("mission"); setMobileView("result");
+        }}
       />
       <div className="compact-controls"><button aria-expanded={navOpen} onClick={() => setNavOpen(!navOpen)}>任务与资料</button><button aria-pressed={mobileView === "result"} onClick={() => setMobileView("result")}>结果</button><button aria-pressed={mobileView === "agent"} onClick={() => setMobileView("agent")}>Agent 对话</button></div>
       <div className={`workspace-layout mobile-${mobileView}${navOpen ? " nav-open" : ""}`}>

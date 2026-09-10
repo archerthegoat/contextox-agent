@@ -40,6 +40,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/demo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Public Demo */
+        get: operations["public_demo_api_demo_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/readiness": {
         parameters: {
             query?: never;
@@ -289,6 +306,23 @@ export interface paths {
         };
         /** Fetch Mission Snapshot */
         get: operations["fetch_mission_snapshot_api_workspaces__workspace_id__missions__mission_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/missions/{mission_id}/draft-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Candidate */
+        get: operations["export_candidate_api_workspaces__workspace_id__missions__mission_id__draft_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -621,6 +655,43 @@ export interface components {
         };
         /** CancelRunRequest */
         CancelRunRequest: Record<string, never>;
+        /** CandidateExportDocument */
+        CandidateExportDocument: {
+            candidate: components["schemas"]["CandidateExportV1"];
+            /** Markdown */
+            markdown: string;
+        };
+        /** CandidateExportV1 */
+        CandidateExportV1: {
+            /**
+             * Schema Version
+             * @default candidate_export_v1
+             * @constant
+             */
+            schema_version: "candidate_export_v1";
+            /**
+             * Product Status
+             * @default candidate_not_contract
+             * @constant
+             */
+            product_status: "candidate_not_contract";
+            /** Workspace Id */
+            workspace_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Mission Title */
+            mission_title: string;
+            /**
+             * Exported At
+             * Format: date-time
+             */
+            exported_at: string;
+            draft: components["schemas"]["DefinitionDraft"];
+            /** Clarifications */
+            clarifications: components["schemas"]["ClarificationCase"][];
+            /** Sources */
+            sources: components["schemas"]["SourceRevision"][];
+        };
         /** ClarificationAnswerApproval */
         ClarificationAnswerApproval: {
             /** Origin Run Id */
@@ -990,6 +1061,60 @@ export interface components {
             source_refs: components["schemas"]["EvidenceRef"][];
             /** Unknowns */
             unknowns: components["schemas"]["UnknownItem"][];
+        };
+        /** DemoCaseV1 */
+        DemoCaseV1: {
+            /**
+             * Version
+             * @default orders-v1
+             * @constant
+             */
+            version: "orders-v1";
+            /**
+             * Kind
+             * @default prepared_synthetic_preview
+             * @constant
+             */
+            kind: "prepared_synthetic_preview";
+            /** Title */
+            title: string;
+            /** Request */
+            request: string;
+            /** Files */
+            files: components["schemas"]["DemoSourceFile"][];
+            /** Fields */
+            fields: components["schemas"]["DemoPreviewField"][];
+            /** Relationship */
+            relationship: string;
+            /** Questions */
+            questions: string[];
+            /** Remaining Unknowns */
+            remaining_unknowns: string[];
+        };
+        /** DemoPreviewField */
+        DemoPreviewField: {
+            /** Name */
+            name: string;
+            /** Meaning */
+            meaning: string;
+            /** File */
+            file: string;
+            /** Location */
+            location: string;
+        };
+        /** DemoSourceFile */
+        DemoSourceFile: {
+            /** Original Name */
+            original_name: string;
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "text/csv" | "application/json" | "text/markdown" | "text/plain";
+            /** Content Base64 */
+            content_base64: string;
+            /** Sha256 */
+            sha256: string;
         };
         /** DraftFieldMessageReference */
         DraftFieldMessageReference: {
@@ -3394,6 +3519,26 @@ export interface operations {
             };
         };
     };
+    public_demo_api_demo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoCaseV1"];
+                };
+            };
+        };
+    };
     readiness_api_readiness_get: {
         parameters: {
             query?: never;
@@ -4153,6 +4298,68 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    export_candidate_api_workspaces__workspace_id__missions__mission_id__draft_export_get: {
+        parameters: {
+            query: {
+                expected_version: number;
+                expected_sha256: string;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+                mission_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateExportDocument"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

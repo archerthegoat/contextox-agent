@@ -1,4 +1,5 @@
 import { ClarificationAnswers } from "./ClarificationAnswers";
+import { CandidateExport } from "./CandidateExport";
 import {
   useCallback,
   useEffect,
@@ -1147,6 +1148,7 @@ export function defaultExcerptRequest(revision: SourceRevision): SourceExcerptRe
 }
 
 export type Path2WorkbenchState = {
+  suggestedTask?: string;
   workspaceId: string | null;
   sourceState: CollectionState<SourceRevision>;
   sourceArtifacts: Record<string, SourceArtifactState>;
@@ -3804,6 +3806,7 @@ function RunFailureNotice({ run }: { run: RunSnapshot }) {
 
 function MissionPanel({ state }: { state: Path2WorkbenchState }) {
   const [originalInput, setOriginalInput] = useState("");
+  useEffect(() => { setOriginalInput(state.suggestedTask ?? ""); setAttemptSendConfirmed(false); }, [state.workspaceId, state.suggestedTask]);
   const [attemptSendConfirmed, setAttemptSendConfirmed] = useState(false);
   const [candidateAcknowledged, setCandidateAcknowledged] = useState(false);
   const [runSendConfirmed, setRunSendConfirmed] = useState(false);
@@ -4065,6 +4068,7 @@ function DefinitionPanel({ state, mode }: { state: Path2WorkbenchState; mode: "c
       ) : (
         <>
           <div className="path2-card path2-draft-identity">
+            <CandidateExport draft={draft} />
             <div><span>draft</span><code>{draft.draft_id}</code></div>
             <div><span>version</span><code>{draft.version}</code></div>
             <div><span>sha256</span><code title={draft.sha256}>{draft.sha256}</code></div>

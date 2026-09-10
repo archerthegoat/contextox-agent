@@ -2406,6 +2406,58 @@ class CancelRunRequest(ContextOxModel):
     pass
 
 
+class DemoSourceFile(SourceUploadFile):
+    sha256: Hash
+
+
+class DemoPreviewField(ContextOxModel):
+    name: Text
+    meaning: Text
+    file: Key
+    location: Text
+
+
+class DemoCaseV1(ContextOxModel):
+    version: Literal["orders-v1"] = "orders-v1"
+    kind: Literal["prepared_synthetic_preview"] = "prepared_synthetic_preview"
+    title: Text
+    request: RawInput
+    files: list[DemoSourceFile] = Field(min_length=3, max_length=3)
+    fields: list[DemoPreviewField]
+    relationship: Text
+    questions: list[Text]
+    remaining_unknowns: list[Text]
+
+
+class CandidateExportV1(ContextOxModel):
+    schema_version: Literal["candidate_export_v1"] = "candidate_export_v1"
+    product_status: Literal["candidate_not_contract"] = "candidate_not_contract"
+    workspace_id: ID
+    mission_id: ID
+    mission_title: Text
+    exported_at: UTC
+    draft: DefinitionDraft
+    clarifications: list[ClarificationCase]
+    sources: list[SourceRevision]
+
+    @model_validator(mode="after")
+    def scoped_export(self):
+        if (self.draft.workspace_id, self.draft.mission_id) != (self.workspace_id, self.mission_id):
+            raise ValueError("export draft scope mismatch")
+        for case in self.clarifications:
+            for item in (case.request, case.latest_answer, case.latest_approval):
+                if item and (item.workspace_id, item.mission_id) != (self.workspace_id, self.mission_id):
+                    raise ValueError("export clarification scope mismatch")
+        if any(source.workspace_id != self.workspace_id for source in self.sources):
+            raise ValueError("export source scope mismatch")
+        return self
+
+
+class CandidateExportDocument(ContextOxModel):
+    candidate: CandidateExportV1
+    markdown: str
+
+
 # Resolve the forward references used by the nested shared models at import
 # time so OpenAPI generation and direct model validation are deterministic.
 AnswerImpactChange.model_rebuild()

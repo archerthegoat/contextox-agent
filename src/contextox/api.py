@@ -48,6 +48,8 @@ from contextox.models import (
     MissionDraftConfirmRequest,
     MissionDraftPayload,
     MissionSnapshot,
+    CandidateExportDocument,
+    DemoCaseV1,
     ProviderConfigSnapshot,
     ProviderReceipt,
     ProfileInterpretationAttempt,
@@ -915,6 +917,11 @@ def create_app(
             ],
         )
 
+    @app.get("/api/demo", response_model=DemoCaseV1, tags=["demo"])
+    def public_demo() -> DemoCaseV1:
+        from contextox.demo_content import demo_case
+        return demo_case()
+
     @app.get("/api/readiness", response_model=ReadinessResponse, tags=["system"])
     def readiness() -> ReadinessResponse:
         return _readiness(app)
@@ -1381,6 +1388,23 @@ def create_app(
                 workspace_id, mission_id
             )
         except WorkspaceStoreError as error:
+            return _workspace_store_error_response(request, error)
+
+    @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/draft-export",
+             response_model=CandidateExportDocument, tags=["missions"],
+             responses={404: {"model": WorkspaceError}, 409: {"model": WorkspaceError}, 422: {"model": WorkspaceError}, 503: {"model": WorkspaceError}})
+    def export_candidate(workspace_id: str, mission_id: str, request: Request, response: Response,
+                         expected_version: int = Query(ge=1),
+                         expected_sha256: str = Query(pattern=r"^[0-9a-f]{64}$")):
+        from contextox.candidate_export import candidate_markdown
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            candidate = _workspace_store(app).export_candidate(workspace_id, mission_id, expected_version, expected_sha256)
+            return CandidateExportDocument(candidate=candidate, markdown=candidate_markdown(candidate))
+        except WorkspaceStoreError as error:
+            if isinstance(error, Path2StateError) and error.code == "state_conflict":
+                return _workspace_error(request, status_code=409, code="state_conflict",
+                    message="草案版本已更新，请刷新结果后再导出。")
             return _workspace_store_error_response(request, error)
 
     @app.get("/api/workspaces/{workspace_id}/missions/{mission_id}/messages",

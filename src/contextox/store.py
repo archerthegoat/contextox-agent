@@ -36,6 +36,7 @@ from contextox.models import (
     MissionDraftPayload,
     MissionDraftConfirmRequest,
     MissionSnapshot,
+    CandidateExportV1,
     ProviderReceipt,
     ProfilePackV1,
     ProfileInterpretationAttempt,
@@ -2837,6 +2838,38 @@ class WorkspaceStore:
             raise
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
             raise WorkspaceStoreUnavailableError() from exc
+
+    def export_candidate(self, workspace_id: str, mission_id: str, expected_version: int, expected_sha256: str) -> CandidateExportV1:
+        self._require_path2_workspace(workspace_id)
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            mission = _load_mission(connection, workspace_id, mission_id)
+            draft = _load_latest_draft(connection, workspace_id, mission_id)
+            if draft is None:
+                raise Path2StateError("definition_draft_not_found")
+            if draft.version != expected_version or draft.sha256 != expected_sha256:
+                raise Path2StateError("state_conflict")
+            cases = r2.cases(self, connection, workspace_id, mission_id).items
+            evidence = _evidence_refs(draft) + [ref for case in cases for ref in _evidence_refs(case.request)]
+            identities = list(mission.source_refs)
+            identities.extend(column.source_ref for field in draft.fields for column in field.source_columns)
+            identities.extend(table.source_ref for relation in draft.relationships for table in (relation.left, relation.right))
+            identities.extend(ref for case in cases if case.latest_answer for ref in case.latest_answer.source_refs)
+            identities.extend(_source_identity(ref) for ref in evidence)
+            identities = list({(ref.workspace_id, ref.source_id, ref.revision_id, ref.sha256): ref for ref in identities}.values())
+            self._validate_source_identities(connection, workspace_id, identities)
+            revisions = {ref.revision_id: _load_source_in_connection(connection, workspace_id, ref.revision_id)[0]
+                         for ref in identities}
+            contents = {key: _read_validated_source_file(_source_path(self.data_dir, revision), revision)
+                        for key, revision in revisions.items()}
+            try:
+                for ref in _unique_evidence_refs(evidence):
+                    read_source_fragment(revisions[ref.revision_id], contents[ref.revision_id], ref.locator)
+            except SourceInputError:
+                raise Path2StateError("source_locator_invalid") from None
+            return CandidateExportV1(workspace_id=workspace_id, mission_id=mission_id,
+                mission_title=mission.title, exported_at=_utc_now(), draft=draft,
+                clarifications=cases, sources=list(revisions.values()))
 
     def get_context_snapshot(
         self,

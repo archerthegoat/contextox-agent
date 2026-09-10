@@ -4,6 +4,22 @@ import type { components, paths } from "../generated/api";
 const client = createClient<paths>({ baseUrl: "" });
 
 export type DeepSeekSettings = components["schemas"]["DeepSeekSettings"];
+export type DemoCase = components["schemas"]["DemoCaseV1"];
+export type CandidateExportDocument = components["schemas"]["CandidateExportDocument"];
+
+export async function fetchDemo(): Promise<DemoCase> {
+  const result = await client.GET("/api/demo");
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+
+export async function exportCandidate(workspaceId: string, missionId: string, version: number, sha256: string): Promise<CandidateExportDocument> {
+  const result = await client.GET("/api/workspaces/{workspace_id}/missions/{mission_id}/draft-export", {
+    params: { path: { workspace_id: workspaceId, mission_id: missionId }, query: { expected_version: version, expected_sha256: sha256 } }, cache: "no-store",
+  });
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
 
 export async function fetchDeepSeekSettings(): Promise<DeepSeekSettings> {
   const result = await client.GET("/api/local-settings/deepseek", { cache: "no-store" });

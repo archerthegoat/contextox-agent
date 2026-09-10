@@ -157,6 +157,11 @@ export default function WorkspaceSwitcher({
   const restoreTriggerFocusRef = useRef(false);
 
   useEffect(() => {
+    if (selectedWorkspace) setWorkspaces(current => current.some(item => item.workspace_id === selectedWorkspace.workspace_id)
+      ? current : sortWorkspaces([...current, selectedWorkspace]));
+  }, [selectedWorkspace]);
+
+  useEffect(() => {
     let cancelled = false;
     void fetchWorkspaces()
       .then((data) => {
