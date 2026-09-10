@@ -55,14 +55,29 @@ agent.get_provider=lambda **kwargs:SyntheticProvider()
 agent.run_agent=synthetic_run
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--port',type=int,default=8831)
+parser.add_argument('--empty',action='store_true',help='Exercise first-send local workspace creation')
+parser.add_argument('--missing-model',action='store_true',help='Show connection prompt without reading credentials')
+parser.add_argument('--settings-delay',type=float,default=0,help='Synthetic settings latency for workspace-switch checks')
 args=parser.parse_args()
 root=Path(tempfile.mkdtemp(prefix='contextox-agent-led-browser-'))
 app=create_app(data_dir=root,static_dir=Path(__file__).resolve().parents[1] / 'web' / 'dist',agent_profile='demo-fast')
+if args.missing_model:
+    local_settings.external_key_source=lambda:None
+    local_settings.MacKeychain=type('SyntheticEmptyKeychain',(),{'contains':lambda self:False})
+if args.settings_delay:
+    import asyncio
+    @app.middleware('http')
+    async def delayed_settings(request,call_next):
+        if request.url.path=='/api/local-settings/deepseek':
+            await asyncio.sleep(args.settings_delay)
+        return await call_next(request)
 store=app.state.workspace_store
-ws=store.create_workspace('合成验收 · 不连接模型').workspace_id
-for name,data in [('订单.csv','region,amount\n华东,20\n华南,30\n'),('退款.csv','region,refund\n华东,5\n华南,0\n')]:
-    store.import_source_revision(ws,name,'text/csv',data.encode())
-store.create_workspace('范围隔离 · 空工作区')
+ws=None
+if not args.empty:
+    ws=store.create_workspace('合成验收 · 不连接模型').workspace_id
+    for name,data in [('订单.csv','region,amount\n华东,20\n华南,30\n'),('退款.csv','region,refund\n华东,5\n华南,0\n')]:
+        store.import_source_revision(ws,name,'text/csv',data.encode())
+    store.create_workspace('范围隔离 · 空工作区')
 (root/'fixture.json').write_text(json.dumps({'workspace_id':ws,'synthetic':True}))
 print('SYNTHETIC_DATA_DIR='+str(root),flush=True)
 uvicorn.run(app,host='127.0.0.1',port=args.port,log_level='warning')

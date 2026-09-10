@@ -80,6 +80,32 @@ class ConversationApiTests(unittest.TestCase):
         other = self.app.state.workspace_store.create_workspace("Other").workspace_id
         self.assertEqual(self.call("GET", path.replace(self.ws, other))[0], 404)
 
+    def test_unknown_handoff_get_recovers_start_evidence_without_writing_or_dispatch(self):
+        from test_conversation_handoff import HandoffTests
+        from contextox import conversation_handoff as handoff
+        fixture = HandoffTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        self.app.state.workspace_store = fixture.store
+        payload = fixture.payload()
+        receipt, _ = fixture.submit(payload)
+        handoff.claim_analysis(fixture.store, fixture.ws, fixture.cid, payload.client_request_id)
+        sent, _ = fixture.store.send_task_message(fixture.ws, fixture.mid, receipt.send_request)
+        fixture.store.mark_run_running(fixture.ws, fixture.mid, sent.run.run_id)
+        fixture.store.fail_run(fixture.ws, fixture.mid, sent.run.run_id, "failed", "synthetic_after_start")
+        unknown = handoff.record_analysis(fixture.store, fixture.ws, fixture.cid, payload.client_request_id,
+            state="unknown", expected_analysis_state="claimed", run_id=sent.run.run_id,
+            error_code="state_write_outcome_unknown")
+        url = f"/api/workspaces/{fixture.ws}/conversations/{fixture.cid}/handoffs/{payload.client_request_id}"
+        with patch("contextox.agent.run_agent") as dispatch:
+            code, result = self.call("GET", url)
+            self.assertEqual(code, 200, result)
+            self.assertTrue(result["analysis_started"])
+            self.assertEqual(result["run_id"], sent.run.run_id)
+            self.assertIsNone(result["error_code"])
+            dispatch.assert_not_called()
+        self.assertEqual(handoff.read(fixture.store, fixture.ws, fixture.cid, payload.client_request_id), unknown)
+
     def test_explicit_instruction_creates_one_task_and_run_without_a_fake_attempt(self):
         conv = self.conversation()
         store = self.app.state.workspace_store
