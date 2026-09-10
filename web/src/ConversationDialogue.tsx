@@ -4,7 +4,7 @@ import { ApiRequestError, createConversation, createWorkspace, fetchConversation
 import { sourceIdentityEquals, sourceIdentityFromRevision, statusLabel, type Path2WorkbenchState, type SourceIdentity } from "./Path2Workbench";
 import { referenceLabel, type MessageReference } from "./TaskDialogue";
 import { ModelSettings } from "./ModelSettings";
-import { ConversationAnswers } from "./ConversationAnswers";
+import { ConversationAnswers, type ConversationReviewState } from "./ConversationAnswers";
 import { writeSelectedWorkspaceId } from "./WorkspaceSwitcher";
 
 type CreateRequest = components["schemas"]["ConversationCreateRequest"];
@@ -40,9 +40,12 @@ export function conversationError(error: unknown) {
 export function conversationBelongsTo(value: WorkspaceConversation, workspaceId: string, conversationId?: string) {
   return value.workspace_id === workspaceId && (!conversationId || value.conversation_id === conversationId) && (value.source_refs ?? []).every(ref => ref.workspace_id === workspaceId);
 }
-export function conversationUsesTaskHistory(state:Pick<Path2WorkbenchState,"selectedMission"|"missionSnapshot"|"latestDraft">) {
+export function conversationUsesTaskHistory(state:Pick<Path2WorkbenchState,"selectedMission"|"missionSnapshot"|"latestDraft">,reviewStates:ConversationReviewState["reviewStates"]|null=null) {
   const mission=state.missionSnapshot?.mission??state.selectedMission;
-  return Boolean(mission&&mission.status!=="waiting_for_human"&&state.latestDraft?.status!=="in_review");
+  return Boolean(mission&&reviewStates!==null&&reviewStates.every(status=>status==='approved')&&state.latestDraft?.status!=="in_review");
+}
+export function conversationReviewMatches(value:ConversationReviewState|null,conversation:WorkspaceConversation|null,workspaceId:string|null) {
+  return Boolean(value&&conversation&&value.workspaceId===workspaceId&&value.workspaceId===conversation.workspace_id&&value.conversationId===conversation.conversation_id&&value.missionId===conversation.mission_id);
 }
 export function recentConversationHistory(messages: ConversationMessage[],taskOnly=false) {return messages.filter(message=>!taskOnly||message.task_message).slice(-4).map(message => message.message_id);}
 
@@ -66,6 +69,12 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
   const [list, setList] = useState<WorkspaceConversation[]>([]);
   const [conversation, setConversation] = useState<WorkspaceConversation | null>(null);
   const conversationRef = useRef(conversation); conversationRef.current = conversation;
+  const [reviewState,setReviewState]=useState<ConversationReviewState|null>(null);
+  const reviewRef=useRef(reviewState);reviewRef.current=reviewState;
+  const updateReviewState=useCallback((value:ConversationReviewState)=>{
+    if(!conversationReviewMatches(value,conversationRef.current,workspaceRef.current))return;
+    setReviewState(previous=>conversationReviewMatches(previous,conversationRef.current,workspaceRef.current)&&previous!.missionStateVersion>value.missionStateVersion?previous:value);
+  },[]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -163,7 +172,10 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
     state.replaceSourceSelection?.(scopeRefs);scopeHydrated.current=scope;
   },[scope,sourceSignature,state.sourceState.status,conversation]);
   const sourcesReady=["ready","empty"].includes(state.sourceState.status);
-  const taskHistoryOnly=conversationUsesTaskHistory(state);
+  const currentReview=conversationReviewMatches(reviewState,conversation,ws)?reviewState:null;
+  const currentMission=state.missionSnapshot?.mission??state.selectedMission;
+  const reviewReady=!conversation?.mission_id||Boolean(currentReview&&currentMission?.mission_id===conversation.mission_id&&currentReview.missionStateVersion>=currentMission.state_version);
+  const taskHistoryOnly=conversationUsesTaskHistory(state,reviewReady?currentReview?.reviewStates??null:null);
   useEffect(()=>{if(!historyTouched.current)setHistoryIds(recentConversationHistory(messages,taskHistoryOnly));},[messages,taskHistoryOnly]);
   const unsupportedHistory=taskHistoryOnly?messages.filter(message=>historyIds.includes(message.message_id)&&!message.task_message):[];
   const unavailableSources=(sourcesReady?scopeRefs:[]).filter(ref=>!state.sourceState.items.some(source=>sourceIdentityEquals(sourceIdentityFromRevision(source),ref)));
@@ -218,7 +230,7 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
     try{const existing=list.find(value=>value.mission_id===missionId);await stateRef.current.selectMission(missionId);await openConversation(existing??await create(ws,missionId));}catch(e){if(workspaceRef.current===ws)setError(conversationError(e));}finally{mutex.current=false;setLoading(false);}
   };
   const submit=async()=>{
-    if(mutex.current||active||pendingId||!storageReady||!text.trim())return;
+    if(mutex.current||active||pendingId||!storageReady||!reviewReady||!text.trim())return;
     const body=text;const selectedReferences=references;mutex.current=true;setSending(true);setError("");
     const originalWs=workspaceRef.current;let operationWorkspace=originalWs;let operationGeneration=generation.current;let submittedTo:{workspaceId:string;conversationId:string}|null=null;
     try{
@@ -228,7 +240,10 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
       if(workspaceRef.current!==workspaceId||operationGeneration!==generation.current)return;
       const value=conversationRef.current??await create(workspaceId);
       if(value.workspace_id!==workspaceId)throw new Error('当前对话归属不一致。');
-      const request:ConversationMessageSendRequest={kind:'message',client_request_id:crypto.randomUUID(),expected_state_version:value.state_version,content:body,references:selectedReferences,history_messages:selectedConversationHistory(messages,historyIds,conversationUsesTaskHistory(stateRef.current)),source_refs:sourceRefs,provider_send_confirmed:true,goal:value.goal ?? null};
+      const latestReview=conversationReviewMatches(reviewRef.current,value,workspaceId)?reviewRef.current:null;
+      const latestMission=stateRef.current.missionSnapshot?.mission??stateRef.current.selectedMission;
+      if(value.mission_id&&(!latestReview||latestMission?.mission_id!==value.mission_id||latestReview.missionStateVersion<latestMission.state_version))throw new Error('回答审阅状态尚未完整核对，本轮未发送。请重新读取问题与回答。');
+      const request:ConversationMessageSendRequest={kind:'message',client_request_id:crypto.randomUUID(),expected_state_version:value.state_version,content:body,references:selectedReferences,history_messages:selectedConversationHistory(messages,historyIds,conversationUsesTaskHistory(stateRef.current,latestReview?.reviewStates??null)),source_refs:sourceRefs,provider_send_confirmed:true,goal:value.goal ?? null};
       if(workspaceRef.current!==workspaceId||operationGeneration!==generation.current)return;
       submittedTo={workspaceId,conversationId:value.conversation_id};
       sessionStorage.setItem(submissionKey(workspaceId,value.conversation_id),request.client_request_id);setPendingId(request.client_request_id);
@@ -249,7 +264,7 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
   const reconcileCreate=async()=>{if(!ws||!pendingCreate||mutex.current)return;mutex.current=true;setLoading(true);try{const value=await create(ws);await openConversation(value);}catch(e){if(workspaceRef.current===ws)setError(conversationError(e));}finally{mutex.current=false;setLoading(false);}};
   const cancel=async()=>{if(mutex.current||!conversation)return;mutex.current=true;setSending(true);try{if(turn&&['queued','running'].includes(turn.status))setTurn(await cancelDiscussionTurn(conversation.workspace_id,conversation.conversation_id,turn.turn_id));else await stateRef.current.cancelActiveRun();await readCurrent(conversation.workspace_id,conversation.conversation_id);}catch(e){setError(conversationError(e));}finally{mutex.current=false;setSending(false);}};
   const more=async()=>{if(!conversation||!cursor||loading)return;setLoading(true);try{await readCurrent(conversation.workspace_id,conversation.conversation_id,cursor);}catch(e){setError(conversationError(e));}finally{setLoading(false);}};
-  return {list:list.filter(value=>value.workspace_id===ws),conversation:conversation?.workspace_id===ws?conversation:null,messages:conversation?.workspace_id===ws?messages:[],cursor,text:loadedWorkspace===ws?text:"",setText,references:loadedWorkspace===ws?references:[],setReferences,addReference:(ref:MessageReference)=>setReferences(old=>old.length<8&&!old.some(item=>JSON.stringify(item)===JSON.stringify(ref))?[...old,ref]:old),historyIds,setHistoryIds:(ids:string[])=>{historyTouched.current=true;setHistoryIds(ids);},taskHistoryOnly,unsupportedHistory,turn,error,loading,sending,active,needsConnection,pendingId,pendingCreate,unavailableSources,sourceRefs,ready:!conversation||readyScope===scope,select:(value:WorkspaceConversation)=>mutex.current?Promise.resolve():openConversation(value),newConversation,attachMission,submit,reconcile,reconcileCreate,refresh,cancel,more,removeUnavailable:(ref:SourceIdentity)=>setScopeRefs(old=>old.filter(item=>!sourceIdentityEquals(item,ref)))};
+  return {list:list.filter(value=>value.workspace_id===ws),conversation:conversation?.workspace_id===ws?conversation:null,messages:conversation?.workspace_id===ws?messages:[],cursor,text:loadedWorkspace===ws?text:"",setText,references:loadedWorkspace===ws?references:[],setReferences,addReference:(ref:MessageReference)=>setReferences(old=>old.length<8&&!old.some(item=>JSON.stringify(item)===JSON.stringify(ref))?[...old,ref]:old),historyIds,setHistoryIds:(ids:string[])=>{historyTouched.current=true;setHistoryIds(ids);},taskHistoryOnly,unsupportedHistory,updateReviewState,reviewReady,turn,error,loading,sending,active,needsConnection,pendingId,pendingCreate,unavailableSources,sourceRefs,ready:(!conversation||readyScope===scope)&&reviewReady,select:(value:WorkspaceConversation)=>mutex.current?Promise.resolve():openConversation(value),newConversation,attachMission,submit,reconcile,reconcileCreate,refresh,cancel,more,removeUnavailable:(ref:SourceIdentity)=>setScopeRefs(old=>old.filter(item=>!sourceIdentityEquals(item,ref)))};
 }
 export type ConversationDialogueState=ReturnType<typeof useConversationDialogue>;
 
@@ -266,13 +281,14 @@ export function ConversationDialogue({state,d,onReference,onSources,onHistory}: 
       {d.messages.map(message=><article className={`conversation-message message-${message.role}`} key={message.message_id}><header><strong>{message.role==='user'?'你':'数契 Agent'}</strong><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time></header><p>{message.content}</p>{(message.references ?? []).map((ref,i)=><button className="reference-chip" key={i} onClick={()=>onReference(ref)}>{referenceLabel(ref,state.sourceState.items)}</button>)}</article>)}
       {d.turn&&<div className="conversation-activity" role="status"><strong>{discussionStatusLabel(d.turn.status)}</strong>{d.turn.error_code&&<p>讨论未完成：{d.turn.error_code}</p>}{d.turn.handoff_error_code&&<p>讨论结束，但任务交接未完成：{d.turn.handoff_error_code}。请先核对当前状态。</p>}</div>}
       {state.runSnapshot&&<div className="conversation-activity"><strong>任务分析：{statusLabel(state.runSnapshot.status)}</strong>{state.runSnapshot.error_code&&<p>{state.runSnapshot.error_code}</p>}<button onClick={onHistory}>查看执行过程</button></div>}
-      {d.conversation?.mission_id&&<ConversationAnswers key={`${d.conversation.workspace_id}/${d.conversation.conversation_id}`} state={state} conversation={d.conversation} suggestions={d.turn?.output?.answer_suggestions ?? []} onUpdated={d.refresh}/>}
+      {d.conversation?.mission_id&&<ConversationAnswers key={`${d.conversation.workspace_id}/${d.conversation.conversation_id}`} state={state} conversation={d.conversation} suggestions={d.turn?.output?.answer_suggestions ?? []} onUpdated={d.refresh} onReviewState={d.updateReviewState}/>}
     </div>
     <form className="conversation-composer" onSubmit={event=>{event.preventDefault();nearEnd.current=true;void d.submit();}}>
       {d.error&&<div className="conversation-error" role="alert">{d.error}<button type="button" onClick={()=>void d.refresh()}>刷新并核对</button></div>}
       {d.pendingId&&<div role="status"><p>发送结果待核对，原请求标识已保留。</p><button type="button" disabled={d.sending} onClick={()=>void d.reconcile()}>核对发送结果</button></div>}
       {d.pendingCreate&&<div role="status"><p>新对话创建结果待核对，未自动发送模型请求。</p><button type="button" disabled={d.loading} onClick={()=>void d.reconcileCreate()}>核对新对话创建</button></div>}
       {d.needsConnection&&<div className="conversation-connect"><p>先连接模型，消息草稿已保留。</p><ModelSettings onSend={()=>void d.submit()} canSend={Boolean(d.text.trim())}/></div>}
+      {!d.reviewReady&&<p role="status">正在核对回答审阅状态。若卡片保留了修改，请先在卡片中重新读取并核对；本轮尚未发送。</p>}
       {d.unsupportedHistory.length>0&&<p role="alert">已选的 {d.unsupportedHistory.length} 条历史属于任务前或澄清讨论，本轮任务分析不能携带。请展开历史选择取消这些项；系统未改动你的选择。</p>}
       <details><summary>本次对话使用 {d.sourceRefs.length} 份资料 · 携带 {d.historyIds.length} 条历史</summary><p>资料范围随本次发送保存。所选历史最多 4 条；不会自动发送全部历史。</p>{state.sourceState.items.map(source=><label className="history-choice" key={source.revision_id}><input type="checkbox" checked={state.selectedSourceIds.includes(source.revision_id)} disabled={d.active||Boolean(d.pendingId)||(!state.selectedSourceIds.includes(source.revision_id)&&d.sourceRefs.length>=8)} onChange={()=>state.toggleSource(source.revision_id)}/><span>{source.original_name} · {source.revision_id.slice(0,8)}</span></label>)}{d.unavailableSources.map(ref=><p key={ref.revision_id}>来源版本已不可用：{ref.revision_id.slice(0,8)}<button type="button" onClick={()=>d.removeUnavailable(ref)}>从本轮范围移除</button></p>)}<button type="button" onClick={onSources}>添加资料 / 查看文件</button>{d.messages.map(message=><label className="history-choice" key={message.message_id}><input type="checkbox" checked={d.historyIds.includes(message.message_id)} disabled={Boolean(d.pendingId)||(!d.historyIds.includes(message.message_id)&&d.historyIds.length>=4)} onChange={event=>d.setHistoryIds(event.target.checked?[...d.historyIds,message.message_id]:d.historyIds.filter(id=>id!==message.message_id))}/><span>{message.role==='user'?'你':'Agent'}：{message.content.slice(0,90)}{d.taskHistoryOnly&&!message.task_message?"（本轮任务分析不可携带）":""}</span></label>)}</details>
       {d.references.map((ref,index)=><button type="button" className="reference-chip" key={index} disabled={Boolean(d.pendingId)} onClick={()=>d.setReferences(d.references.filter((_,i)=>i!==index))}>{referenceLabel(ref,state.sourceState.items)} ×</button>)}
