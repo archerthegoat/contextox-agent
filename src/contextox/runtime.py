@@ -419,3 +419,10 @@ class Path2Runtime:
     def busy(self) -> bool:
         with self._slot_lock:
             return self._active is not None
+
+    def change_credentials(self, operation: Callable[[], None]) -> None:
+        """Keep the same credential throughout a reserved Provider task."""
+        with self._slot_lock:
+            if self._closed or self._active is not None:
+                raise WorkspaceStoreBusyError()
+            operation()

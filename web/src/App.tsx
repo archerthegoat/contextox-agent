@@ -13,6 +13,7 @@ import {
 } from "./Path2Workbench";
 import { useTaskDialogue, ReferenceInspector, TaskConversation, TaskExecutionHistory, type DialogueState, type MessageReference } from "./TaskDialogue";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
+import { ModelSettings } from "./ModelSettings";
 import "./styles.css";
 
 export { WORKSPACE_STORAGE_KEY } from "./WorkspaceSwitcher";
@@ -167,18 +168,8 @@ function Topbar({
         />
       </div>
       <div className="topbar-actions" aria-label="工作区工具">
-        <button type="button" className="utility-button">
-          帮助
-        </button>
-        <button type="button" className="utility-button">
-          文档
-        </button>
-        <button type="button" className="utility-button">
-          通知
-        </button>
-        <button type="button" className="utility-button utility-button-muted">
-          演示
-        </button>
+        <ModelSettings />
+        <a className="utility-button" href="https://github.com/archerthegoat/contextox-agent#readme" target="_blank" rel="noreferrer">使用帮助 ↗</a>
       </div>
     </header>
   );

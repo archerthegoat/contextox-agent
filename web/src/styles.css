@@ -26,6 +26,22 @@
   --contract-soft: #faf7ff;
 }
 
+.workbench-dialog { width: min(580px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; border: 1px solid var(--line-strong); border-radius: 12px; padding: 24px; color: var(--ink); box-shadow: 0 18px 70px #10253d30; }
+.workbench-dialog::backdrop { background: #18293d55; }
+.workbench-dialog header, .workbench-dialog footer, .dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.workbench-dialog h2 { font-size: 20px; margin: 0; }
+.workbench-dialog p { font-size: 14px; line-height: 1.7; }
+.workbench-dialog label { display: block; font-size: 14px; margin: 18px 0 8px; }
+.workbench-dialog input { width: 100%; border: 1px solid var(--line-strong); border-radius: 6px; padding: 11px 12px; background: var(--paper); }
+.workbench-dialog .settings-status { margin: 20px 0 4px; font-weight: 600; }
+.workbench-dialog .settings-detail { color: #526277; margin-top: 4px; font-size: 12px; }
+.workbench-dialog .settings-error { color: #b02a38; }
+.workbench-dialog footer { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; font-size: 12px; }
+.dialog-actions { justify-content: flex-start; margin-top: 16px; }
+.dialog-actions .primary-button { padding: 10px 14px; border-radius: 6px; background: var(--blue); color: white; }
+.workbench-dialog button:disabled { opacity: .5; cursor: default; }
+.topbar-actions a.utility-button { text-decoration: none; white-space: nowrap; }
+
 * {
   box-sizing: border-box;
 }

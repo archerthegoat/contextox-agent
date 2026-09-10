@@ -3,6 +3,30 @@ import type { components, paths } from "../generated/api";
 
 const client = createClient<paths>({ baseUrl: "" });
 
+export type DeepSeekSettings = components["schemas"]["DeepSeekSettings"];
+
+export async function fetchDeepSeekSettings(): Promise<DeepSeekSettings> {
+  const result = await client.GET("/api/local-settings/deepseek", { cache: "no-store" });
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+
+export async function saveDeepSeekKey(apiKey: string, sessionToken: string): Promise<DeepSeekSettings> {
+  const result = await client.PUT("/api/local-settings/deepseek", {
+    body: { api_key: apiKey }, headers: { "X-ContextOx-Session": sessionToken }, cache: "no-store",
+  });
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+
+export async function removeDeepSeekKey(sessionToken: string): Promise<DeepSeekSettings> {
+  const result = await client.DELETE("/api/local-settings/deepseek", {
+    headers: { "X-ContextOx-Session": sessionToken }, cache: "no-store",
+  });
+  if (!result.response.ok || !result.data) throwForResult(result);
+  return result.data;
+}
+
 export type Workspace = components["schemas"]["Workspace"];
 export type WorkspaceError = components["schemas"]["WorkspaceError"];
 

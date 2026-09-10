@@ -138,7 +138,8 @@ describe("ContextOx Workbench v3 content boundaries", () => {
     expect(markup).not.toContain("object-tab-close");
     expect(markup).not.toContain("object-tab-add");
     expect(markup).not.toContain("aria-label=\"打开对象\"");
-    expect(markup).not.toContain(">关闭<");
+    expect(markup).toContain('aria-label="关闭模型设置"');
+    expect(markup).toContain('aria-labelledby="model-settings-title"');
     expect(markup).not.toContain(">打开<");
   });
 

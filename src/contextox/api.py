@@ -128,6 +128,7 @@ from contextox.store import (
 from contextox.sources import SourceInputError
 from contextox.runtime import Path2Runtime
 from contextox.local_install import static_directory
+from contextox.local_settings import install_settings_routes
 
 
 DEFAULT_STATIC_DIR = static_directory()
@@ -826,6 +827,7 @@ def create_app(
             app.state.workspace_store_error = WorkspaceStoreUnavailableError()
     if app.state.workspace_store is not None:
         app.state.path2_runtime = Path2Runtime(app.state.workspace_store, agent_profile=agent_profile)
+    install_settings_routes(app, agent_profile)
 
     @app.exception_handler(RequestValidationError)
     async def workspace_request_validation(
@@ -864,6 +866,9 @@ def create_app(
         request: Request,
         error: StarletteHTTPException,
     ) -> JSONResponse:
+        if request.url.path == "/api/local-settings/deepseek":
+            return _workspace_error(request, status_code=error.status_code,
+                code="local_settings_unavailable", message=str(error.detail))
         if request.scope.get("_contextox_body_too_large"):
             return _workspace_error(
                 request,

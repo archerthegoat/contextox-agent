@@ -17,6 +17,7 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
+    SecretStr,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -236,6 +237,28 @@ class WorkspaceError(ContextOxModel):
     code: str = Field(min_length=1)
     message: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
+
+
+class DeepSeekSettings(ContextOxModel):
+    source: Literal["environment", "keychain", "missing", "unavailable"]
+    configured: bool
+    busy: bool
+    model: Literal["deepseek-flash"] = "deepseek-flash"
+    agent_profile: Literal["production", "demo-fast"]
+    thinking: Literal["enabled", "disabled"]
+    connection: Literal["not_run"] = "not_run"
+    session_token: str
+
+
+class DeepSeekKeyRequest(ContextOxModel):
+    api_key: SecretStr = Field(min_length=16, max_length=512)
+
+    @field_validator("api_key")
+    @classmethod
+    def printable_key(cls, value: SecretStr) -> SecretStr:
+        if not all(33 <= ord(character) <= 126 for character in value.get_secret_value()):
+            raise ValueError("invalid API key format")
+        return value
 
 
 class EventEnvelope(ContextOxModel):

@@ -1161,7 +1161,11 @@ class DeepSeekProvider:
 
         if cancel_event is not None and cancel_event.is_set():
             raise ProviderCancelledError()
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        from contextox.credentials import CredentialUnavailableError, provider_key
+        try:
+            api_key = provider_key()
+        except CredentialUnavailableError:
+            raise ProviderNotConfiguredError() from None
         if not api_key:
             raise ProviderNotConfiguredError()
         if type(max_tokens) is not int or max_tokens < 1 or max_tokens > MAX_OUTPUT_TOKENS:
