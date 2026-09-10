@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, Literal
 from uuid import RFC_4122, UUID, uuid4
 
 from fastapi import FastAPI, Header, Request, Query, Response
@@ -782,6 +782,7 @@ def create_app(
     migrate_dialogue: bool = False,
     migrate_clarifications: bool = False,
     migrate_profiles: bool = False,
+    agent_profile: Literal["production", "demo-fast"] = "production",
 ) -> FastAPI:
     resolved_static_dir = (static_dir or DEFAULT_STATIC_DIR).resolve()
 
@@ -823,7 +824,7 @@ def create_app(
         except (OSError, sqlite3.Error):
             app.state.workspace_store_error = WorkspaceStoreUnavailableError()
     if app.state.workspace_store is not None:
-        app.state.path2_runtime = Path2Runtime(app.state.workspace_store)
+        app.state.path2_runtime = Path2Runtime(app.state.workspace_store, agent_profile=agent_profile)
 
     @app.exception_handler(RequestValidationError)
     async def workspace_request_validation(

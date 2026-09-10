@@ -366,13 +366,20 @@ class _AgentFailure(Exception):
         self.safe_stage = safe_stage
 
 
-def get_provider() -> DeepSeekProvider:
+AgentProfile = Literal["production", "demo-fast"]
+
+
+def get_provider(*, agent_profile: AgentProfile = "production") -> DeepSeekProvider:
     """Create the fixed provider for one attempt or Run.
 
     Tests replace this factory with an isolated fake.  Production always uses
     the standard-library DeepSeek adapter and its fixed endpoint.
     """
 
+    if agent_profile == "demo-fast":
+        return DeepSeekProvider(thinking="disabled", reasoning_effort=None)
+    if agent_profile != "production":
+        raise ValueError("unsupported agent profile")
     return DeepSeekProvider()
 
 
@@ -579,6 +586,7 @@ def generate_mission_draft(
     workspace_id: str,
     attempt_id: str,
     cancel_event: Event,
+    *, agent_profile: AgentProfile = "production",
 ) -> None:
     """Run exactly one bounded non-streaming Mission draft attempt."""
 
@@ -597,7 +605,7 @@ def generate_mission_draft(
     ):
         raise WorkspaceStoreError("Mission draft claim readback is invalid.")
 
-    provider = get_provider()
+    provider = get_provider(agent_profile=agent_profile)
     budget = RunBudget()
     if cancel_event.is_set():
         receipt = _make_receipt(
@@ -1416,6 +1424,7 @@ def _run_semantic_agent(
     mission_id: str,
     run_id: str,
     cancel_event: Event,
+    *, agent_profile: AgentProfile = "production",
 ) -> None:
     """Execute one model proposal followed by one deterministic transaction."""
 
@@ -1485,7 +1494,7 @@ def _run_semantic_agent(
         _stop_run(store, workspace_id, mission_id, run_id, status, code)
         return
 
-    provider = get_provider()
+    provider = get_provider(agent_profile=agent_profile)
     _append_model_started(
         store, workspace_id, mission_id, run_id, 1, transport="non_stream"
     )
@@ -2144,11 +2153,13 @@ def run_agent(
     mission_id: str,
     run_id: str,
     cancel_event: Event,
+    *, agent_profile: AgentProfile = "production",
 ) -> None:
     """Dispatch by the immutable execution profile persisted with the Run."""
 
     snapshot = store.get_run_snapshot(workspace_id, mission_id, run_id)
     if snapshot.budget.max_model_turns == 1:
-        _run_semantic_agent(store, workspace_id, mission_id, run_id, cancel_event)
+        _run_semantic_agent(store, workspace_id, mission_id, run_id, cancel_event,
+                            agent_profile=agent_profile)
     else:
         _run_legacy_agent(store, workspace_id, mission_id, run_id, cancel_event)

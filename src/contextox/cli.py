@@ -177,6 +177,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     start = commands.add_parser("start", help="Start the local Workbench server.")
+    start.add_argument("--agent-profile", choices=("production", "demo-fast"), default="production",
+                       help="Use production high (default) or explicitly select the non-thinking demo.")
     start.add_argument("--migrate-profile-interpretations", action="store_true", help="Back up and migrate a stopped v5 store to profile interpretations v6.")
     start.add_argument("--migrate-clarification-answers", action="store_true", help="Back up and migrate a stopped store to clarification answers v5.")
     start.add_argument("--migrate-task-dialogue", action="store_true", help="Explicitly back up and migrate a stopped v3 store to task dialogue v4.")
@@ -226,6 +228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             migrate_dialogue=args.migrate_task_dialogue,
             migrate_clarifications=args.migrate_clarification_answers,
             migrate_profiles=args.migrate_profile_interpretations,
+            agent_profile=args.agent_profile,
         )
 
         class LocalServer(uvicorn.Server):

@@ -50,7 +50,11 @@ class Path2Runtime:
         *,
         thread_factory: Callable[..., Thread] = Thread,
         event_capacity: int = 512,
+        agent_profile: agent.AgentProfile = "production",
     ) -> None:
+        if agent_profile not in {"production", "demo-fast"}:
+            raise ValueError("unsupported agent profile")
+        self.agent_profile = agent_profile
         self.store = store
         self._thread_factory = thread_factory
         self._slot_lock = RLock()
@@ -119,7 +123,8 @@ class Path2Runtime:
             self._start_thread(
                 task,
                 lambda: agent.generate_mission_draft(
-                    self.store, workspace_id, attempt.attempt_id, task.cancel_event
+                    self.store, workspace_id, attempt.attempt_id, task.cancel_event,
+                    agent_profile=self.agent_profile,
                 ),
             )
             return attempt
@@ -161,7 +166,8 @@ class Path2Runtime:
             self._start_thread(
                 task,
                 lambda: agent.run_agent(
-                    self.store, workspace_id, mission_id, run.run_id, task.cancel_event
+                    self.store, workspace_id, mission_id, run.run_id, task.cancel_event,
+                    agent_profile=self.agent_profile,
                 ),
             )
             return run
@@ -239,7 +245,8 @@ class Path2Runtime:
             run = receipt.run
             task.workspace_id, task.mission_id, task.object_id = workspace_id, mission_id, run.run_id
             self._start_thread(task, lambda: agent.run_agent(
-                self.store, workspace_id, mission_id, run.run_id, task.cancel_event
+                self.store, workspace_id, mission_id, run.run_id, task.cancel_event,
+                agent_profile=self.agent_profile,
             ))
             return receipt, True
         except BaseException as exc:

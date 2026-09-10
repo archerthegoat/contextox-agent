@@ -121,9 +121,10 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="contextox-runtime-", dir="/private/tmp") as directory:
             store = WorkspaceStore.open(directory)
             workspace_id = store.create_workspace("Runtime").workspace_id
-            runtime = Path2Runtime(store, thread_factory=InlineThread)
+            runtime = Path2Runtime(store, thread_factory=InlineThread, agent_profile="demo-fast")
 
-            def finish_attempt(store, workspace_id, attempt_id, cancel_event):
+            def finish_attempt(store, workspace_id, attempt_id, cancel_event, *, agent_profile):
+                self.assertEqual(agent_profile, "demo-fast")
                 del cancel_event
                 store.fail_mission_draft_attempt(
                     workspace_id, attempt_id, "blocked", "synthetic_block", None

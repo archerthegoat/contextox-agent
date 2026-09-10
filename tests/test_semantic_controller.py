@@ -7,7 +7,7 @@ import test_agent as fixtures
 
 from contextox import agent
 from contextox.model_tools import ContextPlanV1, SemanticProposalV1
-from contextox.models import SemanticApplicationInput
+from contextox.models import SemanticApplicationInput, SourceIdentity, TaskMessageSendRequest
 from contextox.provider import ProviderCompletion, ProviderUsage
 from contextox.semantic_controller import (
     EMPTY_TOOL_SCHEMA_SHA256,
@@ -42,6 +42,48 @@ class ProposalProvider:
 
 
 class SemanticProposalBoundaryTests(unittest.TestCase):
+    def test_selected_markdown_and_explicit_excerpt_reach_the_request(self):
+        for tail, expected_coverage in (("", "complete"), ("x" * 9000, "partial")):
+            with self.subTest(coverage=expected_coverage), fixtures.PersistedAttemptTests().store_case() as (store, ws, attempt):
+                ready = fixtures.PersistedAttemptTests().generate(store, ws, attempt)
+                refs = []
+                for name, media, content in (
+                    ("amounts.csv", "text/csv", b"id,amount\n1,12\n2,20\n"),
+                    ("people.csv", "text/csv", b"id,name\n1,A\n2,B\n"),
+                    ("notes.md", "text/markdown", ("金额单位为元。\n核算口径待确认。\n" + tail).encode()),
+                ):
+                    revision, _ = store.import_source_revision(ws, name, media, content)
+                    refs.append(SourceIdentity.model_validate(revision.model_dump(include=set(SourceIdentity.model_fields))))
+                mission = store.confirm_mission_draft_attempt(ws, attempt.attempt_id, 1, ready.candidate_sha256, refs)
+                request = TaskMessageSendRequest(kind="message", client_request_id=fixtures._id(880),
+                    expected_state_version=mission.state_version, content="请读取说明和选中片段。",
+                    references=[{"kind":"source_excerpt", "evidence_ref": {
+                        **refs[2].model_dump(), "locator":{"kind":"text_lines", "line_start":2, "line_end":2}}}],
+                    history_messages=[], source_refs=refs, provider_send_confirmed=True)
+                receipt, _ = store.send_task_message(ws, mission.mission_id, request)
+                snapshot = store.get_context_snapshot(ws, mission.mission_id, receipt.run.run_id)
+                plan, adapter = build_context_plan(snapshot, store)
+                payload = json.loads(semantic_messages(plan)[1]["content"])
+                note = next(source for source in payload["sources"] if source["name"] == "notes.md")
+                self.assertEqual(note["text_coverage"], expected_coverage)
+                self.assertIn("金额单位为元。", note["excerpts"][0]["text"])
+                self.assertEqual(note["excerpts"][1]["text"], "核算口径待确认。")
+                evidence = adapter.resolve(note["excerpts"][1]["evidence_handle"], "evidence")
+                self.assertEqual(evidence.revision_id, refs[2].revision_id)
+                self.assertEqual(evidence.locator.line_start, 2)
+                self.assertTrue(all(source["profile_pack"]["tables"] for source in payload["sources"][:2]))
+
+    def test_demo_profile_is_explicit_and_uses_existing_non_thinking_payload(self):
+        from contextox.cli import _build_parser
+        self.assertEqual(_build_parser().parse_args(["start"]).agent_profile, "production")
+        self.assertEqual(agent.get_provider().config.reasoning_effort, "high")
+        profile = _build_parser().parse_args(["start", "--agent-profile", "demo-fast"]).agent_profile
+        provider = agent.get_provider(agent_profile=profile)
+        payload = provider.build_payload([], stream=False, tools=None, max_tokens=4096, user_id="ws-test")
+        self.assertEqual(payload["model"], "deepseek-v4-flash")
+        self.assertEqual(payload["thinking"], {"type":"disabled"})
+        self.assertNotIn("reasoning_effort", payload)
+
     def test_prompt_schema_is_compact_and_keeps_nested_contract(self):
         self.assertLess(len(P0_SEMANTIC_PROPOSAL.encode("utf-8")), 5500)
         self.assertIn('"FieldInput"', P0_SEMANTIC_PROPOSAL)

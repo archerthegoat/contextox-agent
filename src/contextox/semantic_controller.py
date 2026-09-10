@@ -24,6 +24,7 @@ from contextox.models import (
     RelationshipCandidate,
     RunBudget,
     SemanticApplicationInput,
+    TextLinesLocator,
     canonical_sha256,
 )
 from contextox.provider import ProviderCompletion, ProviderTimeouts
@@ -299,6 +300,36 @@ def _source_plans(adapter: ToolAdapter, snapshot: ContextSnapshot, store: Any) -
         source_plan["profile_interpretation"] = (
             None if interpretation is None
             else interpretation.model_dump(mode="json")
+        )
+        # Removing read tools must not remove the selected text source body.
+        locators = []
+        if source["text_line_count"] and source["media_type"] in {"text/plain", "text/markdown"}:
+            locators.append(TextLinesLocator(kind="text_lines", line_start=1,
+                                            line_end=source["text_line_count"]))
+        if snapshot.message_context is not None:
+            for message in [snapshot.message_context.input, *snapshot.message_context.history]:
+                if message.role != "user":
+                    continue
+                for reference in message.references:
+                    if reference.kind == "source_excerpt" and reference.evidence_ref.revision_id == revision_id:
+                        adapter._source(reference.evidence_ref)
+                        locators.append(reference.evidence_ref.locator)
+        excerpts = []
+        seen: set[str] = set()
+        for locator in locators:
+            key = canonical_sha256(locator)
+            if key in seen:
+                continue
+            seen.add(key)
+            excerpt = store.read_source_excerpt(snapshot.mission.workspace_id, revision_id, locator)
+            excerpts.append({**adapter.public(excerpt.source_ref), "text": excerpt.text,
+                             "truncated": excerpt.truncated})
+        source_plan["excerpts"] = excerpts
+        source_plan["text_coverage"] = (
+            "partial" if any(item["truncated"] for item in excerpts)
+            else "complete" if locators and isinstance(locators[0], TextLinesLocator)
+            and locators[0].line_start == 1 and locators[0].line_end == source["text_line_count"]
+            else "selected_excerpts" if excerpts else "not_read"
         )
         plans.append(source_plan)
     return plans
