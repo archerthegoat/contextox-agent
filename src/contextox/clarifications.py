@@ -125,10 +125,17 @@ def latest_version(connection, ws, mid, origin, cid):
 def validate_current(store, connection, answer, *, review=False):
     from contextox import store as db
     mission = db._load_mission(connection, answer.workspace_id, answer.mission_id)
-    if any(ref not in mission.source_refs for ref in answer.source_refs):
+    conv=db.conversations.mission_conversation(store,connection,answer.workspace_id,answer.mission_id)
+    selected=conv.source_refs if conv else mission.source_refs
+    if any(ref not in selected for ref in answer.source_refs):
         raise db.Path2StateError("source_refs_invalid")
     store._validate_source_identities(connection, answer.workspace_id, answer.source_refs)
     current = db._load_latest_draft(connection, answer.workspace_id, answer.mission_id)
+    if conv:
+        store._validate_source_identities(connection,answer.workspace_id,selected)
+        db.conversations.validate_goal(store,connection,conv,conv.goal,selected)
+        db._check_payload_source_scope(current,selected)
+        db._check_payload_source_scope(request_in(connection,answer.workspace_id,answer.mission_id,answer.origin_run_id,answer.clarification_id),selected)
     if review and draft_ref(current) != answer.review_draft:
         raise db.Path2StateError("clarification_draft_stale")
     for item in answer.items:
@@ -225,7 +232,9 @@ def mutate(store, ws, mid, origin, cid, payload, *, version=None):
                 raise db.Path2StateError("clarification_answer_invalid") from exc
             if len(answer.items) != len(q.questions):
                 raise db.Path2StateError("clarification_answer_incomplete")
-            if {canonical_sha256(ref) for ref in answer.source_refs} != {canonical_sha256(ref) for ref in mission.source_refs}:
+            conv=db.conversations.mission_conversation(store,connection,ws,mid)
+            selected=conv.source_refs if conv else mission.source_refs
+            if {canonical_sha256(ref) for ref in answer.source_refs} != {canonical_sha256(ref) for ref in selected}:
                 raise db.Path2StateError("source_refs_invalid")
             validate_current(store,connection,answer,review=True)
             connection.execute("INSERT INTO clarification_answer_versions VALUES (?,?,?,?,?,?,?)",
@@ -287,8 +296,15 @@ def validate_send(store, connection, mission, payload):
     if draft_ref(db._load_latest_draft(connection,mission.workspace_id,mission.mission_id)) != payload.expected_draft:
         raise db.Path2StateError("clarification_draft_stale")
     chosen={canonical_sha256(s) for s in payload.source_refs}
-    if any({canonical_sha256(s) for s in a.answer.source_refs} != chosen for a in approved):
+    conv=db.conversations.mission_conversation(store,connection,mission.workspace_id,mission.mission_id)
+    answer_scopes=[{canonical_sha256(s) for s in a.answer.source_refs} for a in approved]
+    invalid=any(not scope<=chosen for scope in answer_scopes) if conv else any(scope!=chosen for scope in answer_scopes)
+    if invalid:
         raise db.Path2StateError("source_refs_invalid")
+    if conv:
+        db._check_payload_source_scope(approved,payload.source_refs)
+        db._check_payload_source_scope(db._load_latest_draft(connection,mission.workspace_id,mission.mission_id),payload.source_refs)
+        db.conversations.validate_goal(store,connection,conv,conv.goal,payload.source_refs)
     # Budget includes full answer context; reject before inserting a Run or sending.
     if len(db._canonical_json(approved).encode("utf-8")) > 262144:
         raise db.Path2StateError("approved_answer_context_too_large")

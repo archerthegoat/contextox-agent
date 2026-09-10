@@ -2496,8 +2496,7 @@ class WorkspaceStore:
         _check_message_start_state(connection, mission, allow_partial=True, allow_answers=bool(request.approved_answers),
                                    regenerate_from_run_id=request.regenerate_from_run_id)
         refs = _validated_source_identities(workspace_id, request.source_refs)
-        if any(ref not in mission.source_refs for ref in refs):
-            raise Path2StateError("source_refs_invalid")
+        conversations.validate_message_scope(self,connection,mission,request)
         self._validate_source_identities(connection, workspace_id, refs)
         run_id, message_id = str(uuid4()), str(uuid4())
         now = _utc_now().isoformat()

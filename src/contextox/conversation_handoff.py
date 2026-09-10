@@ -83,9 +83,10 @@ def _validate_answer_steps(store, connection, payload, receipt):
         if (approval is None or answer.sha256 != ref.answer_sha256
                 or approval.approval_id != ref.approval_id
                 or answer.request_sha256 != original.request_sha256
-                or {canonical_sha256(s) for s in answer.source_refs}
-                   != {canonical_sha256(s) for s in payload.source_refs}):
+                or not {canonical_sha256(s) for s in answer.source_refs}
+                   <= {canonical_sha256(s) for s in payload.source_refs}):
             raise db.WorkspaceStoreUnavailableError()
+        db._check_payload_source_scope([r2.request_in(connection,ws,mid,*key),answer],payload.source_refs)
         if original.items is not None:
             save, saved = step.save_request, step.save_receipt
             if save is None or saved is None:
@@ -217,10 +218,14 @@ def handoff(store, workspace_id, conversation_id, payload):
         if r2.draft_ref(db._load_latest_draft(connection, ws, mission.mission_id)) != payload.expected_draft:
             raise db.Path2StateError("clarification_draft_stale")
         selected = {canonical_sha256(s) for s in payload.source_refs}
-        if selected != {canonical_sha256(s) for s in mission.source_refs} or selected != {canonical_sha256(s) for s in json.loads(row[2])}:
+        if selected != {canonical_sha256(s) for s in json.loads(row[2])}:
             raise db.Path2StateError("source_refs_invalid")
         store._validate_source_identities(connection, ws, payload.source_refs)
         requests = db._load_clarifications(connection, ws, mission.mission_id)
+        db._check_payload_source_scope(requests,payload.source_refs)
+        db._check_payload_source_scope(db._load_latest_draft(connection,ws,mission.mission_id),payload.source_refs)
+        conv=db.conversations.load_conversation(store,connection,ws,cid)
+        db.conversations.validate_goal(store,connection,conv,conv.goal,payload.source_refs)
         actual = {(q.run_id, q.clarification_id): q for q in requests}
         reviewed = {(a.origin_run_id, a.clarification_id): a for a in payload.reviewed_answers}
         if actual.keys() != reviewed.keys():

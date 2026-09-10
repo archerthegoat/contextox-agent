@@ -124,6 +124,71 @@ def sync_task_messages(connection):
         AND cm.task_message_id=m.message_id) ORDER BY m.rowid""")
 
 
+def mission_conversation(store, connection, workspace_id, mission_id):
+    """A real v7 association, not a caller-selected permission mode."""
+    if not enabled(connection):
+        return None
+    row=connection.execute("SELECT conversation_id FROM workspace_conversations WHERE workspace_id=? AND mission_id=?",
+        (workspace_id,mission_id)).fetchone()
+    return load_conversation(store,connection,workspace_id,row[0]) if row else None
+
+
+def validate_message_scope(store, connection, mission, request):
+    """Prove expanded Run inputs were explicitly submitted through a conversation."""
+    db=_db()
+    original_scope=all(ref in mission.source_refs for ref in request.source_refs)
+    conv=mission_conversation(store,connection,mission.workspace_id,mission.mission_id)
+    if conv is None:
+        if original_scope:
+            return
+        raise db.Path2StateError("source_refs_invalid")
+    ws,cid=conv.workspace_id,conv.conversation_id
+    row=connection.execute("SELECT request_sha256,request_json,input_message_id,turn_id FROM conversation_submissions WHERE workspace_id=? AND conversation_id=? AND client_request_id=?",
+        (ws,cid,request.client_request_id)).fetchone()
+    if row:
+        # The first Run is already authorized by start_task's terminal receipt,
+        # origin and CAS gate. Its source snapshot exactly created this Mission.
+        if (original_scope and row[3] is not None and mission.conversation_origin
+            and mission.conversation_origin.client_request_id==request.client_request_id
+            and mission.conversation_origin.message_id==row[2]):
+            return
+        saved=ConversationMessageSendRequest.model_validate_json(row[1])
+        if canonical_sha256(saved)!=row[0] or saved.client_request_id!=request.client_request_id:
+            raise db.WorkspaceStoreUnavailableError()
+        history=_history(store,connection,conv,saved)
+        if (conv.state_version!=saved.expected_state_version+1 or saved.content!=request.content
+            or saved.source_refs!=request.source_refs or saved.references!=request.references
+            or saved.regenerate_from_run_id!=request.regenerate_from_run_id
+            or any(message.task_message is None for message in history)
+            or [MessageHistoryRef(message_id=m.task_message.message_id,sha256=m.task_message.sha256) for m in history]!=request.history_messages):
+            raise db.Path2StateError("state_conflict")
+        message=load_message(store,connection,ws,cid,row[2])
+        if message.role!="user" or message.content!=saved.content or message.source_refs!=saved.source_refs or message.references!=saved.references:
+            raise db.WorkspaceStoreUnavailableError()
+    else:
+        from contextox.handoff_models import ConversationHandoffReceipt, ConversationHandoffRequest
+        found=False
+        for request_id,raw in connection.execute("SELECT client_request_id,receipt_json FROM conversation_handoffs WHERE workspace_id=? AND conversation_id=?",(ws,cid)):
+            candidate=ConversationHandoffReceipt.model_validate_json(raw)
+            if candidate.send_request.client_request_id!=request.client_request_id:
+                continue
+            receipt=db.conversation_handoff._read(store,connection,ws,cid,request_id)
+            original=connection.execute("SELECT request_json FROM conversation_handoffs WHERE workspace_id=? AND conversation_id=? AND client_request_id=?",(ws,cid,request_id)).fetchone()
+            payload=ConversationHandoffRequest.model_validate_json(original[0])
+            if receipt.send_request!=request or conv.state_version!=payload.expected_conversation_version:
+                raise db.Path2StateError("state_conflict")
+            found=True
+            break
+        if not found:
+            if original_scope:
+                return
+            raise db.Path2StateError("source_refs_invalid")
+    if {canonical_sha256(ref) for ref in conv.source_refs}!={canonical_sha256(ref) for ref in request.source_refs}:
+        raise db.Path2StateError("source_refs_invalid")
+    store._validate_source_identities(connection,ws,request.source_refs)
+    validate_goal(store,connection,conv,conv.goal,request.source_refs)
+
+
 def create(store, ws, request):
     db = _db()
     request = ConversationCreateRequest.model_validate(request.model_dump())
@@ -366,11 +431,12 @@ def create_submission(store,ws,cid,request,config,p0_hash,output_schema_hash,*,d
         questions=db._load_clarifications(c,ws,conv.mission_id) if conv.mission_id else []
         if mission and (mission.status in {"completed","cancelled"}):
             raise db.Path2StateError("state_conflict")
-        if mission and any(ref not in mission.source_refs for ref in refs):
-            raise db.Path2StateError("source_refs_invalid")
         if mission and c.execute("SELECT 1 FROM runs WHERE workspace_id=? AND mission_id=? AND status IN ('queued','running')",(ws,mission.mission_id)).fetchone():
             raise db.WorkspaceStoreBusyError()
         cases=db.r2.cases(store,c,ws,mission.mission_id).items if mission else []
+        if mission:
+            _scope({"draft":draft.model_dump(mode="json") if draft else None,
+                "clarification_cases":[case.model_dump(mode="json") for case in cases]},refs)
         waiting_answers=any(case.review_state!="approved" for case in cases)
         discussion=mission is None or waiting_answers or bool(draft and draft.status=="in_review")
         tid=str(uuid4()) if discussion else None
