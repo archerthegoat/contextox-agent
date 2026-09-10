@@ -349,3 +349,12 @@ def record_analysis(store, workspace_id, conversation_id, request_id, *, state, 
         })
         _persist(connection, receipt)
         return receipt
+
+
+def recovered_analysis_state(run):
+    """Startup evidence survives a later analysis failure or cancellation."""
+    if run.started_at is not None:
+        return "started"
+    if run.status in {"failed", "cancelled", "blocked"}:
+        return "failed"
+    return "unknown" if run.status == "queued" else "started"

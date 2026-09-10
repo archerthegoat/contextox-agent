@@ -14,7 +14,8 @@ from contextox.provider import ProviderCompletion, ProviderUsage, ProviderError,
 class FakeStore:
     def __init__(self):
         self.turn = SimpleNamespace(workspace_id=str(uuid4()), conversation_id=str(uuid4()),
-            turn_id=str(uuid4()), request_sha256="a" * 64, status="queued", mission_id=None,
+            turn_id=str(uuid4()), request_sha256="a" * 64, context_sha256="b" * 64, status="queued", mission_id=None,
+            p0_sha256=discussion.P0_SHA256, output_schema_sha256=discussion.OUTPUT_SCHEMA_SHA256,
             config=ProviderConfigSnapshot(endpoint_id="deepseek_chat_completions",
                 model="deepseek-v4-flash", thinking="disabled", reasoning_effort=None))
         self.context = SimpleNamespace(model_dump_json=lambda: '{"input":"解释资料"}')
@@ -122,6 +123,14 @@ class DiscussionTests(unittest.TestCase):
                 self.run_turn(store, provider)
                 self.assertEqual(store.turn.status, "failed")
                 self.assertEqual(len(provider.calls), 1)
+
+    def test_receipt_separates_known_unsent_from_unknown_dispatch(self):
+        for code, started in (("provider_not_configured", False), ("provider_timeout_unknown", None)):
+            with self.subTest(code=code):
+                store, provider = FakeStore(), FakeProvider()
+                provider.error = ProviderError(code, "blocked" if started is False else "failed")
+                self.run_turn(store, provider)
+                self.assertIs(store.saved[1].request_started, started)
 
 
 if __name__ == "__main__":

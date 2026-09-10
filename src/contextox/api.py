@@ -19,6 +19,7 @@ from pydantic import BaseModel, TypeAdapter
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from contextox import __version__
+from contextox.conversation_api import install_conversation_routes
 from contextox.models import (
     ClarificationCasePage, ClarificationAnswerRead, ClarificationAnswerSaveRequest,
     ClarificationAnswerApproveRequest, ClarificationSubmissionReceipt, AnswerImpact,
@@ -218,6 +219,8 @@ def _is_path2_http_path(path: object) -> bool:
     if len(parts) < 5 or parts[1:3] != ["api", "workspaces"]:
         return False
     suffix = parts[4:]
+    if suffix and suffix[0] == "conversations":
+        return True
     if suffix in (["sources"], ["mission-draft-attempts"]):
         return True
     if len(suffix) == 2 and suffix[0] in {"sources", "mission-draft-attempts"}:
@@ -540,17 +543,20 @@ def _workspace_store_error_response(
             "message_not_found", "message_submission_not_found", "clarification_not_found",
             "clarification_answer_not_found", "clarification_submission_not_found",
             "profile_interpretation_attempt_not_found",
+            "conversation_not_found", "conversation_submission_not_found", "discussion_turn_not_found",
+            "conversation_handoff_not_found",
         }
         return _workspace_error(
             request,
             status_code=(404 if not_found else 503 if error.code in {
                 "task_dialogue_not_implemented", "message_page_item_too_large",
-                "clarification_answers_not_implemented", "profile_interpretation_not_implemented"
+                "clarification_answers_not_implemented", "profile_interpretation_not_implemented", "conversation_not_implemented"
             } else 409 if error.code in {"message_reference_stale",
                 "message_context_scope_mismatch", "task_waiting_for_review",
                 "previous_outcome_unresolved", "regeneration_not_allowed", "idempotency_conflict", "clarification_answer_stale",
-                "clarification_draft_stale", "clarification_target_stale", "clarification_scope_too_large"} or (error.code in {"state_conflict", "run_already_active"} and
-                (request.url.path.endswith("/messages") or "/message-submissions/" in request.url.path or "/clarifications/" in request.url.path)) else 422),
+                "clarification_draft_stale", "clarification_target_stale", "clarification_scope_too_large",
+                "conversation_stale", "discussion_outcome_unknown", "conversation_handoff_conflict"} or (error.code in {"state_conflict", "run_already_active"} and
+                (request.url.path.endswith("/messages") or "/message-submissions/" in request.url.path or "/clarifications/" in request.url.path or "/conversations" in request.url.path)) else 422),
             code=error.code,
             message=(
                 "The requested Path 2 object was not found."
@@ -786,6 +792,7 @@ def create_app(
     migrate_dialogue: bool = False,
     migrate_clarifications: bool = False,
     migrate_profiles: bool = False,
+    migrate_conversations: bool = False,
     agent_profile: Literal["production", "demo-fast"] = "production",
 ) -> FastAPI:
     resolved_static_dir = (static_dir or DEFAULT_STATIC_DIR).resolve()
@@ -822,6 +829,7 @@ def create_app(
                 migrate_dialogue=migrate_dialogue,
                 migrate_clarifications=migrate_clarifications,
                 migrate_profiles=migrate_profiles,
+                migrate_conversations=migrate_conversations,
             )
         except WorkspaceStoreError as error:
             app.state.workspace_store_error = error
@@ -830,6 +838,7 @@ def create_app(
     if app.state.workspace_store is not None:
         app.state.path2_runtime = Path2Runtime(app.state.workspace_store, agent_profile=agent_profile)
     install_settings_routes(app, agent_profile)
+    install_conversation_routes(app, _workspace_store, _path2_runtime, _workspace_store_error_response)
 
     @app.exception_handler(RequestValidationError)
     async def workspace_request_validation(

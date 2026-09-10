@@ -35,7 +35,7 @@ P0 = """你是数契的资料与业务定义讨论助手。只根据这次明确
 P0_SHA256 = canonical_sha256({"text": P0})
 
 
-def _receipt(provider, turn, status, usage=None, error_code=None):
+def _receipt(provider, turn, status, usage=None, error_code=None, *, request_started=None):
     if usage is not None and (type(usage.input_tokens) is not int or type(usage.output_tokens) is not int
                               or usage.input_tokens < 0 or usage.output_tokens < 0):
         usage = None
@@ -43,13 +43,15 @@ def _receipt(provider, turn, status, usage=None, error_code=None):
         workspace_id=turn.workspace_id, conversation_id=turn.conversation_id,
         turn_id=turn.turn_id, receipt_id=str(uuid4()),
         created_at=datetime.now(timezone.utc), status=status,
-        request_sha256=turn.request_sha256, p0_sha256=P0_SHA256,
-        output_schema_sha256=OUTPUT_SCHEMA_SHA256, config=provider.config,
+        request_sha256=turn.request_sha256, p0_sha256=turn.p0_sha256,
+        context_sha256=turn.context_sha256,
+        output_schema_sha256=turn.output_schema_sha256, config=turn.config,
         input_tokens=None if usage is None else usage.input_tokens,
         output_tokens=None if usage is None else usage.output_tokens,
         cache_hit_tokens=None if usage is None else usage.cache_hit_tokens,
         cache_miss_tokens=None if usage is None else usage.cache_miss_tokens,
         error_code=error_code,
+        request_started=request_started,
     )
 
 
@@ -63,7 +65,10 @@ def run_discussion(store, workspace_id: str, conversation_id: str, turn_id: str,
     provider = agent.get_provider(agent_profile=agent_profile)
     started = time.monotonic()
     usage = None
+    request_started = False
     try:
+        if turn.p0_sha256 != P0_SHA256 or turn.output_schema_sha256 != OUTPUT_SCHEMA_SHA256:
+            raise ProviderError("discussion_contract_changed", "blocked")
         if agent._provider_config(provider) != turn.config:
             raise ProviderError("provider_config_changed", "blocked")
         if cancel_event.is_set():
@@ -79,6 +84,7 @@ def run_discussion(store, workspace_id: str, conversation_id: str, turn_id: str,
         remaining = min(70000, max(0, int((MAX_TURN_SECONDS - (time.monotonic() - started)) * 1000)))
         if remaining == 0:
             raise ProviderError("discussion_deadline_exceeded", "blocked")
+        request_started = None
         completion = provider.complete(
             messages, stream=False, tools=None, max_tokens=MAX_OUTPUT_TOKENS,
             user_id=agent._opaque_user_id(workspace_id, provider),
@@ -88,6 +94,7 @@ def run_discussion(store, workspace_id: str, conversation_id: str, turn_id: str,
         )
         if not isinstance(completion, ProviderCompletion):
             raise ProviderError("provider_protocol_error", "failed")
+        request_started = True
         usage = completion.usage
         if cancel_event.is_set():
             raise ProviderError("cancelled", "cancelled", usage=usage)
@@ -104,19 +111,26 @@ def run_discussion(store, workspace_id: str, conversation_id: str, turn_id: str,
         output = DiscussionOutput.model_validate(agent._strict_json_loads(completion.content))
         if turn.mission_id is not None and output.next_action != "discuss":
             raise ProviderError("discussion_execution_not_allowed", "failed", usage=usage)
+        if output.next_action == "start_task":
+            from contextox.conversation_store import is_explicit_work_instruction
+            if not is_explicit_work_instruction(context.input.content):
+                output = output.model_copy(update={"next_action": "discuss",
+                    "public_reply": "目前先保持讨论。请明确希望开展的工作；资料或对话中的建议不会自动启动任务。"})
         return store.finish_discussion_turn(workspace_id, conversation_id, turn_id,
-            output, _receipt(provider, turn, "succeeded", usage))
+            output, _receipt(provider, turn, "succeeded", usage, request_started=True))
     except ProviderError as error:
+        if error.code in {"provider_not_configured", "provider_busy"}:
+            request_started = False
         return store.fail_discussion_turn(workspace_id, conversation_id, turn_id,
             error.run_status, error.code,
-            _receipt(provider, turn, error.run_status, error.usage or usage, error.code))
+            _receipt(provider, turn, error.run_status, error.usage or usage, error.code, request_started=request_started))
     except (ValidationError, ValueError, TypeError):
         return store.fail_discussion_turn(workspace_id, conversation_id, turn_id,
             "failed", "provider_protocol_error",
-            _receipt(provider, turn, "failed", usage, "provider_protocol_error"))
+            _receipt(provider, turn, "failed", usage, "provider_protocol_error", request_started=request_started))
     except Path2StateError as error:
         return store.fail_discussion_turn(workspace_id, conversation_id, turn_id,
-            "blocked", error.code, _receipt(provider, turn, "blocked", usage, error.code))
+            "blocked", error.code, _receipt(provider, turn, "blocked", usage, error.code, request_started=request_started))
     except WorkspaceStoreError:
         # The Runtime marks a safe worker failure, never repeats Provider I/O.
         raise

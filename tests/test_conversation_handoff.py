@@ -236,3 +236,13 @@ class HandoffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StartupEvidenceTests(unittest.TestCase):
+    def test_later_failure_does_not_erase_start_evidence(self):
+        from types import SimpleNamespace
+        from contextox.conversation_handoff import recovered_analysis_state
+        for status in ("failed", "cancelled", "blocked"):
+            self.assertEqual(recovered_analysis_state(SimpleNamespace(status=status, started_at="2026-09-10")), "started")
+            self.assertEqual(recovered_analysis_state(SimpleNamespace(status=status, started_at=None)), "failed")
+        self.assertEqual(recovered_analysis_state(SimpleNamespace(status="queued", started_at=None)), "unknown")

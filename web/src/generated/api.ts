@@ -23,6 +23,127 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Conversations */
+        get: operations["conversations_api_workspaces__workspace_id__conversations_get"];
+        put?: never;
+        /** Create Conversation */
+        post: operations["create_conversation_api_workspaces__workspace_id__conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Conversation */
+        get: operations["conversation_api_workspaces__workspace_id__conversations__conversation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Conversation Messages */
+        get: operations["conversation_messages_api_workspaces__workspace_id__conversations__conversation_id__messages_get"];
+        put?: never;
+        /** Send Conversation Message */
+        post: operations["send_conversation_message_api_workspaces__workspace_id__conversations__conversation_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/submissions/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Conversation Submission */
+        get: operations["conversation_submission_api_workspaces__workspace_id__conversations__conversation_id__submissions__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/turns/{turn_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Discussion */
+        post: operations["cancel_discussion_api_workspaces__workspace_id__conversations__conversation_id__turns__turn_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/handoffs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Handoff Answers */
+        post: operations["handoff_answers_api_workspaces__workspace_id__conversations__conversation_id__handoffs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/handoffs/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Answer Handoff */
+        get: operations["answer_handoff_api_workspaces__workspace_id__conversations__conversation_id__handoffs__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -945,6 +1066,184 @@ export interface components {
             /** Column */
             column: string;
         };
+        /** ConversationCreateRequest */
+        ConversationCreateRequest: {
+            /** Client Request Id */
+            client_request_id: string;
+            /**
+             * Title
+             * @default 新对话
+             */
+            title: string;
+            /** Mission Id */
+            mission_id?: string | null;
+            /** Source Refs */
+            source_refs?: components["schemas"]["SourceIdentity"][];
+        };
+        /** ConversationGoal */
+        ConversationGoal: {
+            /** Text */
+            text: string;
+            /** Message Refs */
+            message_refs: components["schemas"]["MessageHistoryRef"][];
+        };
+        /** ConversationHandoffReceipt */
+        ConversationHandoffReceipt: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Mission Id */
+            mission_id: string;
+            /** Client Request Id */
+            client_request_id: string;
+            /** Request Sha256 */
+            request_sha256: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Answers Saved
+             * @constant
+             */
+            answers_saved: true;
+            /**
+             * Answers Approved
+             * @constant
+             */
+            answers_approved: true;
+            /** Analysis Started */
+            analysis_started: boolean;
+            /**
+             * Analysis State
+             * @enum {string}
+             */
+            analysis_state: "ready" | "claimed" | "started" | "failed" | "unknown";
+            send_request: components["schemas"]["TaskMessageSendRequest"];
+            /** Answer Steps */
+            answer_steps: components["schemas"]["HandoffAnswerStep"][];
+            /** Run Id */
+            run_id?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+        };
+        /** ConversationHandoffRequest */
+        ConversationHandoffRequest: {
+            /** Client Request Id */
+            client_request_id: string;
+            /** Expected Conversation Version */
+            expected_conversation_version: number;
+            /** Expected State Version */
+            expected_state_version: number;
+            expected_draft: components["schemas"]["DraftIdentity"];
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+            /** Reviewed Answers */
+            reviewed_answers: components["schemas"]["HandoffReviewedAnswer"][];
+            /** Content */
+            content: string;
+            /** References */
+            references: (components["schemas"]["SourceExcerptMessageReference"] | components["schemas"]["SourceColumnMessageReference"] | components["schemas"]["DraftFieldMessageReference"] | components["schemas"]["DraftRelationshipMessageReference"])[];
+            /** History Messages */
+            history_messages: components["schemas"]["MessageHistoryRef"][];
+            /** Provider Send Confirmed */
+            provider_send_confirmed: boolean;
+        };
+        /** ConversationMessage */
+        ConversationMessage: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Message Id */
+            message_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
+            /** References */
+            references?: (components["schemas"]["SourceExcerptMessageReference"] | components["schemas"]["SourceColumnMessageReference"] | components["schemas"]["DraftFieldMessageReference"] | components["schemas"]["DraftRelationshipMessageReference"])[];
+            /** Source Refs */
+            source_refs?: components["schemas"]["SourceIdentity"][];
+            /** Sha256 */
+            sha256: string;
+            /** Turn Id */
+            turn_id?: string | null;
+            task_message?: components["schemas"]["TaskMessage"] | null;
+        };
+        /** ConversationMessagePage */
+        ConversationMessagePage: {
+            /** Items */
+            items: components["schemas"]["ConversationMessage"][];
+            /** Next Before Message Id */
+            next_before_message_id?: string | null;
+        };
+        /** ConversationMessageSendRequest */
+        ConversationMessageSendRequest: {
+            /**
+             * Kind
+             * @default message
+             * @constant
+             */
+            kind: "message";
+            /** Client Request Id */
+            client_request_id: string;
+            /** Expected State Version */
+            expected_state_version: number;
+            /** Content */
+            content: string;
+            /** References */
+            references?: (components["schemas"]["SourceExcerptMessageReference"] | components["schemas"]["SourceColumnMessageReference"] | components["schemas"]["DraftFieldMessageReference"] | components["schemas"]["DraftRelationshipMessageReference"])[];
+            /** History Messages */
+            history_messages?: components["schemas"]["MessageHistoryRef"][];
+            /** Source Refs */
+            source_refs?: components["schemas"]["SourceIdentity"][];
+            /**
+             * Provider Send Confirmed
+             * @constant
+             */
+            provider_send_confirmed: true;
+            goal?: components["schemas"]["ConversationGoal"] | null;
+            /** Regenerate From Run Id */
+            regenerate_from_run_id?: string | null;
+        };
+        /** ConversationMissionOrigin */
+        ConversationMissionOrigin: {
+            /**
+             * Kind
+             * @default conversation_message
+             * @constant
+             */
+            kind: "conversation_message";
+            /** Conversation Id */
+            conversation_id: string;
+            /** Message Id */
+            message_id: string;
+            /** Message Sha256 */
+            message_sha256: string;
+            /** Client Request Id */
+            client_request_id: string;
+            goal: components["schemas"]["ConversationGoal"];
+            /** Source Refs */
+            source_refs: components["schemas"]["SourceIdentity"][];
+        };
+        /** ConversationSubmissionReceipt */
+        ConversationSubmissionReceipt: {
+            conversation: components["schemas"]["WorkspaceConversation"];
+            input_message: components["schemas"]["ConversationMessage"];
+            discussion_turn?: components["schemas"]["DiscussionTurn"] | null;
+            run?: components["schemas"]["RunSnapshot"] | null;
+        };
         /** CsvRowsLocator */
         CsvRowsLocator: {
             /**
@@ -1116,6 +1415,142 @@ export interface components {
             /** Sha256 */
             sha256: string;
         };
+        /** DiscussionAnswerSuggestion */
+        DiscussionAnswerSuggestion: {
+            /** Origin Run Id */
+            origin_run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            /** Request Sha256 */
+            request_sha256: string;
+            /** Question Index */
+            question_index: number;
+            /** Disposition */
+            disposition?: ("answered" | "unknown") | null;
+            /** Answer */
+            answer?: string | null;
+            /** Respondent */
+            respondent?: string | null;
+            /** Basis */
+            basis?: string | null;
+            blocker?: components["schemas"]["AnswerBlocker"] | null;
+            /** Evidence Refs */
+            evidence_refs?: components["schemas"]["EvidenceRef"][];
+            /** Targets */
+            targets?: (components["schemas"]["FieldAnswerTarget"] | components["schemas"]["RelationshipAnswerTarget"])[];
+        };
+        /** DiscussionOutput */
+        DiscussionOutput: {
+            /** Public Reply */
+            public_reply: string;
+            /** References */
+            references?: (components["schemas"]["SourceExcerptMessageReference"] | components["schemas"]["SourceColumnMessageReference"] | components["schemas"]["DraftFieldMessageReference"] | components["schemas"]["DraftRelationshipMessageReference"])[];
+            /**
+             * Next Action
+             * @default discuss
+             * @enum {string}
+             */
+            next_action: "discuss" | "start_task";
+            /** Title */
+            title?: string | null;
+            goal?: components["schemas"]["ConversationGoal"] | null;
+            /** Answer Suggestions */
+            answer_suggestions?: components["schemas"]["DiscussionAnswerSuggestion"][];
+        };
+        /** DiscussionProviderReceipt */
+        DiscussionProviderReceipt: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Turn Id */
+            turn_id: string;
+            /** Receipt Id */
+            receipt_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Request Sha256 */
+            request_sha256: string;
+            /** Context Sha256 */
+            context_sha256?: string | null;
+            /** P0 Sha256 */
+            p0_sha256: string;
+            /** Output Schema Sha256 */
+            output_schema_sha256: string;
+            config: components["schemas"]["ProviderConfigSnapshot"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "blocked" | "failed" | "cancelled";
+            /** Request Started */
+            request_started?: boolean | null;
+            /** Input Tokens */
+            input_tokens: number | null;
+            /** Output Tokens */
+            output_tokens: number | null;
+            /** Cache Hit Tokens */
+            cache_hit_tokens?: number | null;
+            /** Cache Miss Tokens */
+            cache_miss_tokens?: number | null;
+            /** Error Code */
+            error_code?: string | null;
+            /**
+             * Usage Status
+             * @enum {string}
+             */
+            readonly usage_status: "known" | "missing";
+        };
+        /** DiscussionTurn */
+        DiscussionTurn: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Turn Id */
+            turn_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Input Message Id */
+            input_message_id: string;
+            request: components["schemas"]["ConversationMessageSendRequest"];
+            /** Request Sha256 */
+            request_sha256: string;
+            /** Context Sha256 */
+            context_sha256?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "blocked" | "failed" | "cancelled";
+            config: components["schemas"]["ProviderConfigSnapshot"];
+            /** P0 Sha256 */
+            p0_sha256: string;
+            /** Output Schema Sha256 */
+            output_schema_sha256: string;
+            /** Mission Id */
+            mission_id?: string | null;
+            /** Mission State Version */
+            mission_state_version?: number | null;
+            output?: components["schemas"]["DiscussionOutput"] | null;
+            provider_receipt?: components["schemas"]["DiscussionProviderReceipt"] | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Handoff Error Code */
+            handoff_error_code?: string | null;
+        };
         /** DraftFieldMessageReference */
         DraftFieldMessageReference: {
             /**
@@ -1267,6 +1702,41 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HandoffAnswerStep */
+        HandoffAnswerStep: {
+            /** Origin Run Id */
+            origin_run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            save_request: components["schemas"]["ClarificationAnswerSaveRequest"] | null;
+            save_receipt: components["schemas"]["ClarificationSubmissionReceipt"] | null;
+            approve_request: components["schemas"]["ClarificationAnswerApproveRequest"] | null;
+            approve_receipt: components["schemas"]["ClarificationSubmissionReceipt"] | null;
+            approved_answer: components["schemas"]["ApprovedAnswerRef"];
+        };
+        /** HandoffReviewedAnswer */
+        HandoffReviewedAnswer: {
+            /** Origin Run Id */
+            origin_run_id: string;
+            /** Clarification Id */
+            clarification_id: string;
+            /** Request Sha256 */
+            request_sha256: string;
+            /** Expected Latest Version */
+            expected_latest_version: number;
+            /** Items */
+            items?: components["schemas"]["AnswerItem"][] | null;
+            saved_answer?: components["schemas"]["HandoffSavedAnswer"] | null;
+        };
+        /** HandoffSavedAnswer */
+        HandoffSavedAnswer: {
+            /** Version */
+            version: number;
+            /** Sha256 */
+            sha256: string;
+            /** Approval Id */
+            approval_id?: string | null;
+        };
         /** HealthCheck */
         HealthCheck: {
             /** Key */
@@ -1389,7 +1859,8 @@ export interface components {
             /** Scope Notes */
             scope_notes: string[];
             /** Original Attempt Id */
-            original_attempt_id: string;
+            original_attempt_id: string | null;
+            conversation_origin?: components["schemas"]["ConversationMissionOrigin"] | null;
             /** Source Refs */
             source_refs: components["schemas"]["SourceIdentity"][];
         };
@@ -2837,6 +3308,33 @@ export interface components {
              */
             created_at: string;
         };
+        /** WorkspaceConversation */
+        WorkspaceConversation: {
+            /** Workspace Id */
+            workspace_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Title */
+            title: string;
+            /** State Version */
+            state_version: number;
+            /** Mission Id */
+            mission_id?: string | null;
+            /** Source Refs */
+            source_refs?: components["schemas"]["SourceIdentity"][];
+            goal?: components["schemas"]["ConversationGoal"] | null;
+            /** Active Turn Id */
+            active_turn_id?: string | null;
+            /** Last Submission Id */
+            last_submission_id?: string | null;
+            /** Last Handoff Id */
+            last_handoff_id?: string | null;
+        };
         /** WorkspaceCreateRequest */
         WorkspaceCreateRequest: {
             /** Display Name */
@@ -3467,6 +3965,580 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    conversations_api_workspaces__workspace_id__conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceConversation"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    create_conversation_api_workspaces__workspace_id__conversations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceConversation"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceConversation"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    conversation_api_workspaces__workspace_id__conversations__conversation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceConversation"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    conversation_messages_api_workspaces__workspace_id__conversations__conversation_id__messages_get: {
+        parameters: {
+            query?: {
+                before_message_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                workspace_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationMessagePage"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    send_conversation_message_api_workspaces__workspace_id__conversations__conversation_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationMessageSendRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSubmissionReceipt"];
+                };
+            };
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSubmissionReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    conversation_submission_api_workspaces__workspace_id__conversations__conversation_id__submissions__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                conversation_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSubmissionReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    cancel_discussion_api_workspaces__workspace_id__conversations__conversation_id__turns__turn_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                conversation_id: string;
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscussionTurn"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    handoff_answers_api_workspaces__workspace_id__conversations__conversation_id__handoffs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationHandoffRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationHandoffReceipt"];
+                };
+            };
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationHandoffReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceError"];
+                };
+            };
+        };
+    };
+    answer_handoff_api_workspaces__workspace_id__conversations__conversation_id__handoffs__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: string;
+                conversation_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationHandoffReceipt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

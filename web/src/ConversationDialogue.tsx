@@ -15,7 +15,7 @@ const createKey = (ws: string) => `contextox.conversation-create:${ws}`;
 
 export function conversationError(error: unknown) {
   const code = error instanceof ApiRequestError ? error.code : null;
-  return ({conversations_not_implemented:"此资料库需要显式迁移后才能使用连续对话，现有历史可继续查看。",conversation_stale:"会话版本已变化。请刷新核对当前目标与资料后重新发送。",message_context_scope_mismatch:"历史、草案或回答引用了本轮未选资料。请调整范围，系统不会自动补回。",workspace_store_busy:"已有模型工作正在执行，请稍后发送。草稿已保留。",conversation_submission_not_found:"尚未查到本次发送。这不能证明请求未执行，请保留原标识继续核对。",source_identity_stale:"资料版本已变化，请重新选择当前版本。"} as Record<string,string>)[code ?? ""] ?? (error instanceof ApiRequestError ? `操作未完成：${code ?? error.message}` : error instanceof Error ? error.message : "连接中断，结果待核对。请勿重复发送。");
+  return ({conversation_not_implemented:"此资料库需要显式迁移后才能使用连续对话，现有历史可继续查看。",conversation_stale:"会话版本已变化。请刷新核对当前目标与资料后重新发送。",message_context_scope_mismatch:"历史、草案或回答引用了本轮未选资料。请调整范围，系统不会自动补回。",workspace_store_busy:"已有模型工作正在执行，请稍后发送。草稿已保留。",conversation_submission_not_found:"尚未查到本次发送。这不能证明请求未执行，请保留原标识继续核对。",source_identity_stale:"资料版本已变化，请重新选择当前版本。"} as Record<string,string>)[code ?? ""] ?? (error instanceof ApiRequestError ? `操作未完成：${code ?? error.message}` : error instanceof Error ? error.message : "连接中断，结果待核对。请勿重复发送。");
 }
 export function conversationBelongsTo(value: WorkspaceConversation, workspaceId: string, conversationId?: string) {
   return value.workspace_id === workspaceId && (!conversationId || value.conversation_id === conversationId) && (value.source_refs ?? []).every(ref => ref.workspace_id === workspaceId);
