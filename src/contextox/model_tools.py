@@ -200,8 +200,7 @@ class SemanticQuestionInput(ContextOxModel):
     why_needed: Text
     expected_answer_type: AnswerType
     suggested_owner_role: Key | None = None
-    targets: list[SemanticQuestionTarget] = Field(default_factory=list, max_length=100)
-    related_definition_paths: list[Key] = Field(default_factory=list, max_length=100)
+    targets: list[SemanticQuestionTarget] = Field(min_length=1, max_length=100)
     evidence_requested: list[Text] = Field(default_factory=list, max_length=100)
     examples_or_options: list[Text] = Field(default_factory=list, max_length=100)
     blocking_impact: Literal["blocking", "non_blocking"] = "blocking"
@@ -209,10 +208,6 @@ class SemanticQuestionInput(ContextOxModel):
 
     @model_validator(mode="after")
     def validate_paths(self) -> SemanticQuestionInput:
-        if not self.targets and not self.related_definition_paths:
-            raise ValueError("a question needs a draft target")
-        if len(set(self.related_definition_paths)) != len(self.related_definition_paths):
-            raise ValueError("related_definition_paths must be unique")
         if len(set(self.evidence_handles)) != len(self.evidence_handles):
             raise ValueError("evidence_handles must be unique")
         return self

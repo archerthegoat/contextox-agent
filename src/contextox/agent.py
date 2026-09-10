@@ -1542,6 +1542,7 @@ def _run_semantic_agent(
         except SemanticProposalFailure as exc:
             failure = exc
             completion = exc.completion
+            logger.info("semantic_validation_failed phase=response_schema code=%s errors=%s", exc.code, json.dumps(exc.safe_errors))
             if not isinstance(completion, ProviderCompletion):
                 _stop_run(store, workspace_id, mission_id, run_id,
                           "blocked" if exc.code == "context_too_broad" else "failed", exc.code)
@@ -1598,6 +1599,7 @@ def _run_semantic_agent(
             workspace_id, mission_id, run_id, application
         )
     except SemanticProposalFailure as exc:
+        logger.info("semantic_validation_failed phase=validate code=%s errors=%s", exc.code, json.dumps(exc.safe_errors))
         _stop_run(store, workspace_id, mission_id, run_id, "failed", exc.code)
         return
     except Path2NotImplementedError:
