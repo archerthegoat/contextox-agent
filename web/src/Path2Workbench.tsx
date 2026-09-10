@@ -1156,6 +1156,8 @@ export type Path2WorkbenchState = {
   selectedSourceRefs: components["schemas"]["SourceIdentity"][];
   selectSource: (revisionId: string) => void;
   toggleSource: (revisionId: string) => void;
+  replaceSourceSelection?: (refs: SourceIdentity[]) => void;
+  clearMission?: () => void;
   loadSourceArtifact: (revisionId: string) => Promise<void>;
   readSourceExcerpt: (revisionId: string) => Promise<void>;
   refreshSources: () => Promise<void>;
@@ -1730,7 +1732,13 @@ export function usePath2Workbench(
         });
         return;
       }
-      const selected = confirmedMission ?? pointerMission ?? items[0];
+      const selected = confirmedMission ?? pointerMission;
+      if (!selected) {
+        selectedMissionIdRef.current = null; setSelectedMissionId(null);
+        storeMissionSnapshot(null); storeRunSnapshot(null);
+        setMissionSnapshotState({status:"empty",items:[],issue:null});
+        return;
+      }
       const previousMissionId = selectedMissionIdRef.current;
       selectedMissionIdRef.current = selected.mission_id;
       setSelectedMissionId(selected.mission_id);
@@ -2909,7 +2917,7 @@ export function usePath2Workbench(
 
   const selectMission = useCallback(async (missionId: string) => {
     const ws = workspaceIdRef.current;
-    if (!ws || !missionState.items.some(m => m.mission_id === missionId && m.workspace_id === ws)) return;
+    if (!ws) return;
     selectedMissionIdRef.current = missionId;
     setSelectedMissionId(missionId);
     setSelectedSourceIds([]);
@@ -2922,6 +2930,20 @@ export function usePath2Workbench(
     writePath2ObjectPointers(ws, {missionId, attemptId: null, runId: null, runMissionId: null});
     await loadMissionSnapshot(ws, missionId);
   }, [missionState.items, loadMissionSnapshot, storeMissionSnapshot, storeRunSnapshot, storeAttempt, replaceRunEventState]);
+
+  const clearMission = useCallback(() => {
+    const ws = workspaceIdRef.current;
+    selectedMissionIdRef.current = null; setSelectedMissionId(null);
+    preferredRunIdRef.current = null; preferredRunMissionIdRef.current = null;
+    storeMissionSnapshot(null); storeRunSnapshot(null); storeAttempt(null);
+    replaceRunEventState(createRunEventState());
+    setMissionSnapshotState({status:"empty",items:[],issue:null});
+    if(ws) writePath2ObjectPointers(ws,{missionId:null,attemptId:null,runId:null,runMissionId:null});
+  }, [storeMissionSnapshot, storeRunSnapshot, storeAttempt, replaceRunEventState]);
+  const replaceSourceSelection = useCallback((refs: SourceIdentity[]) => {
+    // Restore only exact current identities; unavailable/stale references remain visible in the conversation scope.
+    setSelectedSourceIds(sourceState.items.filter(source => refs.some(ref => sourceIdentityEquals(sourceIdentityFromRevision(source),ref))).map(source => source.revision_id));
+  }, [sourceState.items]);
 
   const dataBelongsToWorkspace = loadedWorkspaceId === workspaceId;
   const visibleSourceState = dataBelongsToWorkspace
@@ -2984,7 +3006,7 @@ export function usePath2Workbench(
     missionSnapshotState: visibleMissionSnapshotState,
     refreshMission: refreshMissions,
     refreshTask,
-    selectMission, adoptDialogueRun,
+    selectMission, adoptDialogueRun, clearMission, replaceSourceSelection,
     attempt: visibleAttempt,
     attemptAction: visibleAttemptAction,
     submitAttempt,

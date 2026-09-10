@@ -133,7 +133,9 @@ describe("ContextOx Workbench v3 content boundaries", () => {
     expect(markup).toContain("展开对话");
     expect(markup).toContain("aria-controls=\"agent-panel-content\"");
     expect(markup).toContain("data-path2-state=\"workbench\"");
-    expect(markup).toContain("围绕一个任务展开分析");
+    expect(markup).toContain("说说你想弄清什么，也可以先添加资料");
+    expect(markup).toContain('id="conversation-input"');
+    expect(markup).not.toContain("生成任务草案");
     expect(markup).not.toContain("尚无第三方关系来源");
     expect(markup).not.toContain("客户主数据.csv");
     expect(markup).not.toContain("演示模式");

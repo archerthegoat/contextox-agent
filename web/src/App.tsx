@@ -11,12 +11,13 @@ import {
   type Path2WorkbenchState,
   type SourceRevision,
 } from "./Path2Workbench";
-import { useTaskDialogue, ReferenceInspector, TaskConversation, TaskExecutionHistory, type DialogueState, type MessageReference } from "./TaskDialogue";
+import { useTaskDialogue, ReferenceInspector, TaskExecutionHistory, type DialogueState, type MessageReference } from "./TaskDialogue";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
 import { ModelSettings } from "./ModelSettings";
 import { DemoEntry } from "./DemoEntry";
 import { CandidateExport } from "./CandidateExport";
 import { AgentLayout } from "./AgentLayout";
+import { ConversationDialogue, useConversationDialogue, type ConversationDialogueState } from "./ConversationDialogue";
 import "./styles.css";
 
 export { WORKSPACE_STORAGE_KEY } from "./WorkspaceSwitcher";
@@ -279,7 +280,7 @@ function CenterPanel({
           path2={path2}
         />
       ) : (
-        activeArea === "mission" ? <MissionOverview path2={path2} /> : <Path2Workbench state={path2} activeArea={activeArea} />
+        activeArea === "mission" ? <MissionOverview path2={path2} /> : activeArea === "clarifications" ? <section className="mission-overview"><h2>等待你确认的业务口径</h2><p>在右侧继续讨论，核对回答卡片后确认继续。</p>{path2.clarifications.map(item => <article key={`${item.run_id}/${item.clarification_id}`}>{item.questions.map((question,index) => <section key={index}><h3>{question.question}</h3><p>{question.why_needed}</p><p>{question.suggested_owner_role ?? "回答角色尚未确定"}</p></section>)}</article>)}</section> : <Path2Workbench state={path2} activeArea={activeArea} />
       )}
     </main>
   );
@@ -288,15 +289,16 @@ function CenterPanel({
 function WorkbenchProgress({path2}: {path2: Path2WorkbenchState}) {
   const mission = path2.missionSnapshot?.mission ?? path2.selectedMission;
   const waiting = mission?.status === "waiting_for_human";
-  const current = !mission ? 0 : waiting ? 2 : path2.latestDraft ? 3 : 1;
+  const active = path2.runSnapshot?.status === "queued" || path2.runSnapshot?.status === "running";
+  const current = !mission ? 0 : waiting ? 2 : active ? (path2.runSnapshot?.phase === "apply" ? 3 : 1) : path2.latestDraft ? 3 : 1;
   return <header className="workbench-progress"><h2>{mission?.title ?? "从一个问题开始"}</h2><ol>{["明确目标", "理解资料", "澄清口径", "整理成果"].map((label,index) => <li key={label} className={current === index ? "current" : current > index ? "past" : ""} aria-current={current === index ? "step" : undefined}><span>{index + 1}</span>{label}</li>)}</ol><p>{!mission ? "先聊问题，目标与资料明确后再形成任务。" : waiting ? `等待业务回答 · ${path2.clarifications.reduce((sum,item) => sum + item.questions.length, 0)} 个已记录问题` : path2.runSnapshot ? `本轮：${statusLabel(path2.runSnapshot.status)}` : "已建立任务，尚未开始分析"}</p></header>;
 }
 function MissionOverview({path2}: {path2: Path2WorkbenchState}) {
   const mission = path2.missionSnapshot?.mission ?? path2.selectedMission;
   return <section className="mission-overview">{mission ? <><p className="path2-eyebrow">当前目标</p><h2>{mission.goal}</h2><p>资料范围与对话在右侧延续。你可以打开关系与字段核对草案，或查看执行历史。</p>{path2.latestDraft && <p>候选草案 v{path2.latestDraft.version} · {statusLabel(path2.latestDraft.status)}。候选结果不等于正式业务契约。</p>}</> : <><img src={BRAND_MARK_URL} alt="" /><p className="path2-eyebrow">从讨论到清晰的业务口径</p><h2>说出问题，<br/>一起找到有依据的答案。</h2><p>在右侧告诉 Agent 你想弄清什么。这里会随着对话，展示资料、待确认的问题和逐步形成的成果。</p><ol><li><strong>从你的问题开始</strong><p>不必预先定义任务，先聊业务背景。</p></li><li><strong>随时核对资料依据</strong><p>让字段、关系和未知事项有处可查。</p></li><li><strong>关键口径，由你确认</strong><p>自然语言补充，整理后再核对采用。</p></li></ol></>}</section>;
 }
-function AgentPanel({ path2, dialogue, onReference, onHistory, onResults, onClarifications, expanded, onExpand }: { path2: Path2WorkbenchState; dialogue: DialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onResults: () => void; onClarifications: () => void; expanded: boolean; onExpand: () => void }) {
-  return <aside className="agent-panel" aria-label="Agent 对话"><header className="agent-panel-header"><div className="agent-panel-title-group"><h2>{AGENT_COPY.title}</h2><span>一起把问题弄清楚</span></div><button className="agent-panel-toggle" onClick={onExpand} aria-pressed={expanded}>{expanded ? "恢复双栏" : "展开对话"}</button></header><div id="agent-panel-content" className="agent-panel-content"><TaskConversation state={path2} dialogue={dialogue} onReference={onReference} onHistory={onHistory} onResults={onResults} onClarifications={onClarifications} /></div></aside>;
+function AgentPanel({ path2, conversation, onReference, onHistory, onSources, expanded, onExpand }: { path2: Path2WorkbenchState; conversation: ConversationDialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onSources: () => void; expanded: boolean; onExpand: () => void }) {
+  return <aside className="agent-panel" aria-label="Agent 对话"><header className="agent-panel-header"><div className="agent-panel-title-group"><h2>{AGENT_COPY.title}</h2><span>一起把问题弄清楚</span></div><button className="agent-panel-toggle" onClick={onExpand} aria-pressed={expanded}>{expanded ? "恢复双栏" : "展开对话"}</button></header><div id="agent-panel-content" className="agent-panel-content"><ConversationDialogue state={path2} d={conversation} onReference={onReference} onHistory={onHistory} onSources={onSources} /></div></aside>;
 }
 
 function App() {
@@ -318,6 +320,7 @@ function App() {
     demoSetup.revisions.forEach(id => { if (!basePath2.selectedSourceIds.includes(id)) basePath2.toggleSource(id); });
   }, [demoSetup, basePath2]);
   const dialogue = useTaskDialogue(path2);
+  const conversation = useConversationDialogue(path2, setSelectedWorkspace);
   const [focusedReference, setFocusedReference] = useState<MessageReference | null>(null);
   useEffect(() => {setFocusedReference(null);}, [path2.workspaceId, path2.selectedMission?.mission_id]);
   const [mobileView, setMobileView] = useState<"result" | "agent">("agent");
@@ -326,7 +329,7 @@ function App() {
   const [following, setFollowing] = useState(true);
   const followCurrent = () => {setFocusedReference(null);setActiveArea(path2.selectedMission?.status === "waiting_for_human" ? "clarifications" : "mission");setActiveTab(path2.latestDraft && path2.selectedMission?.status !== "waiting_for_human" ? "relationship" : "mission");};
   useEffect(() => {if(following) followCurrent();}, [following, path2.selectedMission?.mission_id, path2.selectedMission?.status, path2.latestDraft?.draft_id, path2.latestDraft?.version]);
-  const addReference = (ref: MessageReference) => { dialogue.addReference(ref); setMobileView("agent"); };
+  const addReference = (ref: MessageReference) => { conversation.addReference(ref); setMobileView("agent"); };
   const inspectReference = (ref: MessageReference) => {
     setFollowing(false);
     setFocusedReference(ref);
@@ -396,9 +399,9 @@ function App() {
       data-path2-state="workbench"
     >
       <AgentLayout expanded={expanded} mobileView={mobileView} onMobileView={setMobileView} navOpen={navOpen} onNavOpen={setNavOpen}
-        sidebar={<aside className="agent-led-navigation" aria-label="工作区导航"><Brand/><WorkspaceSwitcher selectedWorkspace={selectedWorkspace} onWorkspaceChange={setSelectedWorkspace}/><p className="nav-section-label">最近任务</p>{path2.missionState.items.map(mission => <button className={path2.selectedMission?.mission_id === mission.mission_id ? "nav-conversation selected" : "nav-conversation"} key={mission.mission_id} onClick={() => {void path2.selectMission(mission.mission_id);setFollowing(true);setNavOpen(false);}}><Icon name="reader"/>{mission.title}</button>)}{!path2.missionState.items.length && <p className="nav-empty">从右侧开始新对话</p>}<div className="nav-section-label"><span>资料库</span><button onClick={() => {setFollowing(false);setActiveArea("sources");setActiveTab("mission");setMobileView("result");setNavOpen(false);}}>添加资料</button></div>{path2.sourceState.items.map(source => <button className={selectedObject === `source:${source.revision_id}` ? "nav-conversation selected" : "nav-conversation"} key={source.revision_id} onClick={() => handleObjectSelect(`source:${source.revision_id}`)}><Icon name="file-text"/><span>{source.original_name}</span></button>)}<div className="navigation-bottom"><details><summary>工作区视图</summary>{areas.map(area => <button key={area.id} onClick={() => {setFollowing(false);setActiveArea(area.id);setActiveTab("mission");setFocusedReference(null);setNavOpen(false);setMobileView("result");}}>{area.label}</button>)}</details><ModelSettings/><DemoEntry onLoaded={(workspace, task, revisions) => {setSelectedWorkspace(workspace);setDemoSetup({workspaceId:workspace.workspace_id,task,revisions});setFollowing(true);setMobileView("agent");}}/><small>仅在本机运行</small></div></aside>}
+        sidebar={<aside className="agent-led-navigation" aria-label="工作区导航"><Brand/><WorkspaceSwitcher selectedWorkspace={selectedWorkspace} onWorkspaceChange={setSelectedWorkspace}/><button className="new-conversation-button" disabled={conversation.sending} onClick={() => {conversation.newConversation();setFollowing(true);setMobileView("agent");setNavOpen(false);}}>＋ 新对话</button><p className="nav-section-label">最近对话</p>{conversation.list.map(item => <button className={conversation.conversation?.conversation_id===item.conversation_id ? "nav-conversation selected" : "nav-conversation"} key={item.conversation_id} onClick={() => {void conversation.select(item);setFollowing(true);setNavOpen(false);}}><Icon name="reader"/><span>{item.title}</span></button>)}{path2.missionState.items.filter(mission=>!conversation.list.some(item=>item.mission_id===mission.mission_id)).map(mission=><button className="nav-conversation" key={mission.mission_id} onClick={()=>{void conversation.attachMission(mission.mission_id);setFollowing(true);setNavOpen(false);}}><Icon name="reader"/><span>{mission.title}</span></button>)}{!conversation.list.length&&!path2.missionState.items.length&&<p className="nav-empty">从右侧开始新对话</p>}<div className="nav-section-label"><span>资料库</span><button onClick={() => {setFollowing(false);setActiveArea("sources");setActiveTab("mission");setMobileView("result");setNavOpen(false);}}>添加资料</button></div>{path2.sourceState.items.map(source => <button className={selectedObject === `source:${source.revision_id}` ? "nav-conversation selected" : "nav-conversation"} key={source.revision_id} onClick={() => handleObjectSelect(`source:${source.revision_id}`)}><Icon name="file-text"/><span>{source.original_name}</span></button>)}<div className="navigation-bottom"><details><summary>工作区视图</summary>{areas.map(area => <button key={area.id} onClick={() => {setFollowing(false);setActiveArea(area.id);setActiveTab("mission");setFocusedReference(null);setNavOpen(false);setMobileView("result");}}>{area.label}</button>)}</details><ModelSettings/><DemoEntry onLoaded={(workspace, task, revisions) => {setSelectedWorkspace(workspace);setDemoSetup({workspaceId:workspace.workspace_id,task,revisions});setFollowing(true);setMobileView("agent");}}/><small>仅在本机运行</small></div></aside>}
         center={<CenterPanel activeArea={activeArea} activeTab={activeTab} onTabChange={tab => {setFollowing(false);setActiveArea("mission");setActiveTab(tab);setFocusedReference(null);}} focusedReference={focusedReference} clearReference={() => setFocusedReference(null)} dialogue={dialogue} onReference={addReference} path2={path2} following={following} onFollow={() => {setFollowing(true);followCurrent();}}/>}
-        agent={<AgentPanel expanded={expanded} onExpand={() => setExpanded(value => !value)} onClarifications={() => {setFollowing(false);setFocusedReference(null);setActiveArea("clarifications");setActiveTab("mission");setMobileView("result");}} path2={path2} dialogue={dialogue} onReference={inspectReference} onHistory={() => {setFollowing(false);setFocusedReference(null);setActiveTab("history");setMobileView("result");}} onResults={() => {setFollowing(false);setFocusedReference(null);setActiveArea("mission");setActiveTab("relationship");setMobileView("result");}}/>}/>
+        agent={<AgentPanel expanded={expanded} onExpand={() => setExpanded(value => !value)} conversation={conversation} path2={path2} onReference={inspectReference} onSources={() => {setFollowing(false);setFocusedReference(null);setActiveArea("sources");setActiveTab("mission");setMobileView("result");}} onHistory={() => {setFollowing(false);setFocusedReference(null);setActiveTab("history");setMobileView("result");}}/>}/>
     </div>
   );
 }

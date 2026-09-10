@@ -52,14 +52,17 @@ export function AnswerReadback({answer, request}: {answer: AnswerVersion; reques
   </div>;
 }
 
-export function AnswerForm({request, latest, draft, disabled, onSave, onDirty}: {
+export function AnswerForm({request, latest, draft, disabled, onSave, onDirty, initialItems, onItemsChange, saveLabel}: {
   request: ClarificationRequest; latest: AnswerVersion | null; draft: DefinitionDraft | null; disabled: boolean;
   onSave: (items: AnswerItem[]) => Promise<void>; onDirty: (dirty: boolean) => void;
+  initialItems?: AnswerItem[]; onItemsChange?: (items: AnswerItem[]) => void; saveLabel?: string;
 }) {
-  const [items, setItems] = useState<AnswerItem[]>(() => latest?.items ?? blankAnswers(request));
+  const [items, setItems] = useState<AnswerItem[]>(() => initialItems ?? latest?.items ?? blankAnswers(request));
   const [dirty, setDirty] = useState(false);
   const [issues, setIssues] = useState<string[]>([]);
   const initial = useRef(latest?.sha256 ?? "");
+  const observeItems = useRef(onItemsChange); observeItems.current = onItemsChange;
+  useEffect(() => {observeItems.current?.(items);}, [items]);
   useEffect(() => {
     if (!dirty && initial.current !== (latest?.sha256 ?? "")) {setItems(latest?.items ?? blankAnswers(request)); initial.current = latest?.sha256 ?? "";}
   }, [latest, request, dirty]);
@@ -97,7 +100,7 @@ export function AnswerForm({request, latest, draft, disabled, onSave, onDirty}: 
       </fieldset>;
     })}
     {issues.length > 0 && <div role="alert"><ul>{issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
-    <button className="path2-primary-button" disabled={disabled || !draft} type="submit">保存整份回答</button><p>保存不会调用模型。所有问题完整后才能保存。</p>
+    <button className="path2-primary-button" disabled={disabled || !draft} type="submit">{saveLabel ?? "保存整份回答"}</button><p>保存不会调用模型。所有问题完整后才能保存。</p>
   </form>;
 }
 

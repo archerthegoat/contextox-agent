@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchDeepSeekSettings, removeDeepSeekKey, saveDeepSeekKey, type DeepSeekSettings } from "./api/client";
 import { errorMessage } from "./WorkspaceSwitcher";
 
-export function ModelSettings() {
+export function ModelSettings({onSend, canSend = false}: {onSend?: () => void; canSend?: boolean}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [settings, setSettings] = useState<DeepSeekSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -17,7 +17,7 @@ export function ModelSettings() {
     finally { setLoading(false); }
   };
   useEffect(() => { void refresh(); }, []);
-  const changeKey = async (remove: boolean) => {
+  const changeKey = async (remove: boolean, sendAfterSave = false) => {
     if (!settings || pending) return;
     const submittedKey = key;
     setKey(""); setPending(true); setError(""); setNotice("");
@@ -25,7 +25,8 @@ export function ModelSettings() {
       const result = remove ? await removeDeepSeekKey(settings.session_token)
         : await saveDeepSeekKey(submittedKey, settings.session_token);
       setSettings(result);
-      setNotice(remove ? "已移除本机保存的 Key。" : "Key 已保存到本机 Keychain。创建任务并确认发送后，才会调用模型。");
+      if(sendAfterSave && result.configured && onSend) {dialog.current?.close();onSend();}
+      setNotice(remove ? "已移除本机保存的 Key。" : "Key 已保存到本机 Keychain。未发送消息，也未调用模型。");
     } catch (e) { setError(errorMessage(e)); }
     finally { setPending(false); }
   };
@@ -49,11 +50,13 @@ export function ModelSettings() {
           <label htmlFor="deepseek-api-key">DeepSeek API Key</label>
           <input id="deepseek-api-key" type="password" autoComplete="off" spellCheck={false} minLength={16} maxLength={512}
             required value={key} disabled={unavailable} onChange={e => setKey(e.target.value)} placeholder={settings.configured ? "输入新 Key 以替换" : "粘贴 API Key"} />
-          <div className="dialog-actions"><button type="submit" className="primary-button" disabled={unavailable || key.length < 16}>{pending ? "保存中…" : "保存到 Keychain"}</button>
+          <div className="dialog-actions"><button type="submit" className="primary-button" disabled={unavailable || key.length < 16}>{pending ? "保存中…" : "仅保存设置"}</button>
+            {onSend && <button type="button" className="primary-button" disabled={unavailable || key.length < 16 || !canSend} onClick={() => void changeKey(false,true)}>保存并发送这条消息</button>}
             {settings.source === "keychain" && <button type="button" className="utility-button" disabled={unavailable} onClick={() => void changeKey(true)}>移除 Key</button>}
           </div>
         </form>
       </>}
+      {onSend && settings?.configured && !key && <button type="button" className="primary-button" disabled={pending || loading || !canSend} onClick={() => {dialog.current?.close();onSend();}}>使用当前设置发送这条消息</button>}
       {error && <p role="alert" className="settings-error">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       <p className="settings-detail">也可在启动环境设置 DEEPSEEK_API_KEY，或使用 start --env-file 指定自己的本地配置文件。</p>

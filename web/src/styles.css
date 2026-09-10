@@ -2467,3 +2467,26 @@ a:focus-visible {
   .workbench-progress li::after { margin: 0 4px; }
   .agent-follow-bar { padding: 9px 20px; }
 }
+.new-conversation-button { text-align: left; background: white; color: #1469d0; border: 1px solid #c6dcf9; border-radius: 6px; padding: 10px 12px; font-size: 12px; }
+.conversation-goal { flex-shrink: 0; border-bottom: 1px solid #edf1f6; padding: 11px 24px; max-height: 110px; overflow-y: auto; }
+.conversation-goal span { font-size: 9px; color: #8695a8; }
+.conversation-goal p { font-size: 11px; line-height: 1.8; margin: 5px 0 0; }
+.conversation-welcome { font-size: 13px; line-height: 1.9; padding: 3px 0 18px; color: #526c86; }
+.conversation-send-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 9px; }
+.conversation-send-row button { font-size: 11px; padding: 8px 11px; border-radius: 6px; }
+.conversation-send-row button:not(.path2-primary-button) { background: #f2f6fb; color: #597491; }
+.conversation-connect { border: 1px solid #f2dfbf; background: #fff8ec; border-radius: 7px; padding: 10px 12px; margin-bottom: 10px; }
+.conversation-answer-cards { margin-top: 20px; border: 1px solid #d7e3f4; border-radius: 8px; padding: 16px; background: #fafcff; font-size: 11px; line-height: 1.8; }
+.conversation-answer-cards > h3 { font-size: 13px; }
+.conversation-answer-cards > p { color: #7589a0; }
+.conversation-answer-cards button { font-size: 11px; padding: 7px 10px; border-radius: 5px; margin: 5px 0; }
+.conversation-answer-group { margin: 12px 0; border-top: 1px solid #dfe7f1; padding-top: 11px; }
+.conversation-answer-group > summary { cursor: pointer; font-size: 11px; color: #527499; }
+.conversation-answer-cards .clarification-answer-form { padding: 0; }
+.conversation-answer-cards fieldset { min-width: 0; padding: 12px; margin: 12px 0; }
+.conversation-answer-cards fieldset > p { font-size: 10px; color: #8494a7; }
+.conversation-answer-cards input:not([type=checkbox]), .conversation-answer-cards textarea, .conversation-answer-cards select { width: 100%; min-width: 0; font-size: 11px; padding: 8px; }
+.conversation-answer-cards textarea { min-height: 68px; }
+.conversation-answer-cards pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; }
+.handoff-stages { margin-top: 15px; border-top: 1px solid #dfe7f1; padding-top: 10px; }
+.agent-led-shell .continuous-conversation .conversation-composer { max-height: 50%; }

@@ -453,3 +453,46 @@ export async function fetchAnswerImpact(workspaceId: string, missionId: string, 
   if (!result.response.ok || !result.data) throwForResult(result);
   return result.data;
 }
+
+export type WorkspaceConversation = components["schemas"]["WorkspaceConversation"];
+export type ConversationMessage = components["schemas"]["ConversationMessage"];
+export type ConversationMessageSendRequest = components["schemas"]["ConversationMessageSendRequest"];
+export type ConversationSubmissionReceipt = components["schemas"]["ConversationSubmissionReceipt"];
+export type ConversationHandoffRequest = components["schemas"]["ConversationHandoffRequest"];
+export type ConversationHandoffReceipt = components["schemas"]["ConversationHandoffReceipt"];
+export async function fetchConversations(workspaceId: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/conversations", {params:{path:{workspace_id:workspaceId}},cache:"no-store"});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
+export async function createConversation(workspaceId: string, body: components["schemas"]["ConversationCreateRequest"]) {
+  const result = await client.POST("/api/workspaces/{workspace_id}/conversations", {params:{path:{workspace_id:workspaceId}},body});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
+export async function fetchConversation(workspaceId: string, conversationId: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/conversations/{conversation_id}", {params:{path:{workspace_id:workspaceId,conversation_id:conversationId}},cache:"no-store"});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
+export async function fetchConversationMessages(workspaceId: string, conversationId: string, before?: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/conversations/{conversation_id}/messages", {params:{path:{workspace_id:workspaceId,conversation_id:conversationId},query:before ? {before_message_id:before} : {}},cache:"no-store"});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
+export async function sendConversationMessage(workspaceId: string, conversationId: string, body: ConversationMessageSendRequest) {
+  const result = await client.POST("/api/workspaces/{workspace_id}/conversations/{conversation_id}/messages", {params:{path:{workspace_id:workspaceId,conversation_id:conversationId}},body});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
+export async function fetchConversationSubmission(workspaceId: string, conversationId: string, requestId: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/conversations/{conversation_id}/submissions/{request_id}", {params:{path:{workspace_id:workspaceId,conversation_id:conversationId,request_id:requestId}},cache:"no-store"});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
+export async function cancelDiscussionTurn(workspaceId: string, conversationId: string, turnId: string) {
+  const result = await client.POST("/api/workspaces/{workspace_id}/conversations/{conversation_id}/turns/{turn_id}/cancel", {params:{path:{workspace_id:workspaceId,conversation_id:conversationId,turn_id:turnId}}});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
+export async function sendConversationHandoff(workspaceId: string, conversationId: string, body: ConversationHandoffRequest) {
+  const result = await client.POST("/api/workspaces/{workspace_id}/conversations/{conversation_id}/handoffs", {params:{path:{workspace_id:workspaceId,conversation_id:conversationId}},body});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
+export async function fetchConversationHandoff(workspaceId: string, conversationId: string, requestId: string) {
+  const result = await client.GET("/api/workspaces/{workspace_id}/conversations/{conversation_id}/handoffs/{request_id}", {params:{path:{workspace_id:workspaceId,conversation_id:conversationId,request_id:requestId}},cache:"no-store"});
+  if (!result.response.ok || !result.data) throwForResult(result); return result.data;
+}
