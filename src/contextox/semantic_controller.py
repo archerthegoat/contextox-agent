@@ -95,6 +95,7 @@ Task instructions and approved human answers are business provenance, not observ
 Column handles already bind physical evidence; field/relationship evidence_handles may be omitted. Use evidence_handles for additional supporting excerpts. Source, table and column handles from this packet can also identify that same local evidence. Never invent an identifier.
 Use selected source excerpts as evidence. Partial/not_read coverage means uninspected content, not proof that the source lacks a fact.
 For draft requests, return the requested candidate fields and relationships: draft_and_clarify with up to three key questions, otherwise draft_only. Use answer_only for questions needing no draft change. Reserve draft_and_submit for explicit review requests.
+When ContextPlanV1.candidate_only is true, review submission is unavailable: use draft_only for edits without new questions. The application can only save candidates, never submit them for review.
 Send only new or changed fields/relationships; omitted existing items and dimensions are preserved. Approved human answers resolve their target definitions as business provenance. Keep unrelated unknowns visible without asking every question now.
 Questions may use targets [{kind: field or relationship, key: candidate key, property: definition dimension}]; the program builds exact paths. Owner and handoff metadata may be omitted. Public prose uses brief @source/table/column labels; put exact handles in evidence_handles, not prose.
 The application validates and applies the proposal atomically. Omitted dimensions on new fields remain unknown.
@@ -104,6 +105,7 @@ PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256 = "2ee5d7b89eaf5cf61be546cca69479410119e98d
 SUPPORTED_SEMANTIC_HASH_PAIRS = frozenset({
     (P0_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
     (PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
+    ("93a09914941d887772cefc82821233c8088ee499cbafe34003d6bcc52655565c", EMPTY_TOOL_SCHEMA_SHA256),
     ("a2a1c67e0ea2e50ca9911b1c64f6c09f256065a835874a09c187b5b2eba4ab06", EMPTY_TOOL_SCHEMA_SHA256),
     ("c71b1305093186514f78ca66280ffb2c4e7bd0ca99f0f71751b04af3d86d5358", EMPTY_TOOL_SCHEMA_SHA256),
     ("24f408867e478222c1dcef451ff78bba495a2d9d98cd0af3bf13a8e8587b8812", EMPTY_TOOL_SCHEMA_SHA256),
@@ -281,6 +283,14 @@ def normalize_semantic_proposal(
 ) -> SemanticApplicationInput:
     """Resolve opaque capabilities and validate the complete projected result."""
 
+    if adapter.candidate_only and proposal.action == "draft_and_submit":
+        # Demo authorization permits saving candidates only. Retain their content
+        # and evidence, but do not let a model-selected terminal action escalate it
+        # into review (or report that a review was submitted).
+        proposal = proposal.model_copy(update={
+            "action": "draft_only",
+            "public_answer": "本轮仅保存候选草案，未提交审阅；请查看本轮草案变化。",
+        })
     try:
         if proposal.action in {"draft_and_clarify", "draft_and_submit", "draft_only"}:
             fields, relationships, unresolved_items = _projected_draft(adapter, proposal)
@@ -489,6 +499,7 @@ def build_context_plan(
     current = adapter.context(snapshot)
     plan = ContextPlanV1(
         context_kind="semantic_context_v1",
+        candidate_only=adapter.candidate_only,
         mission=current["mission"],
         message_context=current["message_context"],
         sources=_source_plans(adapter, snapshot, store),

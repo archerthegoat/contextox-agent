@@ -38,6 +38,80 @@ class DemoProvider(fixtures.FakeProvider):
 
 
 class DemoRecoveryTests(unittest.TestCase):
+    def test_demo_review_action_saves_a_candidate_and_store_rejects_review_bypass(self):
+        class ReviewProvider(DemoProvider):
+            def complete(self, messages, **kwargs):
+                packet = json.loads(messages[1]["content"])
+                self.candidate_only = packet["candidate_only"]
+                column = packet["sources"][0]["tables"][0]["columns"][0]["column_handle"]
+                self.completions.append(completed(json.dumps({
+                    "version":"v1", "action":"draft_and_submit", "public_answer":"已提交正式审阅。",
+                    "fields":[{"field_key":"candidate_id", "name":"候选标识",
+                        "source_column_handles":[column], "evidence_status":"candidate",
+                        "semantics":{"meaning":{"value":"仅供当前候选使用的标识", "unknown_reason":None}}}],
+                    "unresolved_items":["业务使用规则仍需确认"],
+                }, ensure_ascii=False)))
+                return super().complete(messages, **kwargs)
+
+        for demo_fast in (True, False):
+            with self.subTest(demo_fast=demo_fast), fixtures.PersistedRunTests().store_case(
+                with_sources=True, controller=True
+            ) as (store, ws, mission, sources):
+                mid = mission.mission_id
+                receipt, _ = store.send_task_message(ws, mid, self.request(store, ws, mid, sources), demo_fast=demo_fast)
+                provider = ReviewProvider([])
+                if not demo_fast:
+                    provider.config = agent.get_provider().config
+                apply = store.apply_semantic_proposal
+
+                def checked_apply(workspace_id, mission_id, run_id, application):
+                    # A direct application cannot bypass the persisted Demo scope.
+                    with self.assertRaises(fixtures.Path2StateError) as denied:
+                        apply(workspace_id, mission_id, run_id, application.model_copy(update={
+                            "action":"draft_and_submit"}))
+                    self.assertEqual(denied.exception.code, "semantic_action_not_allowed")
+                    self.assertIsNone(store.get_run_snapshot(ws, mid, run_id).draft)
+                    return apply(workspace_id, mission_id, run_id, application)
+
+                with patch.object(agent, "get_provider", return_value=provider), patch.object(
+                    store, "apply_semantic_proposal", side_effect=checked_apply
+                ) as applied:
+                    agent.run_agent(store, ws, mid, receipt.run.run_id, Event())
+                result = store.get_run_snapshot(ws, mid, receipt.run.run_id)
+                self.assertEqual(provider.candidate_only, demo_fast)
+                self.assertEqual(len(provider.calls), 1)
+                if demo_fast:
+                    self.assertEqual(result.status, "partial", result.error_code)
+                    self.assertEqual(result.draft.status, "draft")
+                    self.assertEqual(result.draft.semantic_approval, "pending")
+                    self.assertEqual(result.draft.fields[0].meaning, "仅供当前候选使用的标识")
+                    self.assertTrue(result.draft.fields[0].unknowns)
+                    self.assertEqual(result.draft.unresolved_items, ["业务使用规则仍需确认"])
+                    self.assertEqual(result.final_output, "本轮仅保存候选草案，未提交审阅；请查看本轮草案变化。")
+                    self.assertNotEqual(result.terminal_receipt.terminal_tool, "submit_for_review")
+                    self.assertNotEqual(store.get_mission_snapshot(ws, mid).mission.status, "completed")
+                else:
+                    self.assertEqual(result.error_code, "semantic_clarification_required")
+                    self.assertIsNone(result.draft)
+                    applied.assert_not_called()
+
+    def test_demo_candidate_routing_still_rejects_unknown_evidence_without_retry(self):
+        with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, sources):
+            receipt, _ = store.send_task_message(ws, mission.mission_id,
+                self.request(store, ws, mission.mission_id, sources), demo_fast=True)
+            provider = DemoProvider([completed(json.dumps({
+                "version":"v1", "action":"draft_and_submit", "public_answer":"错误的提交声明",
+                "evidence_handles":["evidence_unknown"],
+            }))])
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(store, ws, mission.mission_id, receipt.run.run_id, Event())
+            result = store.get_run_snapshot(ws, mission.mission_id, receipt.run.run_id)
+            self.assertEqual(result.error_code, "semantic_handle_invalid")
+            self.assertEqual(len(provider.calls), 1)
+            self.assertIsNone(result.draft)
+            self.assertIsNone(result.terminal_receipt)
+            self.assertIsNone(result.final_output)
+
     def test_two_rounds_apply_an_approved_answer_and_keep_clickable_source_identity(self):
         class TaskProvider(DemoProvider):
             def complete(self, messages, **kwargs):

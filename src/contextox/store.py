@@ -3185,6 +3185,8 @@ class WorkspaceStore:
                     or (run.budget.max_model_turns == 2 and any(r.config.thinking != "disabled" for r in provider_receipts))
                 ):
                     raise Path2StateError("semantic_provider_receipt_invalid")
+                if run.budget.max_model_turns == 2 and application.action == "draft_and_submit":
+                    raise Path2StateError("semantic_action_not_allowed")
                 prior_receipts = _load_tool_receipts(
                     connection, workspace_id, mission_id, run_id
                 )

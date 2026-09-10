@@ -145,6 +145,7 @@ class ContextPlanV1(ContextOxModel):
     """Bounded, stage-specific application context sent to the semantic model."""
 
     context_kind: Literal["semantic_context_v1"]
+    candidate_only: bool = False
     mission: dict[str, Any]
     message_context: dict[str, Any] | None
     sources: list[dict[str, Any]] = Field(max_length=8)
@@ -299,6 +300,8 @@ class RunReferences:
     def __init__(self, snapshot: ContextSnapshot, artifacts: list[SourceArtifact], *, compact_handles: bool = False):
         self.scope = (snapshot.mission.workspace_id, snapshot.mission.mission_id,
                       snapshot.run.run_id)
+        # The queue-time budget seals demo-fast; model output cannot grant review authority.
+        self.candidate_only = snapshot.run.budget.max_model_turns == 2
         self.selected = {r.revision_id: r for r in snapshot.run.source_refs}
         # Exact approved unknown targets already have a persistent question/blocker.
         # They remain unresolved; only the obligation to ask them again is removed.
