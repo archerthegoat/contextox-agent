@@ -702,6 +702,13 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(
                 {
                     "/api/demo",
+                    "/api/workspaces/{workspace_id}/conversations",
+                    "/api/workspaces/{workspace_id}/conversations/{conversation_id}",
+                    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/messages",
+                    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/submissions/{request_id}",
+                    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/turns/{turn_id}/cancel",
+                    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/handoffs",
+                    "/api/workspaces/{workspace_id}/conversations/{conversation_id}/handoffs/{request_id}",
                     "/api/local-settings/deepseek",
                     "/api/workspaces/{workspace_id}/missions/{mission_id}/draft-export",
                     "/api/workspaces/{workspace_id}/sources",
