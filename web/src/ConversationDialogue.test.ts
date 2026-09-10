@@ -20,6 +20,15 @@ describe("continuous conversation boundaries",()=>{
     const messages=Array.from({length:7},(_,i)=>({workspace_id:"ws",conversation_id:"chat",message_id:`m${i}`,role:"user" as const,content:"公开合成问题",created_at:"2026-09-10T00:00:00Z",sha256:hash}));
     expect(recentConversationHistory(messages)).toEqual(["m3","m4","m5","m6"]);
   });
+  it("defaults ordinary analysis to task-backed history and explicitly rejects a manually selected discussion",()=>{
+    const message=(id:string,task=false)=>({workspace_id:"ws",conversation_id:"chat",message_id:id,role:"user" as const,content:"公开合成问题",created_at:"2026-09-10T00:00:00Z",sha256:hash,task_message:task?{workspace_id:"ws",mission_id:"mission",message_id:`task-${id}`,role:"user" as const,content:"公开合成问题",created_at:"2026-09-10T00:00:00Z",sha256:hash,run_id:"run",original_attempt_id:null,references:[]}:null});
+    const messages=[message("discussion-user"),message("discussion-reply"),message("first-input",true),message("first-reply",true)];
+    expect(recentConversationHistory(messages,true)).toEqual(["first-input","first-reply"]);
+    expect(recentConversationHistory(messages,false)).toEqual(messages.map(item=>item.message_id));
+    expect(selectedConversationHistory(messages,recentConversationHistory(messages,true),true)).toHaveLength(2);
+    expect(()=>selectedConversationHistory(messages,["discussion-reply"],true)).toThrow("不能携带");
+    expect(selectedConversationHistory(messages,["discussion-reply"],false)).toHaveLength(1);
+  });
   it("retains selected older history across latest-page refresh and refuses unavailable ids",()=>{
     const message=(id:string)=>({workspace_id:"ws",conversation_id:"chat",message_id:id,role:"user" as const,content:"公开合成问题",created_at:"2026-09-10T00:00:00Z",sha256:hash});
     const merged=mergeConversationPage([message("older"),message("current")],[message("current"),message("new")]);
