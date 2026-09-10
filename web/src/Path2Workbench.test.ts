@@ -111,6 +111,7 @@ const runBudget = {
 } as const;
 
 const run: RunSnapshot = {
+  regeneration_allowed: false,
   workspace_id: workspaceId,
   mission_id: missionId,
   run_id: runId,

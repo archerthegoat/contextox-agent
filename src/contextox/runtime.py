@@ -156,7 +156,7 @@ class Path2Runtime:
         task = self._reserve("run")
         run: RunSnapshot | None = None
         try:
-            run = self.store.start_run(workspace_id, mission_id, request)
+            run = self.store.start_run(workspace_id, mission_id, request, demo_fast=self.agent_profile == "demo-fast")
             if run.status != "queued":
                 self._release(task.token)
                 return run
@@ -238,7 +238,7 @@ class Path2Runtime:
         task = self._reserve("run")
         receipt = None
         try:
-            receipt, created = self.store.send_task_message(workspace_id, mission_id, request)
+            receipt, created = self.store.send_task_message(workspace_id, mission_id, request, demo_fast=self.agent_profile == "demo-fast")
             if not created:
                 self._release(task.token)
                 return receipt, False

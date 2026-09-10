@@ -2313,7 +2313,7 @@ class WorkspaceStore:
         return TaskMessageSendReceipt(input_message=context.input, run=run)
 
     def send_task_message(self, workspace_id: str, mission_id: str,
-                          request: TaskMessageSendRequest) -> tuple[TaskMessageSendReceipt, bool]:
+                          request: TaskMessageSendRequest, *, demo_fast: bool = False) -> tuple[TaskMessageSendReceipt, bool]:
         self._require_path2_workspace(workspace_id)
         request = TaskMessageSendRequest.model_validate(request.model_dump(mode="json"))
         with self._write_transaction() as connection:
@@ -2327,7 +2327,8 @@ class WorkspaceStore:
             if mission.state_version != request.expected_state_version:
                 raise Path2StateError("state_conflict")
             r2.validate_send(self, connection, mission, request)
-            _check_message_start_state(connection, mission, allow_partial=True, allow_answers=bool(request.approved_answers))
+            _check_message_start_state(connection, mission, allow_partial=True, allow_answers=bool(request.approved_answers),
+                                       regenerate_from_run_id=request.regenerate_from_run_id)
             refs = _validated_source_identities(workspace_id, request.source_refs)
             if any(ref not in mission.source_refs for ref in refs):
                 raise Path2StateError("source_refs_invalid")
@@ -2339,7 +2340,7 @@ class WorkspaceStore:
                 "started_at, finished_at, status, budget_json, last_sequence, final_output, error_code, start_request_sha256) "
                 "VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, 0, NULL, NULL, ?)",
                 (workspace_id, mission_id, run_id, request.client_request_id, now,
-                 _canonical_json(RunBudget.deterministic_controller()),
+                 _canonical_json(RunBudget.demo_controller() if demo_fast else RunBudget.deterministic_controller()),
                  canonical_sha256(request)),
             )
             connection.executemany(
@@ -2357,6 +2358,13 @@ class WorkspaceStore:
                  _canonical_json(request.references), _canonical_json(request.history_messages)),
             )
             r2.bind_run(connection, workspace_id, mission_id, run_id, request)
+            # The existing input event stores the explicit recovery acknowledgement.
+            if request.regenerate_from_run_id is not None:
+                pending_run = _load_run(connection, workspace_id, mission_id, run_id)
+                _append_event_in_transaction(connection, pending_run, "message_created", {
+                    "message_id": message_id, "role":"user",
+                    "regenerate_from_run_id":request.regenerate_from_run_id,
+                })
             if request.approved_answers:
                 r2.seed_manifest(connection, workspace_id, mission_id, run_id, request, mission)
             run = _load_run(connection, workspace_id, mission_id, run_id)
@@ -2366,7 +2374,8 @@ class WorkspaceStore:
                     "UPDATE missions SET status='active', state_version=state_version+1 "
                     "WHERE workspace_id=? AND mission_id=?", (workspace_id, mission_id),
                 )
-            _append_event_in_transaction(connection, run, "message_created", {"message_id": message_id, "role": "user"})
+            if request.regenerate_from_run_id is None:
+                _append_event_in_transaction(connection, run, "message_created", {"message_id": message_id, "role": "user"})
             return TaskMessageSendReceipt(input_message=context.input,
                 run=_load_run(connection, workspace_id, mission_id, run_id)), True
 
@@ -2437,6 +2446,7 @@ class WorkspaceStore:
             (run.workspace_id, run.mission_id, run.run_id),
         ).fetchone()
         rebuilt = TaskMessageSendRequest(kind="message", client_request_id=row[0],
+            regenerate_from_run_id=_regeneration_origin(connection, run),
             expected_state_version=link[1], content=message.content, references=message.references,
             history_messages=history_refs, source_refs=run.source_refs, provider_send_confirmed=True,
             approved_answers=r2.refs(run.approved_answers),
@@ -2479,6 +2489,7 @@ class WorkspaceStore:
         workspace_id: str,
         mission_id: str,
         request: RunStartRequest,
+        *, demo_fast: bool = False,
     ) -> RunSnapshot:
         self._require_path2_workspace(workspace_id)
         try:
@@ -2559,7 +2570,7 @@ class WorkspaceStore:
                         raise Path2StateError("state_conflict")
                 run_id = str(uuid4())
                 created_at = _utc_now()
-                budget = RunBudget.deterministic_controller()
+                budget = RunBudget.demo_controller() if demo_fast else RunBudget.deterministic_controller()
                 connection.execute(
                     """
                     INSERT INTO runs
@@ -3164,9 +3175,14 @@ class WorkspaceStore:
                     raise Path2StateError("state_conflict")
                 provider_receipts = run.provider_receipts
                 if (
-                    len(provider_receipts) != 1
-                    or provider_receipts[0].turn_index != 1
-                    or provider_receipts[0].status != "succeeded"
+                    not 1 <= len(provider_receipts) <= run.budget.max_model_turns
+                    or run.budget.max_model_turns not in {1, 2}
+                    or [r.turn_index for r in provider_receipts] != list(range(1, len(provider_receipts) + 1))
+                    or any(r.status != "succeeded" for r in provider_receipts)
+                    or any(r.error_code not in {"semantic_format_invalid", "semantic_format_invalid_usage_missing"}
+                           for r in provider_receipts[:-1])
+                    or provider_receipts[-1].error_code not in {None, "provider_usage_missing"}
+                    or (run.budget.max_model_turns == 2 and any(r.config.thinking != "disabled" for r in provider_receipts))
                 ):
                     raise Path2StateError("semantic_provider_receipt_invalid")
                 prior_receipts = _load_tool_receipts(
@@ -3965,6 +3981,8 @@ class WorkspaceStore:
             event = RunEventInput.model_validate(event.model_dump(mode="json"))
         except (AttributeError, TypeError, ValueError) as exc:
             raise Path2StateError("run_event_invalid") from exc
+        if event.event_type == "message_created" and event.public_payload.regenerate_from_run_id is not None:
+            raise Path2StateError("capability_denied")
         try:
             with self._write_transaction() as connection:
                 run = _load_run(connection, workspace_id, mission_id, run_id)
@@ -5274,7 +5292,8 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
             or any(character not in "0123456789abcdef" for character in row[12])
         ):
             raise WorkspaceStoreUnavailableError()
-        return RunSnapshot.model_validate(run.model_dump(exclude={"provider_receipts"}) | {"provider_receipts": provider_receipts})
+        result = RunSnapshot.model_validate(run.model_dump(exclude={"provider_receipts"}) | {"provider_receipts": provider_receipts})
+        return result.model_copy(update={"regeneration_allowed": _generation_can_restart(connection, result)})
     except WorkspaceStoreError:
         raise
     except (TypeError, ValueError) as exc:
@@ -5611,8 +5630,50 @@ def _check_payload_source_scope(value: Any, selected: list[SourceIdentity]) -> N
             _check_payload_source_scope(item, selected)
 
 
+def _regeneration_origin(connection: sqlite3.Connection, run: RunSnapshot) -> str | None:
+    rows = connection.execute(
+        "SELECT public_payload_json FROM run_events WHERE workspace_id=? AND mission_id=? AND run_id=? AND event_type='message_created'",
+        (run.workspace_id, run.mission_id, run.run_id),
+    )
+    origins = [value.get("regenerate_from_run_id") for (raw,) in rows
+               if (value := _json_value(raw)).get("role") == "user"]
+    origins = [origin for origin in origins if origin is not None]
+    if len(origins) > 1:
+        raise WorkspaceStoreUnavailableError()
+    return origins[0] if origins else None
+
+
+def _generation_can_restart(connection: sqlite3.Connection, run: RunSnapshot) -> bool:
+    """Prove a stopped deterministic generation never entered domain apply.
+
+    This says nothing about remote billing. The runtime must also own a free
+    worker slot, and a new explicit send must acknowledge the prior Run.
+    """
+    if (run.status not in {"failed", "blocked", "cancelled"}
+        or run.budget.max_model_turns not in {1, 2}
+        or run.error_code not in {"provider_timeout_unknown", "provider_cancelled_outcome_unknown",
+            "interrupted_without_receipt", "semantic_proposal_invalid", "provider_protocol_error",
+            "elapsed_budget_exceeded"}
+        or run.final_output is not None or run.terminal_receipt is not None or run.clarifications):
+        return False
+    scope = (run.workspace_id, run.mission_id, run.run_id)
+    events = [(kind, _json_value(raw)) for kind, raw in connection.execute(
+        "SELECT event_type, public_payload_json FROM run_events WHERE workspace_id=? AND mission_id=? AND run_id=?", scope)]
+    if not any(kind == "model_started" for kind, _ in events):
+        return False
+    if not any(kind == "run_phase_changed" and data.get("phase") == "synthesize_once" for kind, data in events):
+        return False
+    if any(kind in {"draft_updated", "tool_requested", "tool_started", "tool_completed", "clarification_requested"}
+           or (kind == "run_phase_changed" and data.get("phase") == "apply") for kind, data in events):
+        return False
+    if connection.execute("SELECT 1 FROM tool_receipts WHERE workspace_id=? AND mission_id=? AND run_id=?", scope).fetchone():
+        return False
+    return not connection.execute("SELECT 1 FROM mission_messages WHERE workspace_id=? AND mission_id=? AND run_id=? AND role='assistant'", scope).fetchone()
+
+
 def _check_message_start_state(connection: sqlite3.Connection, mission: Mission,
-                               *, allow_partial: bool, allow_answers: bool = False) -> None:
+                               *, allow_partial: bool, allow_answers: bool = False,
+                               regenerate_from_run_id: str | None = None) -> None:
     ws, mid = mission.workspace_id, mission.mission_id
     draft = _load_latest_draft(connection, ws, mid)
     if (draft and draft.status == "in_review") or (not allow_answers and (mission.status == "waiting_for_human" or _load_clarifications(connection, ws, mid))):
@@ -5623,7 +5684,7 @@ def _check_message_start_state(connection: sqlite3.Connection, mission: Mission,
         "SELECT run_id FROM runs WHERE workspace_id=? AND mission_id=? ORDER BY rowid DESC", (ws, mid)
     ).fetchall()
     if not rows:
-        if mission.status != "active":
+        if mission.status != "active" or regenerate_from_run_id is not None:
             raise Path2StateError("state_conflict")
         return
     latest = _load_run(connection, ws, mid, rows[0][0])
@@ -5635,8 +5696,20 @@ def _check_message_start_state(connection: sqlite3.Connection, mission: Mission,
         {"partial", "failed", "blocked", "cancelled"} if allow_partial else {"failed", "blocked"}
     ):
         raise Path2StateError("state_conflict")
+    acknowledged = {
+        payload.get("regenerate_from_run_id") for (raw,) in connection.execute(
+            "SELECT public_payload_json FROM run_events WHERE workspace_id=? AND mission_id=? AND event_type='message_created'", (ws, mid)
+        ) if (payload := _json_value(raw)).get("role") == "user"
+    } - {None}
+    if regenerate_from_run_id is not None:
+        if regenerate_from_run_id != latest.run_id or not _generation_can_restart(connection, latest):
+            raise Path2StateError("regeneration_not_allowed")
+        acknowledged.add(regenerate_from_run_id)
     # Reconcile every model turn from durable events and receipts, never a UI status.
     for (run_id,) in rows:
+        previous = _load_run(connection, ws, mid, run_id)
+        if previous.error_code == "state_write_outcome_unknown":
+            raise Path2StateError("previous_outcome_unresolved")
         receipts = [_load_provider_receipt(connection, ws, row[0]) for row in connection.execute(
             "SELECT receipt_id FROM provider_receipts WHERE workspace_id=? AND mission_id=? AND run_id=?",
             (ws, mid, run_id),
@@ -5656,6 +5729,7 @@ def _check_message_start_state(connection: sqlite3.Connection, mission: Mission,
                 return True
             if receipt.status == "succeeded" and receipt.error_code in {
                 "provider_usage_missing", "provider_fallback_usage_missing",
+                "semantic_format_invalid_usage_missing",
             }:
                 return True
             if receipt.error_code not in {"stream_fallback_sse_wire", "stream_fallback_interrupted"}:
@@ -5670,4 +5744,6 @@ def _check_message_start_state(connection: sqlite3.Connection, mission: Mission,
             )
 
         if starts.keys() - by_turn.keys() or any(not reconciled(receipt) for receipt in receipts):
+            if run_id in acknowledged and _generation_can_restart(connection, _load_run(connection, ws, mid, run_id)):
+                continue
             raise Path2StateError("previous_outcome_unresolved")

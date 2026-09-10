@@ -680,7 +680,7 @@ class Mission(ContextOxModel):
 
 
 class RunBudget(ContextOxModel):
-    max_model_turns: Literal[1, 8] = 8
+    max_model_turns: Literal[1, 2, 8] = 8
     max_tool_calls: Literal[2, 24] = 24
     max_elapsed_ms: Literal[75000, 300000] = 300000
     max_output_tokens: Literal[4096, 16384] = 4096
@@ -701,6 +701,10 @@ class RunBudget(ContextOxModel):
             total_timeout_ms=70000,
             max_context_bytes=65536,
         )
+
+    @classmethod
+    def demo_controller(cls) -> RunBudget:
+        return cls.model_validate({**cls.deterministic_controller().model_dump(), "max_model_turns":2})
 
     @model_validator(mode="before")
     @classmethod
@@ -729,9 +733,10 @@ class RunBudget(ContextOxModel):
         projected = {name: values.get(name, legacy[name]) for name in legacy}
         if any(type(value) is not int for value in projected.values()):
             raise ValueError("RunBudget values must be strict integers")
-        if projected != legacy and projected != controller:
+        demo = {**controller, "max_model_turns": 2}
+        if projected not in (legacy, controller, demo):
             raise ValueError("RunBudget must match one supported execution profile")
-        if projected == controller and values.get("max_output_tokens", 4096) != 16384:
+        if projected in (controller, demo) and values.get("max_output_tokens", 4096) != 16384:
             raise ValueError("deterministic controller requires max_output_tokens=16384")
         return values
 
@@ -745,6 +750,7 @@ RunPhase = Literal[
 
 
 class RunSnapshot(ContextOxModel):
+    regeneration_allowed: StrictBool = False
     approved_answers: list[ApprovedAnswerSnapshot] = Field(default_factory=list, max_length=50)
     workspace_id: ID
     mission_id: ID
@@ -1314,6 +1320,7 @@ class ProviderReceipt(ContextOxModel):
                 raise ValueError("run receipts require manifest and tool schema hashes")
         if self.status == "succeeded" and self.usage_status == "missing" and self.error_code not in {
             "provider_usage_missing", "provider_fallback_usage_missing",
+            "semantic_format_invalid_usage_missing",
         }:
             raise ValueError("succeeded ProviderReceipt requires usage or an explicit missing-usage marker")
         if (self.context_manifest_id is None) != (self.context_manifest_sha256 is None):
@@ -1538,12 +1545,15 @@ class TaskRunPage(ContextOxModel):
 
 
 class TaskMessageSendRequest(ContextOxModel):
+    regenerate_from_run_id: ID | None = None
     approved_answers: list[ApprovedAnswerRef] = Field(default_factory=list, max_length=50)
     expected_draft: DraftIdentity | None = None
 
     @model_serializer(mode="wrap")
     def serialize_legacy(self, handler):
         data = handler(self)
+        if self.regenerate_from_run_id is None:
+            data.pop("regenerate_from_run_id", None)
         if not self.approved_answers and self.expected_draft is None:
             data.pop("approved_answers", None)
             data.pop("expected_draft", None)
@@ -1914,6 +1924,7 @@ class RunPhaseChangedPayload(ContextOxModel):
 class MessageCreatedPayload(ContextOxModel):
     message_id: ID
     role: Literal["user", "assistant"]
+    regenerate_from_run_id: ID | None = None
 
 
 class ModelStartedPayload(ContextOxModel):

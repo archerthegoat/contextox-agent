@@ -544,7 +544,7 @@ def _workspace_store_error_response(
                 "clarification_answers_not_implemented", "profile_interpretation_not_implemented"
             } else 409 if error.code in {"message_reference_stale",
                 "message_context_scope_mismatch", "task_waiting_for_review",
-                "previous_outcome_unresolved", "idempotency_conflict", "clarification_answer_stale",
+                "previous_outcome_unresolved", "regeneration_not_allowed", "idempotency_conflict", "clarification_answer_stale",
                 "clarification_draft_stale", "clarification_target_stale", "clarification_scope_too_large"} or (error.code in {"state_conflict", "run_already_active"} and
                 (request.url.path.endswith("/messages") or "/message-submissions/" in request.url.path or "/clarifications/" in request.url.path)) else 422),
             code=error.code,

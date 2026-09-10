@@ -1161,6 +1161,11 @@ export interface components {
              * @enum {string}
              */
             role: "user" | "assistant";
+            /**
+             * Regenerate From Run Id
+             * @default null
+             */
+            regenerate_from_run_id: string | null;
         };
         /** MessageHistoryRef */
         MessageHistoryRef: {
@@ -1762,7 +1767,7 @@ export interface components {
              * @default 8
              * @enum {integer}
              */
-            max_model_turns: 1 | 8;
+            max_model_turns: 1 | 2 | 8;
             /**
              * Max Tool Calls
              * @default 24
@@ -1998,6 +2003,11 @@ export interface components {
         };
         /** RunSnapshot */
         RunSnapshot: {
+            /**
+             * Regeneration Allowed
+             * @default false
+             */
+            regeneration_allowed: boolean;
             /** Approved Answers */
             approved_answers?: components["schemas"]["ApprovedAnswerSnapshot"][];
             /** Workspace Id */
@@ -2323,6 +2333,8 @@ export interface components {
         };
         /** TaskMessageSendRequest */
         TaskMessageSendRequest: {
+            /** Regenerate From Run Id */
+            regenerate_from_run_id?: string | null;
             /** Approved Answers */
             approved_answers?: components["schemas"]["ApprovedAnswerRef"][];
             expected_draft?: components["schemas"]["DraftIdentity"] | null;

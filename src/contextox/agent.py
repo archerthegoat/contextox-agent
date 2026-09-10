@@ -89,6 +89,7 @@ from contextox.models import Key
 from contextox.semantic_controller import (
     EMPTY_TOOL_SCHEMA_SHA256,
     P0_SEMANTIC_PROPOSAL_SHA256,
+    SEMANTIC_MESSAGE_MAX_BYTES,
     SemanticProposalFailure,
     build_context_plan,
     normalize_semantic_proposal,
@@ -1494,89 +1495,89 @@ def _run_semantic_agent(
         _stop_run(store, workspace_id, mission_id, run_id, status, code)
         return
 
-    provider = get_provider(agent_profile=agent_profile)
-    _append_model_started(
-        store, workspace_id, mission_id, run_id, 1, transport="non_stream"
-    )
-    try:
-        proposal, completion = request_semantic_proposal(
-            provider,
-            plan,
-            running.budget,
-            user_id=_opaque_user_id(workspace_id, provider),
-            cancel_event=cancel_event,
-            messages=messages,
-        )
-    except ProviderCancelledError as exc:
-        receipt = _make_receipt(
-            provider=provider, workspace_id=workspace_id, attempt_id=None,
-            mission_id=mission_id, run_id=run_id, turn_index=1,
-            status="cancelled", p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
-            usage=exc.usage, context_manifest=manifest, error_code=exc.code,
-            run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
-        )
-        _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
-        _cancel_run(store, workspace_id, mission_id, run_id)
-        return
-    except ProviderError as exc:
-        receipt = _make_receipt(
-            provider=provider, workspace_id=workspace_id, attempt_id=None,
-            mission_id=mission_id, run_id=run_id, turn_index=1,
-            status=exc.run_status, p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
-            usage=exc.usage, context_manifest=manifest, error_code=exc.code,
-            run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
-        )
-        _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
-        if exc.run_status == "cancelled" or cancel_event.is_set():
+    # The persisted budget seals the profile at queue time, independent of
+    # later process configuration. Production remains a single high request.
+    provider = get_provider(agent_profile="demo-fast" if running.budget.max_model_turns == 2 else "production")
+    deadline = started_at + running.budget.max_elapsed_ms / 1000
+    original_messages = messages
+    for turn_index in range(1, running.budget.max_model_turns + 1):
+        if cancel_event.is_set():
             _cancel_run(store, workspace_id, mission_id, run_id)
-        else:
-            _stop_run(store, workspace_id, mission_id, run_id, exc.run_status, exc.code)
-        return
-    except SemanticProposalFailure as exc:
-        completion = exc.completion
-        if completion is None:
-            _stop_run(
-                store, workspace_id, mission_id, run_id,
-                "blocked" if exc.code == "context_too_broad" else "failed",
-                exc.code,
-            )
             return
+        remaining_ms = int((deadline - time.monotonic()) * 1000) - 500
+        if remaining_ms <= 0:
+            _stop_run(store, workspace_id, mission_id, run_id, "blocked", "elapsed_budget_exceeded")
+            return
+        if len(json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()) > SEMANTIC_MESSAGE_MAX_BYTES:
+            _stop_run(store, workspace_id, mission_id, run_id, "blocked", "context_too_broad")
+            return
+        if turn_index > 1:
+            manifest_input = _context_manifest(snapshot, turn_index=turn_index, tool_receipt_ids=[])
+            manifest = store.record_context_manifest(workspace_id, mission_id, run_id, manifest_input)
+            if not _manifest_matches_request(manifest, manifest_input, workspace_id, mission_id, run_id):
+                raise Path2StateError("context_manifest_invalid")
+        _append_model_started(store, workspace_id, mission_id, run_id, turn_index, transport="non_stream")
+        failure = None
+        call_started = time.monotonic()
+        try:
+            proposal, completion = request_semantic_proposal(
+                provider, plan, running.budget,
+                user_id=_opaque_user_id(workspace_id, provider), cancel_event=cancel_event,
+                messages=messages, timeout_ms=remaining_ms,
+            )
+        except ProviderError as exc:
+            receipt = _make_receipt(
+                provider=provider, workspace_id=workspace_id, attempt_id=None,
+                mission_id=mission_id, run_id=run_id, turn_index=turn_index,
+                status=exc.run_status, p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
+                usage=exc.usage, context_manifest=manifest, error_code=exc.code,
+                run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
+            )
+            _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
+            if exc.run_status == "cancelled" or cancel_event.is_set():
+                _cancel_run(store, workspace_id, mission_id, run_id)
+            else:
+                _stop_run(store, workspace_id, mission_id, run_id, exc.run_status, exc.code)
+            return
+        except SemanticProposalFailure as exc:
+            failure = exc
+            completion = exc.completion
+            if not isinstance(completion, ProviderCompletion):
+                _stop_run(store, workspace_id, mission_id, run_id,
+                          "blocked" if exc.code == "context_too_broad" else "failed", exc.code)
+                return
+        format_invalid = bool(failure and failure.code == "semantic_proposal_invalid"
+                              and completion.finish_reason == "stop" and not completion.tool_calls)
         receipt = _make_receipt(
             provider=provider, workspace_id=workspace_id, attempt_id=None,
-            mission_id=mission_id, run_id=run_id, turn_index=1,
-            status="succeeded" if isinstance(completion, ProviderCompletion) else "failed",
-            p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
-            usage=completion.usage if isinstance(completion, ProviderCompletion) else None,
-            context_manifest=manifest,
-            error_code=(
-                "provider_usage_missing"
-                if isinstance(completion, ProviderCompletion) and completion.usage is None
-                else exc.code if not isinstance(completion, ProviderCompletion) else None
-            ),
+            mission_id=mission_id, run_id=run_id, turn_index=turn_index,
+            status="failed" if failure and not format_invalid else "succeeded", p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
+            usage=completion.usage, context_manifest=manifest,
+            error_code=(("semantic_format_invalid_usage_missing" if completion.usage is None else "semantic_format_invalid")
+                        if format_invalid else failure.code if failure else "provider_usage_missing" if completion.usage is None else None),
             run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
         )
         receipt = _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
-        if isinstance(completion, ProviderCompletion):
-            _append_model_completed(store, workspace_id, mission_id, run_id, 1, receipt)
-        _stop_run(store, workspace_id, mission_id, run_id, "failed", exc.code)
+        _append_model_completed(store, workspace_id, mission_id, run_id, turn_index, receipt)
+        logger.info(
+            "semantic_run_metrics phase=synthesize_once turn=%d duration_ms=%d request_bytes=%d input_tokens=%s output_tokens=%s format_invalid=%s",
+            turn_index, int((time.monotonic() - call_started) * 1000),
+            len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")).encode()),
+            "unknown" if completion.usage is None else completion.usage.input_tokens,
+            "unknown" if completion.usage is None else completion.usage.output_tokens,
+            str(format_invalid).lower(),
+        )
+        if failure is None:
+            break
+        if format_invalid and turn_index < running.budget.max_model_turns:
+            # Regenerate from the same frozen packet and handles. Do not replay
+            # raw output, reasoning, source snippets, or provider error bodies.
+            messages = [*original_messages, {"role":"user", "content":
+                "The completed response failed JSON/schema validation. Return a corrected complete proposal from the same context. Safe errors: "
+                + json.dumps(failure.safe_errors, ensure_ascii=False)}]
+            continue
+        _stop_run(store, workspace_id, mission_id, run_id, "failed", failure.code)
         return
-
-    receipt = _make_receipt(
-        provider=provider, workspace_id=workspace_id, attempt_id=None,
-        mission_id=mission_id, run_id=run_id, turn_index=1,
-        status="succeeded", p0_sha256=P0_SEMANTIC_PROPOSAL_SHA256,
-        usage=completion.usage, context_manifest=manifest,
-        error_code="provider_usage_missing" if completion.usage is None else None,
-        run_tool_schema_sha256=EMPTY_TOOL_SCHEMA_SHA256,
-    )
-    receipt = _record_run_receipt(store, workspace_id, mission_id, run_id, receipt)
-    _append_model_completed(store, workspace_id, mission_id, run_id, 1, receipt)
-    logger.info(
-        "semantic_run_metrics phase=synthesize_once duration_ms=%d input_tokens=%s output_tokens=%s",
-        int((time.monotonic() - phase_started_at) * 1000),
-        "unknown" if completion.usage is None else completion.usage.input_tokens,
-        "unknown" if completion.usage is None else completion.usage.output_tokens,
-    )
     if cancel_event.is_set():
         _cancel_run(store, workspace_id, mission_id, run_id)
         return
@@ -2158,7 +2159,7 @@ def run_agent(
     """Dispatch by the immutable execution profile persisted with the Run."""
 
     snapshot = store.get_run_snapshot(workspace_id, mission_id, run_id)
-    if snapshot.budget.max_model_turns == 1:
+    if snapshot.budget.max_model_turns in {1, 2}:
         _run_semantic_agent(store, workspace_id, mission_id, run_id, cancel_event,
                             agent_profile=agent_profile)
     else:

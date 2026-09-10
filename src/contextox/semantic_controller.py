@@ -112,9 +112,11 @@ class SemanticProvider(Protocol):
 class SemanticProposalFailure(Exception):
     """Safe failure raised before any domain write occurs."""
 
-    def __init__(self, code: str, completion: ProviderCompletion | None = None) -> None:
+    def __init__(self, code: str, completion: ProviderCompletion | None = None,
+                 safe_errors: list[str] | None = None) -> None:
         self.code = code
         self.completion = completion
+        self.safe_errors = safe_errors or []
         super().__init__(code)
 
 
@@ -495,10 +497,14 @@ def request_semantic_proposal(
     user_id: str,
     cancel_event: Event,
     messages: list[dict[str, Any]] | None = None,
+    timeout_ms: int = SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
 ) -> tuple[SemanticProposalV1, ProviderCompletion]:
     """Request and validate one proposal without performing any domain operation."""
 
     messages = messages or semantic_messages(plan)
+    if _messages_size(messages) > SEMANTIC_MESSAGE_MAX_BYTES:
+        raise SemanticProposalFailure("context_too_broad")
+    timeout_ms = min(timeout_ms, SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS)
     completion = provider.complete(
         messages,
         stream=False,
@@ -506,14 +512,14 @@ def request_semantic_proposal(
         max_tokens=budget.max_output_tokens,
         user_id=user_id,
         timeouts=ProviderTimeouts(
-            connect_ms=budget.connect_timeout_ms,
+            connect_ms=min(budget.connect_timeout_ms, timeout_ms),
             # A non-streaming response has no earlier progress event: its first
             # event is the complete response. Keep that deadline aligned with
             # the approved single-request total instead of truncating it at the
             # legacy streaming first-event limit.
-            first_event_ms=SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
-            idle_ms=min(budget.idle_timeout_ms, SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS),
-            total_ms=SEMANTIC_PROVIDER_TOTAL_TIMEOUT_MS,
+            first_event_ms=timeout_ms,
+            idle_ms=min(budget.idle_timeout_ms, timeout_ms),
+            total_ms=timeout_ms,
         ),
         cancel_event=cancel_event,
         max_context_bytes=SEMANTIC_CONTEXT_MAX_BYTES,
@@ -523,8 +529,24 @@ def request_semantic_proposal(
     if completion.finish_reason != "stop" or completion.tool_calls:
         raise SemanticProposalFailure("provider_protocol_error", completion)
     try:
-        decoded = json.loads(completion.content)
+        content = completion.content.strip()
+        for fence in ("```json\n", "```\n"):
+            if content.startswith(fence) and content.endswith("\n```"):
+                content = content[len(fence):-4].strip()
+                break
+        decoded = json.loads(content)
         proposal = SemanticProposalV1.model_validate(decoded)
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
-        raise SemanticProposalFailure("semantic_proposal_invalid", completion) from exc
+        errors = ["json_invalid"]
+        if isinstance(exc, ValidationError):
+            # Error locations can contain model-provided object keys. Only
+            # schema-owned names and numeric indices may leave this boundary.
+            schema = SemanticProposalV1.model_json_schema()
+            names = set(schema.get("properties", {}))
+            for definition in schema.get("$defs", {}).values():
+                names.update(definition.get("properties", {}))
+            errors = [".".join(str(part) if isinstance(part, int) or part in names else "item"
+                               for part in error["loc"]) + ":" + error["type"]
+                      for error in exc.errors(include_input=False, include_context=False, include_url=False)[:8]]
+        raise SemanticProposalFailure("semantic_proposal_invalid", completion, errors) from exc
     return proposal, completion

@@ -377,7 +377,8 @@ def seed_manifest(connection,ws,mid,run_id,payload,mission):
     d=payload.expected_draft
     data=ContextManifestInput(mission_state_version=mission.state_version+(1 if mission.status in {"blocked","waiting_for_human"} else 0),
         turn_index=1,draft_id=d.draft_id,draft_version=d.version,draft_sha256=d.sha256,
-        source_refs=payload.source_refs,clarification_ids=[],tool_receipt_ids=[],budget=RunBudget(max_output_tokens=16384),
+        source_refs=payload.source_refs,clarification_ids=[],tool_receipt_ids=[],
+        budget=RunBudget.model_validate_json(connection.execute("SELECT budget_json FROM runs WHERE workspace_id=? AND mission_id=? AND run_id=?",(ws,mid,run_id)).fetchone()[0]),
         excluded_reasons=["cross_mission_chat_not_loaded","unapproved_memory_not_loaded","unselected_sources_not_loaded"],approved_answer_refs=payload.approved_answers).model_dump(mode="json")
     data.update(workspace_id=ws,mission_id=mid,run_id=run_id,manifest_id=str(uuid4()))
     data["sha256"]=canonical_sha256(data)
