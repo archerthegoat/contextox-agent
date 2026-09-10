@@ -23,7 +23,7 @@ class SyntheticProvider:
             if kwargs['cancel_event'].wait(.2):
                 from contextox.provider import ProviderError
                 raise ProviderError('cancelled','cancelled')
-        output={'public_reply':'【合成验收】这两份资料可用于核对订单金额。请说明你想解决的问题；退款与缺失金额规则仍需业务确认。','next_action':'discuss'}
+        output={'public_reply':'【合成验收】可以围绕当前资料核对订单金额。请说明你想解决的问题；退款与缺失金额规则仍需业务确认。','next_action':'discuss'}
         if context.get('mission'):
             output['public_reply']='【合成验收】退款规则会影响统计金额；请核对下方候选卡片。未提供的回答来源与依据将保留为空。'
             if '退款' in content and '扣除' in content:
@@ -55,11 +55,16 @@ agent.get_provider=lambda **kwargs:SyntheticProvider()
 agent.run_agent=synthetic_run
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--port',type=int,default=8831)
+parser.add_argument('--reuse-data-dir',type=Path,help='Reopen only a fixture-marked synthetic database')
 parser.add_argument('--empty',action='store_true',help='Exercise first-send local workspace creation')
 parser.add_argument('--missing-model',action='store_true',help='Show connection prompt without reading credentials')
 parser.add_argument('--settings-delay',type=float,default=0,help='Synthetic settings latency for workspace-switch checks')
 args=parser.parse_args()
-root=Path(tempfile.mkdtemp(prefix='contextox-agent-led-browser-'))
+root=args.reuse_data_dir or Path(tempfile.mkdtemp(prefix='contextox-agent-led-browser-'))
+if args.reuse_data_dir:
+    marker=root/'fixture.json'
+    if not marker.is_file() or json.loads(marker.read_text()).get('synthetic') is not True:
+        parser.error('reuse requires this runner’s synthetic fixture marker')
 app=create_app(data_dir=root,static_dir=Path(__file__).resolve().parents[1] / 'web' / 'dist',agent_profile='demo-fast')
 if args.missing_model:
     local_settings.external_key_source=lambda:None
@@ -73,11 +78,12 @@ if args.settings_delay:
         return await call_next(request)
 store=app.state.workspace_store
 ws=None
-if not args.empty:
+if not args.empty and not args.reuse_data_dir:
     ws=store.create_workspace('合成验收 · 不连接模型').workspace_id
     for name,data in [('订单.csv','region,amount\n华东,20\n华南,30\n'),('退款.csv','region,refund\n华东,5\n华南,0\n')]:
         store.import_source_revision(ws,name,'text/csv',data.encode())
     store.create_workspace('范围隔离 · 空工作区')
-(root/'fixture.json').write_text(json.dumps({'workspace_id':ws,'synthetic':True}))
+if not args.reuse_data_dir:
+    (root/'fixture.json').write_text(json.dumps({'workspace_id':ws,'synthetic':True}))
 print('SYNTHETIC_DATA_DIR='+str(root),flush=True)
 uvicorn.run(app,host='127.0.0.1',port=args.port,log_level='warning')
