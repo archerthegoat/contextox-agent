@@ -1886,6 +1886,41 @@ class ProviderTests(unittest.TestCase):
         self.assertFalse(server_thread.is_alive())
         self.assertEqual(self._active_child_pids(), before_children)
 
+    def test_header_budget_is_independent_of_body_coalescing_and_counts_interim_headers(self) -> None:
+        interim = b"HTTP/1.1 100 Continue\r\n\r\n"
+        header = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n"
+        body = b" " * 513
+        for lead in (b"", interim):
+            for coalesced in (True, False):
+                with self.subTest(interim=bool(lead), coalesced=coalesced):
+                    chunks = iter([lead + header + body] if coalesced else [lead + header, body])
+
+                    def receive(sock, buffer, **kwargs):
+                        chunk = next(chunks)
+                        buffer[:len(chunk)] = chunk
+                        return len(chunk)
+
+                    with patch.object(provider_module, "_recv_into_with_deadline", side_effect=receive):
+                        headers, prefix = provider_module._read_response_headers(
+                            unittest.mock.Mock(), deadline=time.monotonic() + 1,
+                            cancel_event=None, max_context_bytes=len(lead + header))
+                    self.assertEqual(headers, lead + header)
+                    self.assertEqual(prefix, body if coalesced else b"")
+
+        # A complete second header block already in the receive buffer still
+        # counts, even though it does not require another socket read.
+        def oversized_headers(sock, buffer, **kwargs):
+            packet = interim + header + body
+            buffer[:len(packet)] = packet
+            return len(packet)
+
+        with patch.object(provider_module, "_recv_into_with_deadline", side_effect=oversized_headers):
+            with self.assertRaises(ProviderContextBudgetError) as raised:
+                provider_module._read_response_headers(unittest.mock.Mock(), deadline=time.monotonic() + 1,
+                    cancel_event=None, max_context_bytes=len(interim + header) - 1)
+        self.assertEqual(raised.exception.stage, "http_headers")
+        self.assertEqual(raised.exception.used_bytes, len(interim + header))
+
     def test_spawn_nonstream_whitespace_keeps_deadlines_cancellation_and_byte_limit(self) -> None:
         cases = (
             ("first", b" \t\r\n", ProviderTimeouts(2000, 1000, 250, 3000),

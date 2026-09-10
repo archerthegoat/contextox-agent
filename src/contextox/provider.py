@@ -945,13 +945,18 @@ def _read_response_headers(
             if count == 0:
                 raise ProviderUnavailableError()
             chunk = bytes(chunk_buffer[:count])
-            if len(received) + len(chunk) > max_context_bytes:
-                raise ProviderContextBudgetError(stage="http_headers", used_bytes=len(received) + len(chunk), limit_bytes=max_context_bytes)
             received.extend(chunk)
             marker = received.find(b"\r\n\r\n", block_start)
+            if marker < 0 and len(received) > max_context_bytes:
+                raise ProviderContextBudgetError(stage="http_headers", used_bytes=len(received), limit_bytes=max_context_bytes)
 
         block_end = marker + 4
-        line_end = received.find(b"\r\n", block_start, marker)
+        # A socket read can contain both headers and body. Count only complete
+        # header blocks here; the body prefix is checked by the body reader.
+        # Keep interim blocks in the cumulative header budget as well.
+        if block_end > max_context_bytes:
+            raise ProviderContextBudgetError(stage="http_headers", used_bytes=block_end, limit_bytes=max_context_bytes)
+        line_end = received.find(b"\r\n", block_start, marker + 2)
         status_line = bytes(received[block_start:line_end]) if line_end >= 0 else b""
         status_code: int | None = None
         status_parts = status_line.split(None, 2)
