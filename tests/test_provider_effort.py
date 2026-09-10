@@ -23,9 +23,19 @@ def _response(content):
 class ProviderEffortTests(unittest.TestCase):
     def test_default_factory_remains_high_and_unknown_efforts_fail_closed(self):
         self.assertEqual(agent.get_provider().config.reasoning_effort, "high")
+        self.assertEqual(agent.get_provider().config.model, "deepseek-flash")
+        demo = agent.get_provider(agent_profile="demo-fast").config
+        self.assertEqual((demo.model, demo.thinking, demo.reasoning_effort),
+                         ("deepseek-flash", "disabled", None))
         legacy = {"endpoint_id": "deepseek_chat_completions", "model": "deepseek-v4-flash",
                   "thinking": "enabled", "reasoning_effort": "high"}
         self.assertEqual(ProviderConfigSnapshot.model_validate(legacy).model_dump(), legacy)
+        for model in ("deepseek-v4-flash", "deepseek-v4-pro"):
+            self.assertEqual(ProviderConfigSnapshot.model_validate(legacy | {"model": model}).model, model)
+            with self.assertRaises(ValueError):
+                p.DeepSeekProvider(model=model)
+        with self.assertRaises(ValueError):
+            p.DeepSeekProvider(model="deepseek-v4.1-flash-expires-on-0910")
         for effort in ("medium", "xhigh", "", None, True, [], {}):
             with self.subTest(effort=effort):
                 with self.assertRaises(ValueError):
@@ -61,6 +71,7 @@ class ProviderEffortTests(unittest.TestCase):
                         self.assertEqual(answer.content, "synthetic answer")
                         self.assertEqual(len(requests), 1)
                         self.assertEqual(requests[0]["reasoning_effort"], effort)
+                        self.assertEqual(requests[0]["model"], "deepseek-flash")
                         self.assertEqual(provider.config.reasoning_effort, effort)
                     finally:
                         thread.join(2)

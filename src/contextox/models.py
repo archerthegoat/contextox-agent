@@ -1199,7 +1199,8 @@ class AnswerImpact(ContextOxModel):
 
 class ProviderConfigSnapshot(ContextOxModel):
     endpoint_id: Literal["deepseek_chat_completions"]
-    model: Literal["deepseek-v4-flash", "deepseek-v4-pro"]
+    # Legacy aliases remain readable in immutable configuration/receipt history.
+    model: Literal["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"]
     thinking: Literal["enabled", "disabled"]
     reasoning_effort: Literal["low", "high", "max"] | None
 

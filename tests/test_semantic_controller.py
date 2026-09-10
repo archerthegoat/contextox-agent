@@ -81,7 +81,7 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
         profile = _build_parser().parse_args(["start", "--agent-profile", "demo-fast"]).agent_profile
         provider = agent.get_provider(agent_profile=profile)
         payload = provider.build_payload([], stream=False, tools=None, max_tokens=4096, user_id="ws-test")
-        self.assertEqual(payload["model"], "deepseek-v4-flash")
+        self.assertEqual(payload["model"], "deepseek-flash")
         self.assertEqual(payload["thinking"], {"type":"disabled"})
         self.assertNotIn("reasoning_effort", payload)
 

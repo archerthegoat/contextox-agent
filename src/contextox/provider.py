@@ -29,7 +29,7 @@ from contextox.models import ProviderConfigSnapshot
 
 
 DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
-DEFAULT_MODEL = "deepseek-v4-flash"
+DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_OUTPUT_TOKENS = 4096
 MAX_OUTPUT_TOKENS = 16384
 MAX_CONTEXT_BYTES = 262144
@@ -1078,8 +1078,8 @@ class DeepSeekProvider:
         reasoning_effort: str | None = "high",
         transport: Any | None = None,
     ) -> None:
-        if model not in {"deepseek-v4-flash", "deepseek-v4-pro"}:
-            raise ValueError("model must be an approved DeepSeek model")
+        if model != DEFAULT_MODEL:
+            raise ValueError("new requests must use deepseek-flash")
         if thinking not in {"enabled", "disabled"}:
             raise ValueError("thinking must be enabled or disabled")
         if thinking == "enabled" and reasoning_effort not in ("low", "high", "max"):
@@ -2301,7 +2301,7 @@ def _provider_child_packet(
     max_context_bytes = packet["max_context_bytes"]
     if not isinstance(call_id, str) or not call_id:
         raise _ProviderIpcProtocolError()
-    if not isinstance(model, str) or model not in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+    if not isinstance(model, str) or model != DEFAULT_MODEL:
         raise _ProviderIpcProtocolError()
     if not isinstance(url, str) or not url or not isinstance(method, str) or method != "POST":
         raise _ProviderIpcProtocolError()

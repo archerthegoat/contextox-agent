@@ -1566,7 +1566,7 @@ export interface components {
              * Model
              * @enum {string}
              */
-            model: "deepseek-v4-flash" | "deepseek-v4-pro";
+            model: "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4-pro";
             /**
              * Thinking
              * @enum {string}
