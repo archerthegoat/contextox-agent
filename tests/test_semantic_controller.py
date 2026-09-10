@@ -419,6 +419,43 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             self.assertEqual(result.status, "waiting_for_human")
             self.assertEqual(result.clarifications[0].questions[0].related_definition_paths, ["fields.candidate_id.rule"])
 
+    def test_column_capabilities_supply_physical_evidence_without_duplicate_model_handles(self):
+        with fixtures.PersistedAttemptTests().store_case() as (store, ws, attempt):
+            ready = fixtures.PersistedAttemptTests().generate(store, ws, attempt)
+            refs = []
+            for name in ("left.csv", "right.csv"):
+                revision, _ = store.import_source_revision(ws, name, "text/csv", b"id,value\n1,a\n2,b\n")
+                refs.append(SourceIdentity.model_validate(revision.model_dump(include=set(SourceIdentity.model_fields))))
+            revision, _ = store.import_source_revision(ws, "meaning.md", "text/markdown", "id 为标识。\n".encode())
+            note_ref = SourceIdentity.model_validate(revision.model_dump(include=set(SourceIdentity.model_fields)))
+            refs = [*refs, note_ref]
+            mission = store.confirm_mission_draft_attempt(ws, attempt.attempt_id, 1, ready.candidate_sha256, refs)
+            run, snapshot = self._running_semantic_case(store, ws, mission, refs)
+            plan, adapter = build_context_plan(snapshot, store)
+            note_handle = plan.sources[2]["excerpts"][0]["evidence_handle"]
+            field = {"field_key":"candidate_id", "name":"候选标识",
+                "source_column_handles":[plan.sources[0]["tables"][0]["columns"][0]["column_handle"]],
+                "evidence_status":"candidate", "evidence_handles":[note_handle]}
+            pair = plan.prospective_relationships[0]
+            relation = {key:pair[key] for key in ("left", "right", "left_column_handles", "right_column_handles", "observed_cardinality")}
+            relation.update(relationship_key="candidate_link", evidence_status="candidate", evidence_handles=[])
+            proposal = SemanticProposalV1(version="v1", action="draft_only", public_answer="候选含本地引用。",
+                fields=[field], relationships=[relation])
+            application = normalize_semantic_proposal(adapter, proposal)
+            field_refs = application.fields[0].source_refs
+            self.assertEqual({ref.revision_id for ref in field_refs}, {refs[0].revision_id, note_ref.revision_id})
+            self.assertEqual({ref.revision_id for ref in application.relationships[0].source_refs}, {ref.revision_id for ref in refs[:2]})
+            physical = next(ref for ref in field_refs if ref.locator.kind == "csv_rows")
+            self.assertEqual(physical.locator.column, "id")
+            self.assertTrue(store.read_source_excerpt(ws, physical.revision_id, physical.locator).text)
+            bad = proposal.model_copy(update={"fields":[proposal.fields[0].model_copy(update={"source_column_handles":["column_forged"]})]})
+            with self.assertRaisesRegex(SemanticProposalFailure, "semantic_handle_invalid"):
+                normalize_semantic_proposal(adapter, bad)
+            self.assertIsNone(store.get_run_snapshot(ws, mission.mission_id, run.run_id).draft)
+            result = store.apply_semantic_proposal(ws, mission.mission_id, run.run_id, application)
+            self.assertEqual(result.status, "partial")
+            self.assertEqual(result.draft.fields[0].source_refs, field_refs)
+
     def test_omitted_dimensions_preserve_existing_values_on_candidate_update(self):
         with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
             run, snapshot = self._running_semantic_case(store, ws, mission, refs)

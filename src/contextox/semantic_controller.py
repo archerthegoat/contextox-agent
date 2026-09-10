@@ -139,6 +139,8 @@ def _projected_draft(
     normalized_fields = []
     for item in proposal.fields:
         value = adapter.field(item)
+        refs = [*value["source_refs"], *(ref.model_dump(mode="json") for ref in adapter.column_evidence(item.source_column_handles))]
+        value["source_refs"] = list({canonical_sha256(ref):ref for ref in refs}.values())
         previous = fields.get(item.field_key)
         if previous is not None:
             omitted = set(type(item.semantics).model_fields) - item.semantics.model_fields_set
@@ -151,6 +153,9 @@ def _projected_draft(
     normalized_relationships = []
     for item in proposal.relationships:
         value = adapter.relationship(item)
+        refs = [*value["source_refs"], *(ref.model_dump(mode="json") for ref in adapter.column_evidence(
+            [*item.left_column_handles, *item.right_column_handles]))]
+        value["source_refs"] = list({canonical_sha256(ref):ref for ref in refs}.values())
         previous = relationships.get(item.relationship_key)
         if previous is not None:
             for name in ("join_rule", "grain_notes", "risks", "unknowns"):

@@ -297,6 +297,7 @@ class RunReferences:
         }
         self.values: dict[str, tuple[str, Any]] = {}
         self.reverse: dict[tuple[str, str], str] = {}
+        self._table_evidence: dict[str, list[EvidenceRef]] = {}
         self.catalog: list[dict[str, Any]] = []
         self.coverage: list[dict[str, Any]] = []
         self.evidence_bundle: list[dict[str, Any]] = []
@@ -318,7 +319,9 @@ class RunReferences:
             tables = []
             for table in artifact.tables:
                 key = TableKey(source_ref=artifact.source_ref, table_id=table.table_id, columns=[])
-                tables.append({"table_handle": self.register("table", key),
+                table_handle = self.register("table", key)
+                self._table_evidence[table_handle] = table.source_refs
+                tables.append({"table_handle": table_handle,
                                "table_id": table.table_id, "row_count": table.row_count,
                                "columns": [{"name": col.name, "column_handle": self.register(
                                    "column", ColumnRef(source_ref=artifact.source_ref,
@@ -539,6 +542,19 @@ class RunReferences:
         if handle is None:
             raise HandleDenied()
         return handle
+
+    def column_evidence(self, handles: list[str]) -> list[EvidenceRef]:
+        """Bind already-authorized columns to deterministic physical evidence."""
+        evidence = []
+        for handle in handles:
+            column = self.resolve(handle, "column")
+            table = self.table(TableKey(source_ref=column.source_ref, table_id=column.table_id, columns=[]))
+            for ref in self._table_evidence[table]:
+                self._source(ref)
+                if ref.locator.kind == "csv_rows":
+                    ref = ref.model_copy(update={"locator": ref.locator.model_copy(update={"column":column.column})})
+                evidence.append(ref)
+        return evidence
 
     def table(self, ref: TableKey) -> str:
         self._source(ref.source_ref)
