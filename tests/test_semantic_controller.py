@@ -494,6 +494,37 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(SemanticProposalFailure, "semantic_proposal_invalid"):
                 request_semantic_proposal(provider, plan, run.budget, user_id="synthetic", cancel_event=Event())
 
+    def test_same_context_source_table_and_column_labels_resolve_to_exact_evidence(self):
+        with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
+            run, snapshot = self._running_semantic_case(store, ws, mission, refs)
+            plan, adapter = build_context_plan(snapshot, store)
+            source = plan.sources[0]
+            handles = [source["source_handle"], source["tables"][0]["table_handle"], source["tables"][0]["columns"][0]["column_handle"]]
+            self.assertTrue(all(len(handle) < 30 for handle in handles))
+            proposal = SemanticProposalV1(version="v1", action="answer_only", public_answer="已核对 @" + handles[-1], evidence_handles=handles)
+            application = normalize_semantic_proposal(adapter, proposal)
+            self.assertEqual({ref.revision_id for ref in application.source_refs}, {refs[0].revision_id})
+            self.assertTrue(any(ref.locator.column == "id" for ref in application.source_refs))
+            self.assertIn("@left.csv/id", application.public_answer)
+            other_plan, _ = build_context_plan(snapshot, store)
+            self.assertNotEqual(other_plan.sources[0]["source_handle"], handles[0])
+            for unknown in ("evidence_forged", other_plan.sources[0]["source_handle"]):
+                with self.assertRaises(SemanticProposalFailure) as denied:
+                    normalize_semantic_proposal(adapter, proposal.model_copy(update={"evidence_handles":[unknown]}))
+                self.assertEqual(denied.exception.code, "semantic_handle_invalid")
+                self.assertIn("unknown_handle", denied.exception.safe_errors[0])
+                self.assertNotIn(unknown, denied.exception.safe_errors[0])
+            wrong_kind = SemanticProposalV1(version="v1", action="draft_only", public_answer="无效候选",
+                fields=[{"field_key":"wrong", "name":"wrong", "source_column_handles":[handles[0]], "evidence_status":"candidate"}])
+            with self.assertRaises(SemanticProposalFailure) as denied:
+                normalize_semantic_proposal(adapter, wrong_kind)
+            self.assertIn("wrong_kind", denied.exception.safe_errors[0])
+            self.assertIsNone(store.get_run_snapshot(ws, mission.mission_id, run.run_id).draft)
+            result = store.apply_semantic_proposal(ws, mission.mission_id, run.run_id, application)
+            self.assertEqual(result.status, "partial")
+            for ref in application.source_refs:
+                self.assertTrue(store.read_source_excerpt(ws, ref.revision_id, ref.locator).text)
+
     def test_omitted_dimensions_preserve_existing_values_on_candidate_update(self):
         with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
             run, snapshot = self._running_semantic_case(store, ws, mission, refs)

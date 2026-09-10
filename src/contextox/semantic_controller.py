@@ -90,8 +90,9 @@ _EXAMPLE_TEXT = json.dumps(
 P0_SEMANTIC_PROPOSAL = """You are the semantic proposal stage of ContextOx (数契).
 Return exactly one JSON object matching the supplied SemanticProposalV1 schema. Do not call tools.
 Use only the current ContextPlanV1. Preserve unknown business meaning as null plus an explicit unknown reason.
-Use only supplied opaque handles. Every observed source claim and candidate supported by source data must carry a matching evidence handle.
+Use only supplied opaque handles. Column handles identify candidate source columns. Cite supporting document excerpts through evidence_handles.
 Task instructions and approved human answers are business provenance, not observed source evidence. Never invent approval or Mission completion.
+Column handles already bind physical evidence; field/relationship evidence_handles may be omitted. Use evidence_handles for additional supporting excerpts. Source, table and column handles from this packet can also identify that same local evidence. Never invent an identifier.
 Use selected source excerpts as evidence. Partial/not_read coverage means uninspected content, not proof that the source lacks a fact.
 For draft requests, return the requested candidate fields and relationships: draft_and_clarify with up to three key questions, otherwise draft_only. Use answer_only for questions needing no draft change. Reserve draft_and_submit for explicit review requests.
 Send only new or changed fields/relationships; omitted existing items and dimensions are preserved. Approved human answers resolve their target definitions as business provenance. Keep unrelated unknowns visible without asking every question now.
@@ -105,6 +106,7 @@ SUPPORTED_SEMANTIC_HASH_PAIRS = frozenset({
     (PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
     ("a2a1c67e0ea2e50ca9911b1c64f6c09f256065a835874a09c187b5b2eba4ab06", EMPTY_TOOL_SCHEMA_SHA256),
     ("c71b1305093186514f78ca66280ffb2c4e7bd0ca99f0f71751b04af3d86d5358", EMPTY_TOOL_SCHEMA_SHA256),
+    ("24f408867e478222c1dcef451ff78bba495a2d9d98cd0af3bf13a8e8587b8812", EMPTY_TOOL_SCHEMA_SHA256),
     ("7617399876810be036c322ce0cdd2d56e610f958eadf1ad21194bb21b348e790", EMPTY_TOOL_SCHEMA_SHA256),
 })
 
@@ -125,7 +127,31 @@ class SemanticProposalFailure(Exception):
 
 
 def _resolved_evidence(adapter: ToolAdapter, handles: list[str]) -> list[EvidenceRef]:
-    return [EvidenceRef.model_validate(adapter.resolve(handle, "evidence")) for handle in handles]
+    refs = []
+    for handle in handles:
+        entry = adapter.values.get(handle)
+        if entry is None:
+            raise HandleDenied(reason="unknown_handle", expected="evidence")
+        kind, value = entry
+        if kind == "evidence":
+            resolved = [EvidenceRef.model_validate(value)]
+        elif kind == "column":
+            resolved = adapter.column_evidence([handle])
+        elif kind == "table":
+            adapter._source(value.source_ref)
+            resolved = adapter._table_evidence[handle]
+        elif kind == "source":
+            source = adapter._source(value)
+            resolved = [ref for ref_kind, ref in adapter.values.values()
+                        if ref_kind == "evidence" and adapter._source(ref) == source]
+        else:
+            raise HandleDenied(reason="wrong_kind", expected="evidence", actual=kind)
+        if not resolved:
+            raise HandleDenied(reason="no_evidence", expected="evidence", actual=kind)
+        for ref in resolved:
+            adapter._source(ref)
+        refs.extend(resolved)
+    return list({canonical_sha256(ref):ref for ref in refs}.values())
 
 
 def _projected_draft(
@@ -139,8 +165,9 @@ def _projected_draft(
     } if current else {}
     normalized_fields = []
     for item in proposal.fields:
-        value = adapter.field(item)
-        refs = [*value["source_refs"], *(ref.model_dump(mode="json") for ref in adapter.column_evidence(item.source_column_handles))]
+        value = adapter.field(item.model_copy(update={"evidence_handles":[]}))
+        refs = [ref.model_dump(mode="json") for ref in [*_resolved_evidence(adapter, item.evidence_handles),
+                *adapter.column_evidence(item.source_column_handles)]]
         value["source_refs"] = list({canonical_sha256(ref):ref for ref in refs}.values())
         previous = fields.get(item.field_key)
         if previous is not None:
@@ -153,9 +180,9 @@ def _projected_draft(
         normalized_fields.append(DefinitionField.model_validate(value))
     normalized_relationships = []
     for item in proposal.relationships:
-        value = adapter.relationship(item)
-        refs = [*value["source_refs"], *(ref.model_dump(mode="json") for ref in adapter.column_evidence(
-            [*item.left_column_handles, *item.right_column_handles]))]
+        value = adapter.relationship(item.model_copy(update={"evidence_handles":[]}))
+        refs = [ref.model_dump(mode="json") for ref in [*_resolved_evidence(adapter, item.evidence_handles),
+                *adapter.column_evidence([*item.left_column_handles, *item.right_column_handles])]]
         value["source_refs"] = list({canonical_sha256(ref):ref for ref in refs}.values())
         previous = relationships.get(item.relationship_key)
         if previous is not None:
@@ -302,7 +329,7 @@ def normalize_semantic_proposal(
     except SemanticProposalFailure:
         raise
     except HandleDenied as exc:
-        raise SemanticProposalFailure("semantic_handle_invalid") from exc
+        raise SemanticProposalFailure("semantic_handle_invalid", safe_errors=[json.dumps(exc.safe_detail, sort_keys=True)]) from exc
     except (CandidateRejected, ValidationError, TypeError, ValueError) as exc:
         raise SemanticProposalFailure("semantic_proposal_invalid") from exc
 
@@ -317,11 +344,11 @@ def _public_answer(adapter: ToolAdapter, text: str) -> tuple[str, list[EvidenceR
         value = adapter.resolve(handle, kind)
         if kind == "draft":
             return "@草案"
+        evidence.extend(_resolved_evidence(adapter, [handle]))
         ref = value if kind in {"source", "evidence"} else value.source_ref
         source_handle = adapter.register("source", adapter._source(ref))
         name = next(source["name"] for source in adapter.catalog if source["source_handle"] == source_handle)
         if kind == "evidence":
-            evidence.append(value)
             locator = value.locator
             if locator.kind == "json_pointer":
                 name += locator.pointer or "/"
@@ -337,7 +364,7 @@ def _public_answer(adapter: ToolAdapter, text: str) -> tuple[str, list[EvidenceR
             name += value.table_id
         return "@" + name
 
-    rendered = re.sub(r"@?\b(?:evidence|source|column|table|draft)_[a-f0-9]{32}\b", replace, text)
+    rendered = re.sub(r"@?\b(?:evidence|source|column|table|draft)_(?:[a-f0-9]{32}|[a-f0-9]{8}_[1-9][0-9]*)\b", replace, text)
     return rendered, evidence
 
 
@@ -456,7 +483,9 @@ def build_context_plan(
 ) -> tuple[ContextPlanV1, ToolAdapter]:
     """Project authoritative state and bounded profiles into one model packet."""
 
-    adapter = ToolAdapter(snapshot, store)
+    # These labels are scoped to this one synthesis. Store authorization uses
+    # immutable identities, never label entropy. Legacy loops keep their IDs.
+    adapter = ToolAdapter(snapshot, store, compact_handles=True)
     current = adapter.context(snapshot)
     plan = ContextPlanV1(
         context_kind="semantic_context_v1",

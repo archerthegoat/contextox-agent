@@ -167,9 +167,11 @@ class CandidateSemantics(FieldSemantics):
 
 class SemanticFieldInput(FieldInput):
     semantics: CandidateSemantics = Field(default_factory=CandidateSemantics)
+    evidence_handles: list[Handle] = Field(default_factory=list, max_length=100)
 
 
 class SemanticRelationshipInput(RelationshipInput):
+    evidence_handles: list[Handle] = Field(default_factory=list, max_length=100)
     join_rule: Text | None = None
     grain_notes: Text | None = None
     risks: list[Text] = Field(default_factory=list, max_length=100)
@@ -256,6 +258,16 @@ MODEL_ARGUMENT_TYPES = {
 class HandleDenied(Exception):
     """No details about other sources or runs may be disclosed."""
 
+    def __init__(self, *, reason: str = "scope_or_identity", expected: str | None = None,
+                 actual: str | None = None) -> None:
+        kinds = {"source", "table", "column", "evidence", "draft"}
+        self.safe_detail = {
+            "reason": reason if reason in {"unknown_handle", "wrong_kind", "no_evidence"} else "scope_or_identity",
+            "expected": expected if expected in kinds else None,
+            "actual": actual if actual in kinds else None,
+        }
+        super().__init__("Run reference could not be resolved")
+
 
 class ContextBundleExceeded(Exception):
     """A completed tool result cannot fit in the bounded Run working set."""
@@ -284,7 +296,7 @@ class RunReferences:
 
     supports_context_checkpoints = True
 
-    def __init__(self, snapshot: ContextSnapshot, artifacts: list[SourceArtifact]):
+    def __init__(self, snapshot: ContextSnapshot, artifacts: list[SourceArtifact], *, compact_handles: bool = False):
         self.scope = (snapshot.mission.workspace_id, snapshot.mission.mission_id,
                       snapshot.run.run_id)
         self.selected = {r.revision_id: r for r in snapshot.run.source_refs}
@@ -297,6 +309,8 @@ class RunReferences:
         }
         self.values: dict[str, tuple[str, Any]] = {}
         self.reverse: dict[tuple[str, str], str] = {}
+        self._compact_handles = compact_handles
+        self._handle_namespace = uuid4().hex[:8] if compact_handles else None
         self._table_evidence: dict[str, list[EvidenceRef]] = {}
         self.catalog: list[dict[str, Any]] = []
         self.coverage: list[dict[str, Any]] = []
@@ -354,15 +368,17 @@ class RunReferences:
         data = _plain(value)
         key = (kind, json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
         if key not in self.reverse:
-            handle = f"{kind}_{uuid4().hex}"
+            handle = f"{kind}_{self._handle_namespace}_{len(self.values) + 1}" if self._compact_handles else f"{kind}_{uuid4().hex}"
             self.reverse[key] = handle
             self.values[handle] = (kind, value)
         return self.reverse[key]
 
     def resolve(self, handle: str, kind: str) -> Any:
         entry = self.values.get(handle)
-        if entry is None or entry[0] != kind:
-            raise HandleDenied()
+        if entry is None:
+            raise HandleDenied(reason="unknown_handle", expected=kind)
+        if entry[0] != kind:
+            raise HandleDenied(reason="wrong_kind", expected=kind, actual=entry[0])
         return entry[1]
 
     def field(self, field: FieldInput) -> dict[str, Any]:
@@ -662,10 +678,10 @@ class RunReferences:
 
 
 class ToolAdapter(RunReferences):
-    def __init__(self, snapshot: ContextSnapshot, store: Any):
+    def __init__(self, snapshot: ContextSnapshot, store: Any, *, compact_handles: bool = False):
         artifacts = [store.get_source_artifact(snapshot.mission.workspace_id, ref.revision_id)
                      for ref in snapshot.run.source_refs]
-        super().__init__(snapshot, artifacts)
+        super().__init__(snapshot, artifacts, compact_handles=compact_handles)
 
     def normalize(self, completion: Any, decode: Any) -> list[Any]:
         calls = []
