@@ -8,6 +8,7 @@ export default defineConfig({
     port: 5173,
   },
   build: {
+    license: { fileName: "THIRD_PARTY_LICENSES.md" },
     outDir: "dist",
     emptyOutDir: true,
   },

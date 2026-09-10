@@ -2,7 +2,9 @@ import argparse
 import importlib.metadata
 import json
 import platform
+import socket
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Sequence
 
@@ -10,6 +12,7 @@ from contextox import __version__
 from contextox.api import create_app
 from contextox.models import DoctorCheck, DoctorReport
 from contextox.store import WorkspaceStore
+from contextox.local_install import InstanceAlreadyRunning, data_directory, own_instance, static_directory
 
 
 EXPECTED_PYTHON = "3.14.7"
@@ -167,7 +170,7 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor.add_argument(
         "--static-dir",
         type=Path,
-        default=Path.cwd() / "web" / "dist",
+        default=static_directory(),
         help=argparse.SUPPRESS,
     )
     doctor.add_argument(
@@ -184,12 +187,13 @@ def _build_parser() -> argparse.ArgumentParser:
     start.add_argument("--migrate-task-dialogue", action="store_true", help="Explicitly back up and migrate a stopped v3 store to task dialogue v4.")
     start.add_argument("--host", default="127.0.0.1")
     start.add_argument("--port", type=int, default=8787)
-    start.add_argument("--data-dir", type=Path, default=Path.cwd() / ".contextox-agent")
-    start.add_argument("--static-dir", type=Path, default=Path.cwd() / "web" / "dist")
+    start.add_argument("--data-dir", type=Path, default=data_directory())
+    start.add_argument("--static-dir", type=Path, default=static_directory())
+    start.add_argument("--open-browser", action="store_true", help="Open the local Workbench after startup.")
 
     schema = commands.add_parser("openapi", help="Write the generated OpenAPI schema.")
     schema.add_argument("--output", type=Path)
-    schema.add_argument("--static-dir", type=Path, default=Path.cwd() / "web" / "dist")
+    schema.add_argument("--static-dir", type=Path, default=static_directory())
     return parser
 
 
@@ -221,38 +225,73 @@ def main(argv: Sequence[str] | None = None) -> int:
         data_dir.mkdir(parents=True, exist_ok=True)
         if not data_dir.is_dir():
             parser.error("data-dir must resolve to a directory")
-        import uvicorn
-
-        app = create_app(
-            static_dir=args.static_dir.resolve(), data_dir=data_dir,
-            migrate_dialogue=args.migrate_task_dialogue,
-            migrate_clarifications=args.migrate_clarification_answers,
-            migrate_profiles=args.migrate_profile_interpretations,
-            agent_profile=args.agent_profile,
-        )
-
-        class LocalServer(uvicorn.Server):
-            async def shutdown(self, sockets=None):
-                # End owned SSE responses before Uvicorn waits for connections.
-                # Lifespan still owns Run cancellation and persisted receipts.
-                app.state.stream_stop.set()
-                app.state.global_stream_stop.set()
-                runtime = getattr(app.state, "path2_runtime", None)
-                if runtime is not None:
-                    runtime.wake_event_waiters()
-                await super().shutdown(sockets=sockets)
-
-        server = LocalServer(uvicorn.Config(
-            app,
-            host="127.0.0.1",
-            port=args.port,
-            log_level="info",
-            access_log=False,
-        ))
         try:
-            server.run()
-        except KeyboardInterrupt:
-            pass
-        return 0 if server.started else 3
+            with own_instance(data_dir, args.port):
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    try:
+                        listener.bind(("127.0.0.1", args.port))
+                    except OSError:
+                        print(f"端口 {args.port} 已被占用。请使用 --port 指定其他端口。", file=sys.stderr)
+                        return 3
+                    listener.listen(128)
+                    listener.setblocking(False)
+                    return _serve(args, data_dir, listener)
+        except InstanceAlreadyRunning as existing:
+            if existing.port is not None:
+                url = f"http://127.0.0.1:{existing.port}"
+                print(f"数契已在运行：{url}")
+                if args.open_browser:
+                    webbrowser.open(url)
+                return 0
+            print("数契正在启动，请稍后重试。", file=sys.stderr)
+            return 3
+        except OSError:
+            print("无法取得资料目录的本地运行锁。请检查目录权限。", file=sys.stderr)
+            return 3
     parser.print_help()
     return 0
+
+
+def _serve(args: argparse.Namespace, data_dir: Path, listener: socket.socket) -> int:
+    import uvicorn
+
+    app = create_app(
+        static_dir=args.static_dir.resolve(), data_dir=data_dir,
+        migrate_dialogue=args.migrate_task_dialogue,
+        migrate_clarifications=args.migrate_clarification_answers,
+        migrate_profiles=args.migrate_profile_interpretations,
+        agent_profile=args.agent_profile,
+    )
+
+    class LocalServer(uvicorn.Server):
+        async def startup(self, sockets=None):
+            await super().startup(sockets=sockets)
+            if self.started:
+                url = f"http://127.0.0.1:{args.port}"
+                print(f"数契工作台：{url}\n按 Ctrl+C 停止服务。", flush=True)
+                if args.open_browser:
+                    webbrowser.open(url)
+
+        async def shutdown(self, sockets=None):
+            # End owned SSE responses before Uvicorn waits for connections.
+            # Lifespan still owns Run cancellation and persisted receipts.
+            app.state.stream_stop.set()
+            app.state.global_stream_stop.set()
+            runtime = getattr(app.state, "path2_runtime", None)
+            if runtime is not None:
+                runtime.wake_event_waiters()
+            await super().shutdown(sockets=sockets)
+
+    server = LocalServer(uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=args.port,
+        log_level="info",
+        access_log=False,
+    ))
+    try:
+        server.run(sockets=[listener])
+    except KeyboardInterrupt:
+        pass
+    return 0 if server.started else 3

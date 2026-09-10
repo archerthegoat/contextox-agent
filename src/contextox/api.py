@@ -127,9 +127,10 @@ from contextox.store import (
 )
 from contextox.sources import SourceInputError
 from contextox.runtime import Path2Runtime
+from contextox.local_install import static_directory
 
 
-DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
+DEFAULT_STATIC_DIR = static_directory()
 PATH2_BODY_LIMIT_BYTES = 12 * 1024 * 1024
 
 

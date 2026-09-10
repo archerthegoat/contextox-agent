@@ -1,6 +1,6 @@
 [project]
 name = "contextox"
-version = "0.1.0"
+version = "0.2.0"
 description = "A local-first, governed business-definition Workbench for FDEs."
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
@@ -21,6 +21,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+contextox = ["static/**/*", "demo/*"]
 
 [tool.uv]
 package = true
