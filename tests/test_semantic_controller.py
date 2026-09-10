@@ -456,6 +456,44 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             self.assertEqual(result.status, "partial")
             self.assertEqual(result.draft.fields[0].source_refs, field_refs)
 
+    def test_candidate_wrappers_preserve_unknowns_and_apply_without_model_correction(self):
+        with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
+            run, snapshot = self._running_semantic_case(store, ws, mission, refs)
+            plan, adapter = build_context_plan(snapshot, store)
+            source = plan.sources[0]
+            field = {"field_key":"candidate_id", "name":"候选标识",
+                "source_column_handles":[source["tables"][0]["columns"][0]["column_handle"]],
+                "evidence_status":"candidate", "evidence_handles":[], "semantics":{
+                    "meaning":"客户标识", "value_type":{"value":"string"}, "grain":None,
+                    "rule":{"value":"按原始字符连接", "unknown_reason":"是否去掉前导零待确认"},
+                    "null_handling":{"value":None, "unknown_reason":None}}}
+            pair = plan.prospective_relationships[0]
+            relation = {key:pair[key] for key in ("left", "right", "left_column_handles", "right_column_handles", "observed_cardinality")}
+            relation.update(relationship_key="candidate_link", evidence_status="candidate", evidence_handles=[],
+                join_rule={"value":"按 id 相等连接", "unknown_reason":None}, grain_notes={"value":None, "unknown_reason":"粒度待确认"})
+            payload = {"version":"v1", "action":"draft_only", "public_answer":"已保存带未决说明的候选。",
+                "fields":[field], "relationships":[relation]}
+            provider = ProposalProvider(json.dumps(payload, ensure_ascii=False))
+            proposal, _ = request_semantic_proposal(provider, plan, run.budget, user_id="synthetic", cancel_event=Event())
+            application = normalize_semantic_proposal(adapter, proposal)
+            result = store.apply_semantic_proposal(ws, mission.mission_id, run.run_id, application)
+            candidate = result.draft.fields[0]
+            self.assertEqual(candidate.meaning, "客户标识")
+            self.assertEqual(candidate.value_type, "string")
+            self.assertIsNone(candidate.rule)
+            reasons = {item.property_path:item.reason for item in candidate.unknowns}
+            self.assertIn("按原始字符连接", reasons["rule"])
+            self.assertIn("是否去掉前导零待确认", reasons["rule"])
+            self.assertEqual(reasons["null_handling"], "模型未提供，待补充")
+            self.assertEqual(result.draft.relationships[0].join_rule, "按 id 相等连接")
+            self.assertEqual(result.draft.relationships[0].unknowns[0].reason, "粒度待确认")
+            self.assertEqual(result.status, "partial")
+            self.assertEqual(len(provider.calls), 1)
+            field["semantics"]["meaning"] = {"value":"客户标识", "unknown_reason":None, "unexpected":"must not be dropped"}
+            provider = ProposalProvider(json.dumps(payload, ensure_ascii=False))
+            with self.assertRaisesRegex(SemanticProposalFailure, "semantic_proposal_invalid"):
+                request_semantic_proposal(provider, plan, run.budget, user_id="synthetic", cancel_event=Event())
+
     def test_omitted_dimensions_preserve_existing_values_on_candidate_update(self):
         with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
             run, snapshot = self._running_semantic_case(store, ws, mission, refs)

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from contextox.model_tools import (
     CandidateRejected,
     ContextPlanV1,
+    FieldSemantics,
     HandleDenied,
     SemanticProposalV1,
     ToolAdapter,
@@ -582,7 +583,7 @@ def request_semantic_proposal(
             if content.startswith(fence) and content.endswith("\n```"):
                 content = content[len(fence):-4].strip()
                 break
-        decoded = json.loads(content)
+        decoded = _normalize_candidate_wrappers(json.loads(content))
         proposal = SemanticProposalV1.model_validate(decoded)
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
         errors = ["json_invalid"]
@@ -598,3 +599,67 @@ def request_semantic_proposal(
                       for error in exc.errors(include_input=False, include_context=False, include_url=False)[:8]]
         raise SemanticProposalFailure("semantic_proposal_invalid", completion, errors) from exc
     return proposal, completion
+
+
+def _candidate_dimension(value: Any) -> Any:
+    """Preserve incomplete candidate content without inventing a known value."""
+    if value is None or isinstance(value, str):
+        value = {"value": value, "unknown_reason": None}
+    if not isinstance(value, dict) or set(value) - {"value", "unknown_reason"}:
+        return value
+    known, reason = value.get("value"), value.get("unknown_reason")
+    if any(item is not None and not isinstance(item, str) for item in (known, reason)):
+        return value
+    known = known if known and known.strip() else None
+    reason = reason if reason and reason.strip() else None
+    if reason is not None and known is not None:
+        # The model explicitly declared uncertainty. Keep both pieces as a
+        # pending candidate note; never silently discard the uncertainty.
+        reason = f"模型候选（待确认）：{known}\n未决说明：{reason}"
+        known = None
+    return {"value": known, "unknown_reason": reason or ("模型未提供，待补充" if known is None else None)}
+
+
+def _normalize_candidate_wrappers(value: Any) -> Any:
+    """Accept lossless scalar/null/value wrappers before strict schema checks.
+
+    Only definition dimensions are handled here. Identities, evidence handles,
+    question targets, action and version are never inferred or repaired.
+    """
+    if not isinstance(value, dict):
+        return value
+    for field in value.get("fields", []) if isinstance(value.get("fields", []), list) else []:
+        if not isinstance(field, dict):
+            continue
+        if "semantics" in field and field["semantics"] is None:
+            field["semantics"] = {}
+        semantics = field.get("semantics")
+        if isinstance(semantics, dict):
+            for name in FieldSemantics.model_fields:
+                if name in semantics:
+                    semantics[name] = _candidate_dimension(semantics[name])
+    for relation in value.get("relationships", []) if isinstance(value.get("relationships", []), list) else []:
+        if not isinstance(relation, dict):
+            continue
+        for name in ("join_rule", "grain_notes"):
+            wrapped = relation.get(name)
+            if not isinstance(wrapped, dict) or set(wrapped) - {"value", "unknown_reason"}:
+                continue
+            dimension = _candidate_dimension(wrapped)
+            if any(item is not None and not isinstance(item, str) for item in dimension.values()):
+                continue
+            unknowns = relation.get("unknowns", [])
+            if not isinstance(unknowns, list):
+                continue
+            reason = dimension["unknown_reason"]
+            if reason is not None:
+                paths = {name, f"{relation.get('relationship_key')}.{name}"}
+                existing = [item for item in unknowns if isinstance(item, dict) and item.get("property_path") in paths]
+                if existing:
+                    # Keep an independently supplied pending note as well.
+                    if not all(isinstance(item.get("reason"), str) for item in existing):
+                        continue
+                    reason = "\n".join(dict.fromkeys([*(item["reason"] for item in existing), reason]))
+                relation["unknowns"] = [item for item in unknowns if item not in existing] + [{"property_path":name, "reason":reason}]
+            relation[name] = dimension["value"]
+    return value
