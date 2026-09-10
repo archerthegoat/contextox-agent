@@ -679,6 +679,26 @@ class MissionDraftAttempt(ContextOxModel):
         return self
 
 
+class MessageHistoryRef(ContextOxModel):
+    message_id: ID
+    sha256: Hash
+
+
+class ConversationGoal(ContextOxModel):
+    text: Annotated[StrictStr, Field(min_length=1, max_length=4096)]
+    message_refs: list[MessageHistoryRef] = Field(min_length=1, max_length=8)
+
+
+class ConversationMissionOrigin(ContextOxModel):
+    kind: Literal["conversation_message"] = "conversation_message"
+    conversation_id: ID
+    message_id: ID
+    message_sha256: Hash
+    client_request_id: ID
+    goal: ConversationGoal
+    source_refs: list[SourceIdentity] = Field(max_length=8)
+
+
 MissionStatus = Literal["active", "waiting_for_human", "blocked", "completed", "cancelled"]
 
 
@@ -692,11 +712,23 @@ class Mission(ContextOxModel):
     goal: Text
     completion_criteria: list[Text]
     scope_notes: list[Text]
-    original_attempt_id: ID
+    original_attempt_id: ID | None
+    conversation_origin: ConversationMissionOrigin | None = None
     source_refs: list[SourceIdentity] = Field(max_length=8)
+
+    @model_serializer(mode="wrap")
+    def serialize_origin(self, handler):
+        data = handler(self)
+        if self.conversation_origin is None:
+            data.pop("conversation_origin", None)
+        return data
 
     @model_validator(mode="after")
     def validate_source_workspace(self) -> Mission:
+        if (self.original_attempt_id is None) == (self.conversation_origin is None):
+            raise ValueError("Mission requires exactly one original source")
+        if self.conversation_origin and self.conversation_origin.source_refs != self.source_refs:
+            raise ValueError("Mission sources differ from its conversation origin")
         if any(reference.workspace_id != self.workspace_id for reference in self.source_refs):
             raise ValueError("Mission source references must match workspace_id")
         return self
@@ -1537,11 +1569,6 @@ class TaskMessage(ContextOxModel):
             if source is not None and source.workspace_id != self.workspace_id:
                 raise ValueError("message reference workspace mismatch")
         return self
-
-
-class MessageHistoryRef(ContextOxModel):
-    message_id: ID
-    sha256: Hash
 
 
 class TaskMessagePage(ContextOxModel):
@@ -2456,6 +2483,162 @@ class CandidateExportV1(ContextOxModel):
 class CandidateExportDocument(ContextOxModel):
     candidate: CandidateExportV1
     markdown: str
+
+
+class ConversationCreateRequest(ContextOxModel):
+    client_request_id: ID
+    title: ShortTitle = "新对话"
+    mission_id: ID | None = None
+    source_refs: list[SourceIdentity] = Field(default_factory=list, max_length=8)
+
+
+class WorkspaceConversation(ContextOxModel):
+    workspace_id: ID
+    conversation_id: ID
+    created_at: UTC
+    title: ShortTitle
+    state_version: PositiveInt
+    mission_id: ID | None = None
+    source_refs: list[SourceIdentity] = Field(default_factory=list, max_length=8)
+    goal: ConversationGoal | None = None
+
+
+class ConversationMessage(ContextOxModel):
+    workspace_id: ID
+    conversation_id: ID
+    message_id: ID
+    created_at: UTC
+    role: Literal["user", "assistant"]
+    content: Annotated[StrictStr, Field(min_length=1, max_length=32768)]
+    references: MessageReferences = Field(default_factory=list)
+    source_refs: list[SourceIdentity] = Field(default_factory=list, max_length=8)
+    sha256: Hash
+    turn_id: ID | None = None
+    task_message: TaskMessage | None = None
+
+
+class ConversationMessagePage(ContextOxModel):
+    items: list[ConversationMessage]
+    next_before_message_id: ID | None = None
+
+
+class ConversationMessageSendRequest(ContextOxModel):
+    kind: Literal["message"] = "message"
+    client_request_id: ID
+    expected_state_version: PositiveInt
+    content: Annotated[StrictStr, Field(min_length=1, max_length=4096)]
+    references: MessageReferences = Field(default_factory=list)
+    history_messages: list[MessageHistoryRef] = Field(default_factory=list, max_length=4)
+    source_refs: list[SourceIdentity] = Field(default_factory=list, max_length=8)
+    provider_send_confirmed: Literal[True]
+    goal: ConversationGoal | None = None
+    regenerate_from_run_id: ID | None = None
+
+    @model_validator(mode="after")
+    def validate_content(self):
+        if not self.content.strip():
+            raise ValueError("message must contain nonblank text")
+        if len({r.message_id for r in self.history_messages}) != len(self.history_messages):
+            raise ValueError("duplicate history message")
+        return self
+
+
+class DiscussionAnswerSuggestion(ContextOxModel):
+    origin_run_id: ID
+    clarification_id: ID
+    request_sha256: Hash
+    question_index: Count
+    disposition: Literal["answered", "unknown"] | None = None
+    answer: Annotated[StrictStr, Field(max_length=2048)] | None = None
+    respondent: Annotated[StrictStr, Field(max_length=128)] | None = None
+    basis: Annotated[StrictStr, Field(max_length=2048)] | None = None
+    blocker: AnswerBlocker | None = None
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list, max_length=8)
+    targets: list[DefinitionTarget] = Field(default_factory=list, max_length=20)
+
+
+class DiscussionOutput(ContextOxModel):
+    public_reply: Annotated[StrictStr, Field(min_length=1, max_length=16384)]
+    references: MessageReferences = Field(default_factory=list)
+    next_action: Literal["discuss", "start_task"] = "discuss"
+    title: ShortTitle | None = None
+    goal: ConversationGoal | None = None
+    answer_suggestions: list[DiscussionAnswerSuggestion] = Field(default_factory=list, max_length=20)
+
+
+class DiscussionProviderReceipt(ContextOxModel):
+    workspace_id: ID
+    conversation_id: ID
+    turn_id: ID
+    receipt_id: ID
+    created_at: UTC
+    request_sha256: Hash
+    p0_sha256: Hash
+    output_schema_sha256: Hash
+    config: ProviderConfigSnapshot
+    status: ProviderReceiptStatus
+    input_tokens: Count | None
+    output_tokens: Count | None
+    cache_hit_tokens: Count | None = None
+    cache_miss_tokens: Count | None = None
+    error_code: Key | None = None
+
+    @computed_field
+    @property
+    def usage_status(self) -> Literal["known", "missing"]:
+        return "known" if self.input_tokens is not None and self.output_tokens is not None else "missing"
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_usage(cls, value):
+        if isinstance(value, dict) and "usage_status" in value:
+            expected = "known" if value.get("input_tokens") is not None and value.get("output_tokens") is not None else "missing"
+            if value["usage_status"] != expected:
+                raise ValueError("receipt usage mismatch")
+            value = {k: v for k, v in value.items() if k != "usage_status"}
+        return value
+
+
+class DiscussionTurn(ContextOxModel):
+    workspace_id: ID
+    conversation_id: ID
+    turn_id: ID
+    created_at: UTC
+    started_at: UTC | None = None
+    finished_at: UTC | None = None
+    input_message_id: ID
+    request: ConversationMessageSendRequest
+    request_sha256: Hash
+    status: Literal["queued", "running", "succeeded", "blocked", "failed", "cancelled"]
+    config: ProviderConfigSnapshot
+    p0_sha256: Hash
+    output_schema_sha256: Hash
+    mission_id: ID | None = None
+    mission_state_version: PositiveInt | None = None
+    output: DiscussionOutput | None = None
+    provider_receipt: DiscussionProviderReceipt | None = None
+    run_id: ID | None = None
+    error_code: Key | None = None
+    handoff_error_code: Key | None = None
+
+
+class DiscussionContext(ContextOxModel):
+    conversation: WorkspaceConversation
+    input: ConversationMessage
+    history: list[ConversationMessage] = Field(max_length=4)
+    goal: ConversationGoal | None = None
+    source_refs: list[SourceIdentity] = Field(max_length=8)
+    source_profiles: list[ProfilePackV1] = Field(default_factory=list, max_length=8)
+    excerpts: list[SourceExcerpt] = Field(default_factory=list, max_length=16)
+    allowed_references: MessageReferences = Field(default_factory=list)
+    mission: MissionSnapshot | None = None
+
+
+class ConversationSubmissionReceipt(ContextOxModel):
+    conversation: WorkspaceConversation
+    input_message: ConversationMessage
+    discussion_turn: DiscussionTurn | None = None
+    run: RunSnapshot | None = None
 
 
 # Resolve the forward references used by the nested shared models at import
