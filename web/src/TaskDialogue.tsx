@@ -26,15 +26,18 @@ export function dialogueSources(...payloads: unknown[]): SourceIdentity[] {
   return sources;
 }
 
-export function referenceLabel(ref: MessageReference): string {
+export function referenceLabel(ref: MessageReference, sources: readonly {revision_id:string; original_name:string}[] = []): string {
+  const sourceName = (revisionId:string) => sources.find(source => source.revision_id === revisionId)?.original_name ?? "资料";
   switch (ref.kind) {
-    case "draft_field": return `字段 ${ref.field_key} · v${ref.draft_version}`;
-    case "draft_relationship": return `关系 ${ref.relationship_key} · v${ref.draft_version}`;
-    case "source_column": return `${ref.table_id || "根表"}.${ref.column_name}`;
+    case "draft_field": return `@字段/${ref.field_key} · v${ref.draft_version}`;
+    case "draft_relationship": return `@关系/${ref.relationship_key} · v${ref.draft_version}`;
+    case "source_column": return `@${sourceName(ref.source_ref.revision_id)}${ref.table_id}/${ref.column_name}`;
     case "source_excerpt": {
       const locator = ref.evidence_ref.locator;
-      return locator.kind === "json_pointer" ? `资料 ${locator.pointer || "/"}` :
-        locator.kind === "text_lines" ? `资料行 ${locator.line_start}–${locator.line_end}` : `资料行 ${locator.row_start}–${locator.row_end}`;
+      const name = `@${sourceName(ref.evidence_ref.revision_id)}`;
+      return locator.kind === "json_pointer" ? `${name}${locator.pointer || "/"}` :
+        locator.kind === "text_lines" ? `${name}/行${locator.line_start}–${locator.line_end}` :
+        locator.column ? `${name}/${locator.column}` : `${name}/行${locator.row_start}–${locator.row_end}`;
     }
   }
 }
@@ -44,7 +47,8 @@ export function dialogueError(error: unknown, operation: "read" | "send" = "send
   return ({
     task_dialogue_not_implemented: "当前资料库尚未启用任务对话写入。已有历史仍可查看。",
     task_waiting_for_review: "任务正在等待业务裁决，请先查看待回应事项。",
-    previous_outcome_unresolved: "上次分析的结果或用量仍未核清，暂时不能继续发送。",
+    previous_outcome_unresolved: "上次结果仍需核对；若本轮显示可重新生成，请使用该入口明确发送。",
+    regeneration_not_allowed: "当前执行不满足重新生成条件，请刷新核对已有结果。",
     workspace_store_busy: "已有分析正在运行，请稍后再发送；草稿已保留。",
     state_conflict: "任务状态或历史内容已变化，请刷新并重新确认此次发送。",
     message_reference_stale: "引用的草案版本已变化，请重新选择当前字段或关系。",
@@ -130,18 +134,28 @@ export function useTaskDialogue(state: Path2WorkbenchState) {
   const adopt = async (receipt: components["schemas"]["TaskMessageSendReceipt"]) => {
     if (current.current !== scope || receipt.run.workspace_id !== ws || receipt.run.mission_id !== mid || receipt.input_message.run_id !== receipt.run.run_id) return;
     sessionStorage.removeItem(storageKey);
-    pendingRequest.current = null; setPendingId(null); setText(""); setReferences([]); setHistoryTouched(false);
+    const preserveDraft = Boolean(pendingRequest.current?.regenerate_from_run_id);
+    pendingRequest.current = null; setPendingId(null);
+    if (!preserveDraft) {setText(""); setReferences([]);}
+    setHistoryTouched(false);
     stateRef.current.adoptDialogueRun(receipt.run);
     await refresh();
   };
-  const submit = async (repeat = false) => {
+  const submit = async (repeat = false, regenerate = false) => {
     if (!ws || !mid || sendingRef.current || (!repeat && (!scopeReady || missingSources.length > 0))) return;
     const mission = stateRef.current.missionSnapshot?.mission ?? stateRef.current.selectedMission;
     if (!mission) return;
+    const oldRun = stateRef.current.runSnapshot;
+    if (regenerate && (!oldRun?.regeneration_allowed || oldRun.mission_id !== mid || oldRun.workspace_id !== ws)) return;
+    const previousMessage = regenerate ? messages.find(message => message.run_id === oldRun?.run_id && message.role === "user") : null;
     const request: SendRequest | null = repeat ? pendingRequest.current : {
       kind: "message", client_request_id: crypto.randomUUID(), expected_state_version: mission.state_version,
-      content: text, references, history_messages: messages.filter(m => historyIds.includes(m.message_id)).map(m => ({message_id: m.message_id, sha256: m.sha256})),
+      content: regenerate ? previousMessage?.content ?? mission.goal : text,
+      references: regenerate ? previousMessage?.references ?? [] : references,
+      history_messages: messages.filter(m => historyIds.includes(m.message_id) && m.message_id !== previousMessage?.message_id).map(m => ({message_id: m.message_id, sha256: m.sha256})),
       source_refs: stateRef.current.selectedSourceRefs, provider_send_confirmed: true,
+      ...(oldRun ? approvedRunContext(oldRun) : {}),
+      ...(regenerate && oldRun ? {regenerate_from_run_id: oldRun.run_id} : {}),
     };
     if (!request || (!repeat && pendingId)) return;
     sendingRef.current = true; setSending(true);
@@ -223,16 +237,20 @@ export function TaskConversation({ state, dialogue: d, onReference, onHistory, o
       {d.messages.map(message => <article className={`conversation-message message-${message.role}`} key={message.message_id}>
         <header><strong>{message.role === "user" ? "你" : "数契 Agent"}</strong><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})}</time></header>
         <p>{message.content}</p>
-        {message.references.map((ref, index) => <button className="reference-chip" key={index} onClick={() => onReference(ref)}>{referenceLabel(ref)}</button>)}
+        {message.references.map((ref, index) => <button className="reference-chip" key={index} onClick={() => onReference(ref)}>{referenceLabel(ref, state.sourceState.items)}</button>)}
       </article>)}
       {run && <div className="conversation-activity" role="status">
         <strong>{active ? "正在分析本轮问题…" : `本轮：${statusLabel(run.status)}`}</strong>
         {active ? <p>可以继续编辑草稿，当前分析结束后再发送。</p> : !run.final_output && <p>{finalizing ? "正在核对本轮答复与任务状态…" : waiting ? "本轮已产生待回应事项（系统状态）。" : "本轮未形成可读取的公开答复，可查看结构化结果。"}</p>}
         {run.error_code && <p>{run.error_code === "context_budget_exceeded" ? "本轮触及上下文预算，已停止；已有结果保留。" : `分析停止：${run.error_code}`}</p>}
-        {state.latestDraft && <button onClick={onResults}>查看字段与关系草案 · v{state.latestDraft.version}</button>}
+        {state.latestDraft && <button onClick={onResults}>查看字段与关系草案 · v{state.latestDraft.version}{state.latestDraft.status === "draft" ? " · 待完善" : ""}</button>}
         {state.clarifications.length > 0 && <button onClick={onClarifications}>回答与批准</button>}
         {waiting && <p>请打开左侧“待澄清”，完成整份回答与批准后继续分析。普通消息不能代替批准。</p>}
         {active && <button disabled={state.cancelAction.status === "submitting"} onClick={() => void state.cancelActiveRun()}>停止本轮分析</button>}
+        {run.regeneration_allowed && !active && <div>
+          <p>本轮生成失败，已确认未进入草案写入。重新生成会再次发送获准资料，上次未知用量仍保留。</p>
+          <button disabled={blocked || d.sending || Boolean(d.pendingId)} onClick={() => void d.submit(false, true)}>重新生成并发送</button>
+        </div>}
       </div>}
     </div>
     <form className="conversation-composer" onSubmit={event => {event.preventDefault(); void d.submit();}}>
@@ -258,6 +276,19 @@ export function TaskConversation({ state, dialogue: d, onReference, onHistory, o
       <button className="path2-primary-button" disabled={blocked || d.sending || Boolean(d.pendingId) || !d.text.trim()} type="submit">{d.sending ? "正在发送…" : active ? "分析结束后可发送" : waiting ? "等待业务裁决" : "发送并分析"}</button>
     </form>
   </div>;
+}
+
+export function approvedRunContext(run: RunSnapshot): Partial<SendRequest> {
+  const approved = run.approved_answers ?? [];
+  const context: Partial<SendRequest> = {};
+  if (approved.length && run.draft) {
+    context.approved_answers = approved.map(item => ({origin_run_id:item.answer.origin_run_id,
+      clarification_id:item.answer.clarification_id, answer_version:item.answer.version,
+      answer_sha256:item.answer.sha256, approval_id:item.approval.approval_id}))
+      .sort((a,b) => a.origin_run_id.localeCompare(b.origin_run_id) || a.clarification_id.localeCompare(b.clarification_id));
+    context.expected_draft = {draft_id:run.draft.draft_id, version:run.draft.version, sha256:run.draft.sha256};
+  }
+  return context;
 }
 
 export function TaskExecutionHistory({ state, dialogue: d }: {state: Path2WorkbenchState; dialogue: DialogueState}) {

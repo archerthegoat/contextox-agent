@@ -7,7 +7,9 @@ from uuid import uuid4
 
 import test_agent as fixtures
 from contextox import agent
-from contextox.models import SemanticApplicationInput, TaskMessageSendRequest
+from contextox.models import (SemanticApplicationInput, TaskMessageSendRequest,
+    ClarificationAnswerSaveRequest, ClarificationAnswerApproveRequest, canonical_sha256)
+from contextox.clarifications import draft_ref, refs as answer_refs
 from contextox.provider import ProviderCompletion, ProviderTimeoutUnknownError, ProviderCancelledError
 
 
@@ -36,6 +38,78 @@ class DemoProvider(fixtures.FakeProvider):
 
 
 class DemoRecoveryTests(unittest.TestCase):
+    def test_two_rounds_apply_an_approved_answer_and_keep_clickable_source_identity(self):
+        class TaskProvider(DemoProvider):
+            def complete(self, messages, **kwargs):
+                packet = json.loads(messages[1]["content"])
+                source = packet["sources"][0]
+                evidence = source["profile_pack"]["tables"][0]["evidence_handles"]
+                approved = packet["approved_answers"]
+                field = {"field_key":"customer_id", "name":"客户标识",
+                    "source_column_handles":[source["tables"][0]["columns"][0]["column_handle"]],
+                    "evidence_status":"candidate", "evidence_handles":evidence,
+                    "semantics": {"rule":{"value":approved[0]["items"][0]["answer"], "unknown_reason":None}}
+                                 if approved else {"value_type":{"value":"string", "unknown_reason":None}}}
+                relation = packet["prospective_relationships"][0]
+                payload = {"version":"v1", "action":"draft_only" if approved else "draft_and_clarify",
+                    "public_answer":"已更新候选，引用 @" + evidence[0], "fields":[field], "evidence_handles":evidence}
+                if not approved:
+                    payload["relationships"] = [{**{name:relation[name] for name in (
+                        "left", "right", "left_column_handles", "right_column_handles", "observed_cardinality", "evidence_handles")},
+                        "relationship_key":"customer_link", "evidence_status":"candidate"}]
+                    payload["questions"] = [{"question":"客户标识是否保留前导零？", "why_needed":"需要业务决定匹配规则。",
+                        "expected_answer_type":"text", "targets":[{"kind":"field", "key":"customer_id", "property":"rule"}]}]
+                self.completions.append(completed(json.dumps(payload, ensure_ascii=False)))
+                return super().complete(messages, **kwargs)
+
+        with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, sources):
+            mid = mission.mission_id
+            first, _ = store.send_task_message(ws, mid, self.request(store, ws, mid, sources), demo_fast=True)
+            provider = TaskProvider([])
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(store, ws, mid, first.run.run_id, Event())
+            result = store.get_run_snapshot(ws, mid, first.run.run_id)
+            self.assertEqual(result.status, "waiting_for_human", result.error_code)
+            self.assertEqual(len(result.draft.relationships), 1)
+            question = result.clarifications[0]
+            snapshot = store.get_mission_snapshot(ws, mid)
+            saved, _ = store.save_clarification_answer(ws, mid, result.run_id, question.clarification_id,
+                ClarificationAnswerSaveRequest(client_request_id=str(uuid4()), expected_latest_version=0,
+                    expected_state_version=snapshot.mission.state_version, request_sha256=canonical_sha256(question),
+                    review_draft=draft_ref(snapshot.draft), source_refs=sources, items=[{
+                        "question_index":0, "disposition":"answered", "answer":"客户标识保留前导零。",
+                        "respondent":"合成案例审核人", "basis":"合成业务规则", "evidence_refs":[],
+                        "targets":[{"kind":"field", "key":"customer_id", "property":"rule"}], "blocker":None}]))
+            store.approve_clarification_answer(ws, mid, result.run_id, question.clarification_id, saved.answer.version,
+                ClarificationAnswerApproveRequest(client_request_id=str(uuid4()),
+                    expected_state_version=store.get_mission_snapshot(ws, mid).mission.state_version,
+                    expected_answer_sha256=saved.answer.sha256))
+            from contextox.models import ApprovedAnswerSnapshot
+            case = store.list_clarification_cases(ws, mid).items[0]
+            approved = ApprovedAnswerSnapshot(request=case.request, answer=case.latest_answer, approval=case.latest_approval)
+            request = self.request(store, ws, mid, sources).model_copy(update={
+                "approved_answers":answer_refs([approved]), "expected_draft":draft_ref(result.draft)})
+            second, _ = store.send_task_message(ws, mid, request, demo_fast=True)
+            with patch.object(agent, "get_provider", return_value=provider):
+                agent.run_agent(store, ws, mid, second.run.run_id, Event())
+            changed = store.get_run_snapshot(ws, mid, second.run.run_id)
+            self.assertEqual(changed.status, "partial", changed.error_code)
+            self.assertEqual(changed.draft.version, result.draft.version + 1)
+            self.assertEqual(changed.draft.fields[0].rule, "客户标识保留前导零。")
+            self.assertEqual(changed.draft.fields[0].value_type, "string")
+            self.assertEqual(changed.draft.relationships, result.draft.relationships)
+            self.assertEqual(len(provider.calls), 2)
+            messages = store.list_task_messages(ws, mid).items[-4:]
+            self.assertEqual([message.role for message in messages], ["user","assistant","user","assistant"])
+            self.assertNotIn("evidence_", messages[-1].content)
+            self.assertIn("@", messages[-1].content)
+            ref = messages[-1].references[0].evidence_ref
+            self.assertEqual(ref.revision_id, sources[0].revision_id)
+            self.assertTrue(store.read_source_excerpt(ws, ref.revision_id, ref.locator).text)
+            impact = store.get_answer_impact(ws, mid, changed.run_id)
+            self.assertTrue(any(change.question_refs for change in impact.changes))
+            self.assertNotEqual(store.get_mission_snapshot(ws, mid).mission.status, "completed")
+
     def test_known_format_failure_has_one_correction_with_frozen_context_and_shared_deadline(self):
         with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
             run = store.start_run(ws, mission.mission_id, fixtures._start_request(mission, refs), demo_fast=True)

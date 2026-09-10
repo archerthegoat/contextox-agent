@@ -390,6 +390,7 @@ describe("Path 2 Workbench state boundaries", () => {
     const missionMarkup = renderToStaticMarkup(createElement(Path2Workbench, { state: stopped, activeArea: "mission" }));
     expect(missionMarkup).toContain("table_not_found");
     expect(render({ ...stopped, runSnapshot: { ...run, status: "failed", error_code: "interrupted_without_receipt" } })).toContain("不要直接重试");
+    expect(render({ ...stopped, runSnapshot: { ...run, status: "failed", error_code: "provider_timeout_unknown", regeneration_allowed:true } })).toContain("明确重新生成");
   });
 
   it("rejects late responses once the Workspace epoch or identity changes", () => {

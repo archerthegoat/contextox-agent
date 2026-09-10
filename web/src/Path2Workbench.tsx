@@ -3782,7 +3782,9 @@ function RunFailureNotice({ run }: { run: RunSnapshot }) {
     .includes(run.error_code ?? "");
   const unknownOutcome = run.error_code?.includes("outcome_unknown") ||
     run.error_code === "interrupted_without_receipt";
-  const guidance = run.error_code === "context_too_broad"
+  const guidance = run.regeneration_allowed
+    ? "本轮生成已停止，尚未进入领域写入。可以在任务对话中明确重新生成；原回执和未知用量继续保留。"
+    : run.error_code === "context_too_broad"
     ? "当前请求、草案、未知项和引用证据在保留后仍超过上限。请明确缩小本轮来源、表或字段范围，再开始新的 Run。关键证据没有被静默裁掉。"
     : lookupFailure
     ? "读取资料时未能找到指定的表、字段或片段。请核对资料与定位方式；修正后，在任务中重新选择来源并明确开始新的 Run。"

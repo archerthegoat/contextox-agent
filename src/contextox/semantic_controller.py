@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from threading import Event
 from typing import Any, Protocol
 
@@ -273,16 +274,21 @@ def normalize_semantic_proposal(
                 proposal,
             )
         pair = adapter.draft_pair(adapter.current_draft)
+        public_answer, embedded_refs = _public_answer(adapter, proposal.public_answer)
+        evidence = [*_resolved_evidence(adapter, proposal.evidence_handles), *embedded_refs,
+                    *(ref for field in fields for ref in field.source_refs),
+                    *(ref for relationship in relationships for ref in relationship.source_refs)]
+        evidence = list({canonical_sha256(ref): ref for ref in evidence}.values())
         return SemanticApplicationInput(
             action=proposal.action,
-            public_answer=proposal.public_answer,
+            public_answer=public_answer,
             expected_version=pair["version"],
             expected_sha256=pair["sha256"],
             fields=fields,
             relationships=relationships,
             unresolved_items=unresolved_items,
             questions=questions,
-            source_refs=_resolved_evidence(adapter, proposal.evidence_handles),
+            source_refs=evidence,
         )
     except SemanticProposalFailure:
         raise
@@ -290,6 +296,40 @@ def normalize_semantic_proposal(
         raise SemanticProposalFailure("semantic_handle_invalid") from exc
     except (CandidateRejected, ValidationError, TypeError, ValueError) as exc:
         raise SemanticProposalFailure("semantic_proposal_invalid") from exc
+
+
+def _public_answer(adapter: ToolAdapter, text: str) -> tuple[str, list[EvidenceRef]]:
+    """Turn current opaque capabilities into display labels, retaining evidence."""
+    evidence: list[EvidenceRef] = []
+
+    def replace(match: re.Match) -> str:
+        handle = match.group(0).removeprefix("@")
+        kind = handle.split("_", 1)[0]
+        value = adapter.resolve(handle, kind)
+        if kind == "draft":
+            return "@草案"
+        ref = value if kind in {"source", "evidence"} else value.source_ref
+        source_handle = adapter.register("source", adapter._source(ref))
+        name = next(source["name"] for source in adapter.catalog if source["source_handle"] == source_handle)
+        if kind == "evidence":
+            evidence.append(value)
+            locator = value.locator
+            if locator.kind == "json_pointer":
+                name += locator.pointer or "/"
+            elif locator.kind == "csv_rows" and locator.column:
+                name += "/" + locator.column
+            else:
+                start, end = ((locator.line_start, locator.line_end) if locator.kind == "text_lines"
+                              else (locator.row_start, locator.row_end))
+                name += f"/行{start}–{end}"
+        elif kind == "column":
+            name += (value.table_id or "") + "/" + value.column
+        elif kind == "table":
+            name += value.table_id
+        return "@" + name
+
+    rendered = re.sub(r"@?\b(?:evidence|source|column|table|draft)_[a-f0-9]{32}\b", replace, text)
+    return rendered, evidence
 
 
 def _source_plans(adapter: ToolAdapter, snapshot: ContextSnapshot, store: Any) -> list[dict[str, Any]]:

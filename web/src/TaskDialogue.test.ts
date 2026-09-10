@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { dialogueError, dialogueSources } from "./TaskDialogue";
+import { dialogueError, dialogueSources, referenceLabel } from "./TaskDialogue";
 
 const source = {workspace_id:"workspace-a", source_id:"source-a", revision_id:"revision-a", sha256:"a".repeat(64)};
 
 describe("dialogue source authorization preflight", () => {
+  it("labels an exact source excerpt compactly without exposing an opaque handle", () => {
+    expect(referenceLabel({kind:"source_excerpt", evidence_ref:{...source,
+      locator:{kind:"text_lines", line_start:1, line_end:2}}}, [{revision_id:"revision-a", original_name:"口径说明.md"}]))
+      .toBe("@口径说明.md/行1–2");
+    expect(referenceLabel({kind:"source_column", source_ref:source, table_id:"/orders", column_name:"amount"},
+      [{revision_id:"revision-a", original_name:"data.json"}])).toBe("@data.json/orders/amount");
+  });
   it("does not label an incomplete read as an unknown send outcome", () => {
     const error = new Error("task readback failed");
     expect(dialogueError(error, "read")).toContain("对话读取尚未核对完成");
