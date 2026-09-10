@@ -83,7 +83,7 @@ class HandoffTests(unittest.TestCase):
         receipt, _ = self.submit(payload)
         handoff.claim_analysis(self.store, self.ws, self.cid, payload.client_request_id)
         failed = handoff.record_analysis(self.store, self.ws, self.cid, payload.client_request_id,
-            state="failed", error_code="runtime_busy")
+            state="failed", expected_analysis_state="claimed", error_code="runtime_busy")
         self.assertTrue(failed.answers_approved)
         self.assertEqual(handoff.read(self.store, self.ws, self.cid, payload.client_request_id).analysis_state, "failed")
         retry, yes = handoff.claim_analysis(self.store, self.ws, self.cid, payload.client_request_id)
@@ -92,7 +92,7 @@ class HandoffTests(unittest.TestCase):
         submission, created = self.store.send_task_message(self.ws, self.mid, retry.send_request)
         self.assertTrue(created)
         started = handoff.record_analysis(self.store, self.ws, self.cid, payload.client_request_id,
-            state="started", run_id=submission.run.run_id)
+            state="started", expected_analysis_state="claimed", run_id=submission.run.run_id)
         self.assertTrue(started.analysis_started)
         self.assertFalse(handoff.claim_analysis(self.store, self.ws, self.cid, payload.client_request_id)[1])
         self.assertEqual(self.store.send_task_message(self.ws, self.mid, retry.send_request)[0].run.run_id, started.run_id)
@@ -102,7 +102,7 @@ class HandoffTests(unittest.TestCase):
         self.submit(payload)
         handoff.claim_analysis(self.store, self.ws, self.cid, payload.client_request_id)
         handoff.record_analysis(self.store, self.ws, self.cid, payload.client_request_id,
-            state="unknown", error_code="state_write_outcome_unknown")
+            state="unknown", expected_analysis_state="claimed", error_code="state_write_outcome_unknown")
         replay, created = self.submit(payload)
         self.assertFalse(created)
         self.assertEqual(replay.analysis_state, "unknown")
@@ -154,6 +154,57 @@ class HandoffTests(unittest.TestCase):
         self.assertIsNone(step.save_request)
         self.assertIsNone(step.approve_request)
         self.assertEqual(step.approved_answer.approval_id, approved.approval.approval_id)
+
+    def test_actual_missing_approval_and_subrequest_are_not_reported_approved(self):
+        payload = self.payload()
+        receipt, _ = self.submit(payload)
+        with closing(sqlite3.connect(self.store.db_path)) as connection, connection:
+            connection.execute("DELETE FROM clarification_answer_approvals WHERE workspace_id=? AND mission_id=?", (self.ws, self.mid))
+        with self.assertRaises(db.WorkspaceStoreError):
+            handoff.read(self.store, self.ws, self.cid, payload.client_request_id)
+        # Restoring the exact approved R2 row makes the receipt valid again.
+        approval = receipt.answer_steps[0].approve_receipt.approval
+        with closing(sqlite3.connect(self.store.db_path)) as connection, connection:
+            connection.execute("INSERT INTO clarification_answer_approvals VALUES (?,?,?,?,?,?,?,?,?)", (self.ws, self.mid,
+                approval.origin_run_id, approval.clarification_id, approval.answer_version,
+                approval.answer_sha256, approval.approval_id, approval.approved_by, approval.approved_at.isoformat()))
+        self.assertTrue(handoff.read(self.store, self.ws, self.cid, payload.client_request_id).answers_approved)
+        with closing(sqlite3.connect(self.store.db_path)) as connection, connection:
+            connection.execute("DELETE FROM clarification_submissions WHERE workspace_id=? AND mission_id=? AND client_request_id=?",
+                (self.ws, self.mid, receipt.answer_steps[0].save_request.client_request_id))
+        with self.assertRaises(db.WorkspaceStoreError):
+            handoff.read(self.store, self.ws, self.cid, payload.client_request_id)
+
+    def test_unknown_cannot_downgrade_and_stale_observer_cannot_update(self):
+        payload = self.payload()
+        receipt, _ = self.submit(payload)
+        handoff.claim_analysis(self.store, self.ws, self.cid, payload.client_request_id)
+        handoff.record_analysis(self.store, self.ws, self.cid, payload.client_request_id,
+            state="unknown", expected_analysis_state="claimed", error_code="state_write_outcome_unknown")
+        with self.assertCode("state_conflict"):
+            handoff.record_analysis(self.store, self.ws, self.cid, payload.client_request_id,
+                state="failed", expected_analysis_state="claimed", error_code="agent_start_failed")
+        with self.assertCode("previous_outcome_unresolved"):
+            handoff.record_analysis(self.store, self.ws, self.cid, payload.client_request_id,
+                state="failed", expected_analysis_state="unknown", error_code="agent_start_failed")
+        self.assertFalse(handoff.claim_analysis(self.store, self.ws, self.cid, payload.client_request_id)[1])
+        submission, _ = self.store.send_task_message(self.ws, self.mid, receipt.send_request)
+        started = handoff.record_analysis(self.store, self.ws, self.cid, payload.client_request_id,
+            state="started", expected_analysis_state="unknown", run_id=submission.run.run_id)
+        self.assertTrue(started.analysis_started)
+        with self.assertCode("state_conflict"):
+            handoff.record_analysis(self.store, self.ws, self.cid, payload.client_request_id,
+                state="failed", expected_analysis_state="started", run_id=submission.run.run_id,
+                error_code="late_worker_error")
+
+    def test_exact_old_handoff_remains_readable_after_new_answer_version(self):
+        payload = self.payload()
+        receipt, _ = self.submit(payload)
+        saved, _ = self.save()
+        self.assertEqual(saved.answer.version, 2)
+        read = handoff.read(self.store, self.ws, self.cid, payload.client_request_id)
+        self.assertEqual(read, receipt)
+        self.assertEqual(read.answer_steps[0].approved_answer.answer_version, 1)
 
     def test_changed_conversation_scope_cannot_claim_old_handoff(self):
         payload = self.payload()

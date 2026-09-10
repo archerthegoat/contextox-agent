@@ -62,6 +62,89 @@ def _parent(store, connection, ws, cid):
     return row, mission
 
 
+def _validate_answer_steps(store, connection, payload, receipt):
+    """Reconcile immutable R2 evidence, never substitute a newer answer version."""
+    from contextox import store as db
+    ws, mid = receipt.workspace_id, receipt.mission_id
+    reviewed = {(a.origin_run_id, a.clarification_id): a for a in payload.reviewed_answers}
+    if [(s.origin_run_id, s.clarification_id) for s in receipt.answer_steps] != sorted(reviewed):
+        raise db.WorkspaceStoreUnavailableError()
+    state_version = payload.expected_state_version
+    request_ids = {payload.client_request_id, receipt.send_request.client_request_id}
+    if len(request_ids) != 2:
+        raise db.WorkspaceStoreUnavailableError()
+    for step in receipt.answer_steps:
+        key = (step.origin_run_id, step.clarification_id)
+        original, ref = reviewed[key], step.approved_answer
+        if (ref.origin_run_id, ref.clarification_id) != key:
+            raise db.WorkspaceStoreUnavailableError()
+        answer = r2.load_version(connection, ws, mid, *key, ref.answer_version)
+        approval = r2.load_approval(connection, answer)
+        if (approval is None or answer.sha256 != ref.answer_sha256
+                or approval.approval_id != ref.approval_id
+                or answer.request_sha256 != original.request_sha256
+                or {canonical_sha256(s) for s in answer.source_refs}
+                   != {canonical_sha256(s) for s in payload.source_refs}):
+            raise db.WorkspaceStoreUnavailableError()
+        if original.items is not None:
+            save, saved = step.save_request, step.save_receipt
+            if save is None or saved is None:
+                raise db.WorkspaceStoreUnavailableError()
+            expected = ClarificationAnswerSaveRequest(
+                client_request_id=save.client_request_id, expected_latest_version=original.expected_latest_version,
+                expected_state_version=state_version, request_sha256=original.request_sha256,
+                review_draft=payload.expected_draft, source_refs=payload.source_refs, items=original.items)
+            if (save != expected or answer.version != original.expected_latest_version + 1
+                    or answer.items != original.items or answer.review_draft != payload.expected_draft
+                    or saved.answer != answer or saved.approval is not None
+                    or saved.operation != "save" or saved.client_request_id != save.client_request_id
+                    or saved.mission_state_version != state_version + 1):
+                raise db.WorkspaceStoreUnavailableError()
+            state_version += 1
+            _validate_subrequest(store, connection, ws, mid, key, "save", save, None, answer)
+            requests = [save]
+        else:
+            if (step.save_request is not None or step.save_receipt is not None
+                    or answer.version != original.saved_answer.version
+                    or answer.sha256 != original.saved_answer.sha256):
+                raise db.WorkspaceStoreUnavailableError()
+            requests = []
+        if original.saved_answer and original.saved_answer.approval_id is not None:
+            if (approval.approval_id != original.saved_answer.approval_id
+                    or step.approve_request is not None or step.approve_receipt is not None):
+                raise db.WorkspaceStoreUnavailableError()
+        else:
+            approve, approved = step.approve_request, step.approve_receipt
+            if approve is None or approved is None:
+                raise db.WorkspaceStoreUnavailableError()
+            if (approve.expected_state_version != state_version
+                    or approve.expected_answer_sha256 != answer.sha256
+                    or approved.operation != "approve" or approved.client_request_id != approve.client_request_id
+                    or approved.answer != answer or approved.approval != approval
+                    or approved.mission_state_version != state_version + 1):
+                raise db.WorkspaceStoreUnavailableError()
+            state_version += 1
+            _validate_subrequest(store, connection, ws, mid, key, "approve", approve, answer.version, answer)
+            requests.append(approve)
+        for request in requests:
+            if request.client_request_id in request_ids:
+                raise db.WorkspaceStoreUnavailableError()
+            request_ids.add(request.client_request_id)
+    if receipt.send_request.expected_state_version != state_version:
+        raise db.WorkspaceStoreUnavailableError()
+
+
+def _validate_subrequest(store, connection, ws, mid, key, operation, request, version, answer):
+    from contextox import store as db
+    digest = canonical_sha256({"operation": operation, "origin_run_id": key[0],
+        "clarification_id": key[1], "answer_version": version, "request": request.model_dump(mode="json")})
+    submitted = r2.submission(store, connection, ws, mid, request.client_request_id, expected_hash=digest)
+    # R2 replay reflects the *current* Mission state and approval, so only the
+    # immutable request operation/identity and answer are compared here.
+    if submitted is None or submitted.operation != operation or submitted.answer != answer:
+        raise db.WorkspaceStoreUnavailableError()
+
+
 def _read(store, connection, ws, cid, request_id, expected_hash=None):
     from contextox import store as db
     _, mission = _parent(store, connection, ws, cid)
@@ -92,6 +175,12 @@ def _read(store, connection, ws, cid, request_id, expected_hash=None):
             or {(s.origin_run_id, s.clarification_id) for s in receipt.answer_steps}
                != {(a.origin_run_id, a.clarification_id) for a in payload.reviewed_answers}):
         raise db.WorkspaceStoreUnavailableError()
+    _validate_answer_steps(store, connection, payload, receipt)
+    if receipt.run_id is not None:
+        submitted = store._message_submission(connection, ws, mission.mission_id,
+            receipt.send_request.client_request_id, receipt.send_request)
+        if submitted is None or submitted.run.run_id != receipt.run_id:
+            raise db.WorkspaceStoreUnavailableError()
     store._validate_source_identities(connection, ws, payload.source_refs)
     return receipt
 
@@ -222,7 +311,7 @@ def claim_analysis(store, workspace_id, conversation_id, request_id):
         return receipt, True
 
 
-def record_analysis(store, workspace_id, conversation_id, request_id, *, state, run_id=None, error_code=None):
+def record_analysis(store, workspace_id, conversation_id, request_id, *, state, expected_analysis_state, run_id=None, error_code=None):
     """Persist the reconciled Runtime outcome; never dispatch model work here."""
     from contextox import store as db
     if state not in {"started", "failed", "unknown"}:
@@ -232,6 +321,16 @@ def record_analysis(store, workspace_id, conversation_id, request_id, *, state, 
         receipt = _read(store, connection, workspace_id, conversation_id, request_id)
         if receipt is None:
             raise db.Path2StateError("conversation_handoff_not_found")
+        if receipt.analysis_state != expected_analysis_state:
+            raise db.Path2StateError("state_conflict")
+        if (receipt.analysis_state == state and receipt.run_id == run_id and receipt.error_code == error_code):
+            return receipt
+        if receipt.analysis_state in {"ready", "failed"}:
+            raise db.Path2StateError("handoff_analysis_not_claimed")
+        if receipt.analysis_state == "unknown" and run_id is None:
+            if state == "unknown":
+                return receipt
+            raise db.Path2StateError("previous_outcome_unresolved")
         if receipt.run_id is not None and receipt.run_id != run_id:
             raise db.Path2StateError("state_conflict")
         if receipt.analysis_state == "started" and state != "started":
@@ -239,9 +338,12 @@ def record_analysis(store, workspace_id, conversation_id, request_id, *, state, 
             if run_id is None:
                 raise db.Path2StateError("state_conflict")
         if run_id is not None:
-            submission = store.message_submission(workspace_id, receipt.mission_id, receipt.send_request.client_request_id)
+            submission = store._message_submission(connection, workspace_id, receipt.mission_id,
+                receipt.send_request.client_request_id, receipt.send_request)
             if submission is None or submission.run.run_id != run_id:
                 raise db.Path2StateError("handoff_run_identity_mismatch")
+            if receipt.analysis_state == "started" and state != "started" and submission.run.status not in {"failed", "blocked", "cancelled"}:
+                raise db.Path2StateError("state_conflict")
         receipt = ConversationHandoffReceipt.model_validate(receipt.model_dump(mode="json") | {
             "analysis_state": state, "analysis_started": state == "started", "run_id": run_id, "error_code": error_code,
         })
