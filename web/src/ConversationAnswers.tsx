@@ -21,6 +21,12 @@ export function reviewedAnswer(item:Case,items:Answer[]):components["schemas"]["
   const same=item.latest_answer && JSON.stringify(items)===JSON.stringify(item.latest_answer.items);
   return {origin_run_id:item.request.run_id,clarification_id:item.request.clarification_id,request_sha256:item.request_sha256,expected_latest_version:item.latest_answer?.version??0,items:same?null:items,saved_answer:same?{version:item.latest_answer!.version,sha256:item.latest_answer!.sha256,approval_id:item.latest_approval?.approval_id??null}:null};
 }
+export function mergeReviewedSave(page:Page,value:components["schemas"]["ClarificationSubmissionReceipt"]):Page {
+  const key=`${value.answer.origin_run_id}/${value.answer.clarification_id}`;
+  const old=page.items.find(item=>caseKey(item)===key);
+  if(!old||old.request_sha256!==value.answer.request_sha256)throw new Error('保存回执不属于当前审阅的问题集合。');
+  return {mission_state_version:value.mission_state_version,items:page.items.map(item=>caseKey(item)===key?{...item,latest_answer:value.answer,latest_approval:value.approval,review_state:value.approval?'approved':'awaiting_approval'}:item)};
+}
 export function ConversationAnswers({state,conversation,suggestions,onUpdated}: {state:Path2WorkbenchState;conversation:WorkspaceConversation;suggestions:Suggestion[];onUpdated:()=>Promise<void>}) {
   const ws=conversation.workspace_id,mid=conversation.mission_id;
   const [page,setPage]=useState<Page|null>(null);
@@ -32,7 +38,7 @@ export function ConversationAnswers({state,conversation,suggestions,onUpdated}: 
   const [notice,setNotice]=useState("");
   const [receipt,setReceipt]=useState<ConversationHandoffReceipt|null>(null);
   const [pending,setPending]=useState<{kind:'handoff'|'save';id:string}|null>(null);
-  const dirty=useRef(false);const alive=useRef(true);const loadGeneration=useRef(0);const editGeneration=useRef(0);
+  const dirty=useRef(false);const alive=useRef(true);const loadGeneration=useRef(0);const editGeneration=useRef(0);const receiptGeneration=useRef(0);
   const storageKey=`contextox.conversation-handoff:${ws}/${conversation.conversation_id}`;
   const load=async(useSuggestions=false)=>{
     if(!mid)return;
@@ -60,17 +66,17 @@ export function ConversationAnswers({state,conversation,suggestions,onUpdated}: 
   };
   const save=async(item:Case,items:Answer[])=>{
     if(!mid||!page||!state.latestDraft||mutex.current||pending)throw new Error('当前回答尚不能保存。');
-    mutex.current=true;setBusy(true);setError('');const id=crypto.randomUUID();
+    mutex.current=true;setBusy(true);setError('');dirty.current=true;loadGeneration.current++;receiptGeneration.current++;const id=crypto.randomUUID();
     try{remember({kind:'save',id});const draft=state.latestDraft;const value=await saveClarificationAnswer(ws,mid,item.request.run_id,item.request.clarification_id,{client_request_id:id,expected_latest_version:item.latest_answer?.version??0,expected_state_version:page.mission_state_version,request_sha256:item.request_sha256,review_draft:{draft_id:draft.draft_id,version:draft.version,sha256:draft.sha256},source_refs:state.selectedSourceRefs,items});
       if(value.answer.workspace_id!==ws||value.answer.mission_id!==mid)throw new Error('保存结果归属不一致。');sessionStorage.removeItem(storageKey);setPending(null);setNotice('回答已保存 · 尚未批准；其他卡片的未保存输入保留。');
-      const updated=await fetchClarificationCases(ws,mid);if(alive.current)setPage(updated);
+      if(alive.current)setPage(currentPage=>currentPage?mergeReviewedSave(currentPage,value):currentPage);
       await state.refreshTask();
     }catch(e){failure(e);throw e;}finally{mutex.current=false;setBusy(false);}
   };
   const handoff=async()=>{
     if(!mid||!page||!state.latestDraft||mutex.current||pending)return;
     const omitted=page.items.flatMap((item,index)=>answerOmissions(edits[caseKey(item)]??[],item.request.questions.length).map(issue=>`问题组 ${index+1}：${issue}`));if(omitted.length){setError(omitted.join('；'));return;}
-    mutex.current=true;setBusy(true);setError('');
+    mutex.current=true;setBusy(true);setError('');receiptGeneration.current++;
     try{
 
       const draft=state.latestDraft;
@@ -79,17 +85,18 @@ export function ConversationAnswers({state,conversation,suggestions,onUpdated}: 
     }catch(e){failure(e);}finally{mutex.current=false;setBusy(false);}
   };
   const reconcile=async(retry=false)=>{
-    if(!mid||mutex.current||(!pending&&!receipt))return;mutex.current=true;setBusy(true);setError('');
+    if(!mid||mutex.current||(!pending&&!receipt))return;mutex.current=true;setBusy(true);setError('');receiptGeneration.current++;
     try{
       const entry=pending??{kind:'handoff' as const,id:receipt!.client_request_id};
-      if(entry.kind==='save'){const value=await fetchClarificationSubmission(ws,mid,entry.id);if(value.answer.workspace_id!==ws||value.answer.mission_id!==mid)throw new Error('回答回读归属不一致');sessionStorage.removeItem(storageKey);setPending(null);setNotice('回答保存已核对，尚未批准。');await load();}
+      if(entry.kind==='save'){const value=await fetchClarificationSubmission(ws,mid,entry.id);if(value.answer.workspace_id!==ws||value.answer.mission_id!==mid)throw new Error('回答回读归属不一致');sessionStorage.removeItem(storageKey);setPending(null);setNotice('回答保存已核对，尚未批准。');if(page)setPage(mergeReviewedSave(page,value));else await load();}
       else{const known=await fetchConversationHandoff(ws,conversation.conversation_id,entry.id);if(retry&&['ready','failed'].includes(known.analysis_state)&&!known.run_id){const raw=sessionStorage.getItem(`${storageKey}:request`);if(!raw)throw new Error('原交接负载不可用，只能继续核对，不能重建请求。');const body=JSON.parse(raw) as ConversationHandoffRequest;if(body.client_request_id!==entry.id)throw new Error('原交接标识不一致。');await applyHandoff(await sendConversationHandoff(ws,conversation.conversation_id,body));}else await applyHandoff(known);}
     }catch(e){setError(e instanceof Error?e.message:'仍无法确认结果');}finally{mutex.current=false;setBusy(false);}
   };
   useEffect(()=>{
     if(!conversation.last_handoff_id||!mid)return;
+    const ticket=++receiptGeneration.current,editTicket=editGeneration.current;
     void fetchConversationHandoff(ws,conversation.conversation_id,conversation.last_handoff_id).then(value=>{
-      if(!alive.current)return;
+      if(!alive.current||ticket!==receiptGeneration.current||editTicket!==editGeneration.current||mutex.current)return;
       if(value.workspace_id!==ws||value.conversation_id!==conversation.conversation_id||value.mission_id!==mid)throw new Error('历史交接归属不一致。');
       setReceipt(value);
       if(['claimed','unknown'].includes(value.analysis_state))setPending({kind:'handoff',id:value.client_request_id});
@@ -102,8 +109,9 @@ export function ConversationAnswers({state,conversation,suggestions,onUpdated}: 
   return <section className="conversation-answer-cards" aria-label="核对业务回答"><h3>核对业务回答</h3><p>讨论整理的是建议。请检查全部问题、回答来源和仍未知的事项，再确认继续。</p>
     {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
     {pending&&<div role="status"><p>操作结果待核对，不自动重新发送。</p><button disabled={busy} onClick={()=>void reconcile()}>核对交接结果</button></div>}
+    <button disabled={busy||active||Boolean(pending)} onClick={()=>{if(!dirty.current||window.confirm("重新读取会丢弃卡片中尚未保存的修改，继续？"))void load().catch(failure);}}>重新读取问题与回答</button>
     {suggestions.length>0&&dirty.current&&<button disabled={busy||active||Boolean(pending)} onClick={()=>{if(!dirty.current||window.confirm('使用新的整理建议替换尚未保存的卡片输入？'))void load(true).catch(failure);}}>将本轮整理建议放入回答卡片</button>}
-    {cases.map(item=><details className="conversation-answer-group" key={caseKey(item)} open><summary>{item.request.questions.length} 个问题 · {item.latest_answer?`已保存 v${item.latest_answer.version}`:'尚未保存'}</summary><AnswerForm key={`${caseKey(item)}/${revision}`} request={item.request} latest={item.latest_answer} initialItems={initials[caseKey(item)]} draft={state.latestDraft} disabled={busy||active||Boolean(pending)} onDirty={value=>{if(value){dirty.current=true;setReceipt(null);setNotice("回答内容已修改 · 新版本待确认");}}} onItemsChange={items=>{editGeneration.current++;setEdits(old=>({...old,[caseKey(item)]:items}));}} onSave={items=>save(item,items)} saveLabel="仅保存，稍后继续"/>{item.latest_answer&&<details><summary>已保存回答 v{item.latest_answer.version}</summary><AnswerReadback answer={item.latest_answer} request={item.request}/></details>}</details>)}
+    {cases.map(item=><details className="conversation-answer-group" key={caseKey(item)} open><summary>{item.request.questions.length} 个问题 · {item.latest_answer?`已保存 v${item.latest_answer.version}`:'尚未保存'}</summary><AnswerForm key={`${caseKey(item)}/${revision}`} request={item.request} latest={item.latest_answer} initialItems={initials[caseKey(item)]} draft={state.latestDraft} disabled={busy||active||Boolean(pending)} onDirty={value=>{if(value){dirty.current=true;receiptGeneration.current++;setReceipt(null);setNotice("回答内容已修改 · 新版本待确认");}}} onItemsChange={items=>{editGeneration.current++;setEdits(old=>({...old,[caseKey(item)]:items}));}} onSave={items=>save(item,items)} saveLabel="仅保存，稍后继续"/>{item.latest_answer&&<details><summary>已保存回答 v{item.latest_answer.version}</summary><AnswerReadback answer={item.latest_answer} request={item.request}/></details>}</details>)}
     {!selectedMatches&&<p role="alert">会话资料范围已修改。请先通过对话明确提交并核对新范围，再确认回答。</p>}
     {cases.length>0&&<button className="path2-primary-button" disabled={busy||active||Boolean(pending)||(Boolean(receipt)&&!hasChanges)||!state.latestDraft||!selectedMatches} onClick={()=>void handoff()}>确认并继续</button>}
     {receipt&&<div className="handoff-stages" role="status"><p>回答保存：{receipt.answers_saved?'成功':'待核对'}</p><p>回答批准：{receipt.answers_approved?'成功':'待核对'}</p><p>后续分析：{receipt.analysis_started?'已开始':receipt.analysis_state==='unknown'?'结果未知':receipt.analysis_state==='claimed'?'正在核对启动结果':'尚未启动'}</p>{receipt.error_code&&<p>{receipt.error_code}</p>}{['ready','failed'].includes(receipt.analysis_state)&&!receipt.run_id&&<button disabled={busy} onClick={()=>void reconcile(true)}>核对并重试后续分析</button>}{['claimed','unknown'].includes(receipt.analysis_state)&&<button disabled={busy} onClick={()=>void reconcile()}>核对启动结果</button>}</div>}

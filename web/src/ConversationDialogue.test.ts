@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { conversationBelongsTo, recentConversationHistory } from "./ConversationDialogue";
-import { reviewedAnswer, suggestedAnswerItems } from "./ConversationAnswers";
+import { conversationBelongsTo, recentConversationHistory, mergeConversationPage, selectedConversationHistory } from "./ConversationDialogue";
+import { reviewedAnswer, suggestedAnswerItems, mergeReviewedSave } from "./ConversationAnswers";
 import { answerOmissions } from "./ClarificationAnswers";
 import type { components } from "./generated/api";
 
@@ -20,6 +20,13 @@ describe("continuous conversation boundaries",()=>{
     const messages=Array.from({length:7},(_,i)=>({workspace_id:"ws",conversation_id:"chat",message_id:`m${i}`,role:"user" as const,content:"公开合成问题",created_at:"2026-09-10T00:00:00Z",sha256:hash}));
     expect(recentConversationHistory(messages)).toEqual(["m3","m4","m5","m6"]);
   });
+  it("retains selected older history across latest-page refresh and refuses unavailable ids",()=>{
+    const message=(id:string)=>({workspace_id:"ws",conversation_id:"chat",message_id:id,role:"user" as const,content:"公开合成问题",created_at:"2026-09-10T00:00:00Z",sha256:hash});
+    const merged=mergeConversationPage([message("older"),message("current")],[message("current"),message("new")]);
+    expect(merged.map(item=>item.message_id)).toEqual(["older","current","new"]);
+    expect(selectedConversationHistory(merged,["older"])).toEqual([{message_id:"older",sha256:hash}]);
+    expect(()=>selectedConversationHistory(merged,["missing"])).toThrow("未完整回读");
+  });
   it("does not invent respondent, basis, or resolution responsibility from model suggestions",()=>{
     const answers=suggestedAnswerItems(item,[suggestion]);
     expect(answers[0]).toMatchObject({answer:"退款不纳入",respondent:"",basis:""});
@@ -32,6 +39,11 @@ describe("continuous conversation boundaries",()=>{
   it("pins the reviewed saved version and approval, while an edit requests a new version",()=>{
     const items=suggestedAnswerItems(item,[{...suggestion,respondent:"业务同事",basis:"本轮明确回答"}]);
     const saved:components["schemas"]["ClarificationCase"]={...item,review_state:"approved",latest_answer:{workspace_id:"ws",mission_id:"mission",origin_run_id:"origin",clarification_id:"question",version:2,request_sha256:hash,review_draft:{draft_id:"draft",version:1,sha256:hash},source_refs:[],items,saved_by:"local-owner",created_at:"2026-09-10T00:00:00Z",sha256:hash},latest_approval:{workspace_id:"ws",mission_id:"mission",origin_run_id:"origin",clarification_id:"question",answer_version:2,answer_sha256:hash,approval_id:"approval",approved_by:"local-owner",approved_at:"2026-09-10T00:00:00Z"}};
+    const other={...item,request:{...item.request,clarification_id:"other-question"}};
+    const merged=mergeReviewedSave({mission_state_version:5,items:[item,other]},{operation:"save",client_request_id:"save-id",answer:saved.latest_answer!,approval:null,mission_state_version:6});
+    expect(merged.mission_state_version).toBe(6);
+    expect(merged.items[0].latest_answer?.version).toBe(2);
+    expect(merged.items[1]).toBe(other);
     expect(reviewedAnswer(saved,items)).toMatchObject({expected_latest_version:2,items:null,saved_answer:{version:2,sha256:hash,approval_id:"approval"}});
     expect(reviewedAnswer(saved,[{...items[0],answer:"退款单独统计"}])).toMatchObject({expected_latest_version:2,saved_answer:null});
   });

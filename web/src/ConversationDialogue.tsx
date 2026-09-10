@@ -22,10 +22,20 @@ export function conversationBelongsTo(value: WorkspaceConversation, workspaceId:
 }
 export function recentConversationHistory(messages: ConversationMessage[]) {return messages.slice(-4).map(message => message.message_id);}
 
+export function mergeConversationPage(previous:ConversationMessage[],page:ConversationMessage[],older=false) {
+  const ids=new Set(page.map(message=>message.message_id));const retained=previous.filter(message=>!ids.has(message.message_id));
+  return older?[...page,...retained]:[...retained,...page];
+}
+export function selectedConversationHistory(messages:ConversationMessage[],ids:string[]) {
+  if(ids.length>4||new Set(ids).size!==ids.length)throw new Error('历史选择超限或重复，请重新选择。');
+  return ids.map(id=>{const message=messages.find(item=>item.message_id===id);if(!message)throw new Error('所选历史尚未完整回读，请重新核对；本轮未发送。');return {message_id:message.message_id,sha256:message.sha256};});
+}
+
 export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace: (workspace: Workspace | null) => void) {
   const ws = state.workspaceId;
   const stateRef = useRef(state); stateRef.current = state;
   const workspaceRef = useRef(ws); workspaceRef.current = ws;
+  const workspaceInitialization = useRef<{workspaceId:string;resolve:()=>void;reject:(error:Error)=>void}|null>(null);
   const generation = useRef(0);
   const readSequence = useRef(0);
   const [loadedWorkspace, setLoadedWorkspace] = useState(ws);
@@ -79,7 +89,7 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
     if(ticket!==generation.current || sequence!==readSequence.current || workspaceRef.current!==workspaceId || conversationRef.current?.conversation_id!==id) return;
     if(!conversationBelongsTo(value,workspaceId,id) || page.items.some(item=>item.workspace_id!==workspaceId||item.conversation_id!==id)) throw new Error("返回内容不属于当前会话，已停止回读。");
     if(value.state_version < (conversationRef.current?.state_version ?? 0))return;
-    setKnownConversation(value);setMessages(old=>paginate?[...page.items,...old]:page.items);setCursor(page.next_before_message_id ?? null);
+    setKnownConversation(value);setMessages(old=>mergeConversationPage(old,page.items,Boolean(paginate)));setCursor(page.next_before_message_id ?? null);
     if(!historyTouched.current&&!paginate)setHistoryIds(recentConversationHistory(page.items));
     const pending=sessionStorage.getItem(submissionKey(workspaceId,id));
     const requestId=pending ?? value.last_submission_id;
@@ -90,7 +100,7 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
       if(!paginate&&receipt.discussion_turn?.output&&!page.items.some(message=>message.role==='assistant'&&message.turn_id===receipt.discussion_turn?.turn_id)) {
         const completed=await fetchConversationMessages(workspaceId,id);
         if(ticket===generation.current&&workspaceRef.current===workspaceId&&conversationRef.current?.conversation_id===id&&completed.items.every(message=>message.workspace_id===workspaceId&&message.conversation_id===id)) {
-          setMessages(completed.items);setCursor(completed.next_before_message_id??null);if(!historyTouched.current)setHistoryIds(recentConversationHistory(completed.items));
+          setMessages(old=>mergeConversationPage(old,completed.items));setCursor(completed.next_before_message_id??null);if(!historyTouched.current)setHistoryIds(recentConversationHistory(completed.items));
         }
       }
     }
@@ -112,6 +122,7 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
   };
   useEffect(() => {
     setLoadedWorkspace(ws);generation.current++;setConversation(null);conversationRef.current=null;setList([]);setMessages([]);setTurn(null);setReferences([]);setHistoryIds([]);setText("");setScopeRefs([]);setReadyScope("");setPendingId(null);setPendingCreate(null);setError("");scopeHydrated.current="";historyTouched.current=false;
+    if(workspaceInitialization.current&&workspaceInitialization.current.workspaceId!==ws){workspaceInitialization.current.reject(new Error("工作区选择已变化，本次消息尚未发送。"));workspaceInitialization.current=null;}
     if(!ws)return;
     const ticket=generation.current;setLoading(true);
     try{const saved=sessionStorage.getItem(createKey(ws));if(saved)setPendingCreate(JSON.parse(saved) as CreateRequest);}catch{setStorageReady(false);setError("浏览器无法核对会话创建标识，请先恢复存储访问。");}
@@ -120,7 +131,7 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
       if(values.some(value=>!conversationBelongsTo(value,ws)))throw new Error("会话列表归属不一致。");setList(values);
       const saved=sessionStorage.getItem(conversationKey(ws));const selected=values.find(value=>value.conversation_id===saved);
       if(selected) await openConversation(selected);else {stateRef.current.clearMission?.();if(saved)setError("此前选择的对话已无法读取，请从列表明确选择。");}
-    }).catch(e=>{if(workspaceRef.current===ws)setError(conversationError(e));}).finally(()=>{if(workspaceRef.current===ws)setLoading(false);});
+    }).catch(e=>{if(workspaceRef.current===ws)setError(conversationError(e));if(workspaceInitialization.current?.workspaceId===ws){workspaceInitialization.current.reject(new Error("工作区会话尚未完成回读，消息未发送。"));workspaceInitialization.current=null;}}).finally(()=>{if(workspaceRef.current===ws)setLoading(false);if(workspaceInitialization.current?.workspaceId===ws){if(workspaceRef.current===ws)workspaceInitialization.current.resolve();else workspaceInitialization.current.reject(new Error("工作区选择已变化。"));workspaceInitialization.current=null;}});
   },[ws]);
   const sourceSignature=state.sourceState.items.map(source=>`${source.revision_id}/${source.sha256}`).join("|");
   useEffect(()=>{
@@ -148,7 +159,7 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
   };
   const ensureWorkspace=async()=>{
     if(workspaceRef.current)return workspaceRef.current;
-    const all=await fetchWorkspaces();if(all.length>1)throw new Error("请先从左侧选择工作区，消息草稿已保留。");
+    const all=await fetchWorkspaces();if(workspaceRef.current!==null)throw new Error("工作区选择已变化，本次消息尚未发送。");if(all.length>1)throw new Error("请先从左侧选择工作区，消息草稿已保留。");
     let value=all[0];
     if(!value){
       if(sessionStorage.getItem('contextox.default-workspace-create-unknown'))throw new Error("上次创建本地工作区结果未知。请从左侧核对工作区列表并明确选择，不能盲目重建。");
@@ -156,8 +167,10 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
       try{value=await createWorkspace('本地工作区');sessionStorage.removeItem('contextox.default-workspace-create-unknown');}
       catch(e){if(e instanceof ApiRequestError && e.code && e.code!=='workspace_create_outcome_unknown')sessionStorage.removeItem('contextox.default-workspace-create-unknown');throw e;}
     }
+    if(workspaceRef.current!==null)throw new Error("工作区选择已变化，创建结果请在工作区列表核对。");
+    const initialized=new Promise<void>((resolve,reject)=>{workspaceInitialization.current={workspaceId:value.workspace_id,resolve,reject};});
     onWorkspace(value);writeSelectedWorkspaceId(value.workspace_id);
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    await initialized;
     return value.workspace_id;
   };
   const create = async (workspaceId: string, missionId?: string) => {
@@ -180,22 +193,25 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
   const submit=async()=>{
     if(mutex.current||active||pendingId||!storageReady||!text.trim())return;
     const body=text;const selectedReferences=references;mutex.current=true;setSending(true);setError("");
-    const originalWs=workspaceRef.current;
+    const originalWs=workspaceRef.current;let operationWorkspace=originalWs;let operationGeneration=generation.current;let submittedTo:{workspaceId:string;conversationId:string}|null=null;
     try{
-      const settings=await fetchDeepSeekSettings();if(workspaceRef.current!==originalWs)return;if(!settings.configured){setNeedsConnection(true);return;}setNeedsConnection(false);
-      const workspaceId=await ensureWorkspace();
-      if(workspaceRef.current!==workspaceId)return;
+      const settings=await fetchDeepSeekSettings();if(workspaceRef.current!==originalWs||operationGeneration!==generation.current)return;if(!settings.configured){setNeedsConnection(true);return;}setNeedsConnection(false);
+      const workspaceId=await ensureWorkspace();operationWorkspace=workspaceId;
+      if(originalWs===null)operationGeneration=generation.current;
+      if(workspaceRef.current!==workspaceId||operationGeneration!==generation.current)return;
       const value=conversationRef.current??await create(workspaceId);
       if(value.workspace_id!==workspaceId)throw new Error('当前对话归属不一致。');
-      const request:ConversationMessageSendRequest={kind:'message',client_request_id:crypto.randomUUID(),expected_state_version:value.state_version,content:body,references:selectedReferences,history_messages:messages.filter(message=>historyIds.includes(message.message_id)).map(message=>({message_id:message.message_id,sha256:message.sha256})),source_refs:sourceRefs,provider_send_confirmed:true,goal:value.goal ?? null};
+      const request:ConversationMessageSendRequest={kind:'message',client_request_id:crypto.randomUUID(),expected_state_version:value.state_version,content:body,references:selectedReferences,history_messages:selectedConversationHistory(messages,historyIds),source_refs:sourceRefs,provider_send_confirmed:true,goal:value.goal ?? null};
+      if(workspaceRef.current!==workspaceId||operationGeneration!==generation.current)return;
+      submittedTo={workspaceId,conversationId:value.conversation_id};
       sessionStorage.setItem(submissionKey(workspaceId,value.conversation_id),request.client_request_id);setPendingId(request.client_request_id);
       const receipt=await sendConversationMessage(workspaceId,value.conversation_id,request);
       await applyReceipt(receipt,workspaceId,value.conversation_id);
       if(workspaceRef.current===workspaceId&&conversationRef.current?.conversation_id===value.conversation_id){setText(currentText=>currentText===body?'':currentText);setReferences([]);historyTouched.current=false;await readCurrent(workspaceId,value.conversation_id);}
     }catch(e){
-      if(originalWs!==null&&workspaceRef.current!==originalWs)return;
+      if(operationWorkspace!==workspaceRef.current||operationGeneration!==generation.current)return;
       setError(conversationError(e));
-      if(e instanceof ApiRequestError&&[400,403,404,409,422].includes(e.status)&&!e.code?.includes('unknown')){const value=conversationRef.current;if(value)sessionStorage.removeItem(submissionKey(value.workspace_id,value.conversation_id));setPendingId(null);}
+      if(e instanceof ApiRequestError&&[400,403,404,409,422].includes(e.status)&&!e.code?.includes('unknown')){if(submittedTo)sessionStorage.removeItem(submissionKey(submittedTo.workspaceId,submittedTo.conversationId));if(submittedTo?.conversationId===conversationRef.current?.conversation_id)setPendingId(null);}
       if(originalWs===null)setText(body);
     }finally{mutex.current=false;setSending(false);}
   };
