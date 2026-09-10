@@ -185,6 +185,7 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Use production high (default) or explicitly select the non-thinking demo.")
     start.add_argument("--env-file", type=Path,
                        help="Read DEEPSEEK_API_KEY from this UTF-8 file; environment variables take priority.")
+    start.add_argument("--migrate-conversations", action="store_true", help="Explicitly back up and migrate a stopped v6 store to conversations v7.")
     start.add_argument("--migrate-profile-interpretations", action="store_true", help="Back up and migrate a stopped v5 store to profile interpretations v6.")
     start.add_argument("--migrate-clarification-answers", action="store_true", help="Back up and migrate a stopped store to clarification answers v5.")
     start.add_argument("--migrate-task-dialogue", action="store_true", help="Explicitly back up and migrate a stopped v3 store to task dialogue v4.")
@@ -268,6 +269,7 @@ def _serve(args: argparse.Namespace, data_dir: Path, listener: socket.socket) ->
         migrate_dialogue=args.migrate_task_dialogue,
         migrate_clarifications=args.migrate_clarification_answers,
         migrate_profiles=args.migrate_profile_interpretations,
+        migrate_conversations=args.migrate_conversations,
         agent_profile=args.agent_profile,
     )
 

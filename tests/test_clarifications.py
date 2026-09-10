@@ -27,8 +27,33 @@ def field(key="window", **changes):
     return data
 
 
+def strip_conversation_fixture(connection):
+    """Restore v6 in synthetic fixtures, including the original Mission DDL."""
+    if connection.execute("PRAGMA user_version").fetchone()[0] != 7:
+        return
+    assert not connection.in_transaction
+    assert not connection.execute("SELECT 1 FROM workspace_conversations").fetchone()
+    foreign_keys = connection.execute("PRAGMA foreign_keys").fetchone()[0]
+    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute("PRAGMA legacy_alter_table=ON")
+    for name, _ in reversed(db.conversations.TABLES + db.conversation_handoff.TABLES):
+        connection.execute("DROP TABLE " + name)
+    connection.execute("ALTER TABLE missions RENAME TO conversation_fixture_missions")
+    connection.execute(dict(db._EXPECTED_V6_TABLES)["missions"])
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(missions)")]
+    connection.execute("INSERT INTO missions SELECT " + ",".join(columns) + " FROM conversation_fixture_missions")
+    connection.execute("DROP TABLE conversation_fixture_missions")
+    connection.execute("PRAGMA user_version=6")
+    connection.commit()
+    connection.execute("PRAGMA legacy_alter_table=OFF")
+    connection.execute(f"PRAGMA foreign_keys={foreign_keys}")
+    assert db._schema_matches(connection, 6, db._EXPECTED_V6_TABLES, db._EXPECTED_V3_INDEXES)
+    assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+
+
 def strip_r2_fixture(connection):
     """Only synthetic test databases: reconstruct exact historical schema."""
+    strip_conversation_fixture(connection)
     if connection.execute("PRAGMA user_version").fetchone()[0] == 6:
         connection.execute("DROP TABLE profile_interpretation_attempts")
         connection.execute("ALTER TABLE runs DROP COLUMN phase")

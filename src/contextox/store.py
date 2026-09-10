@@ -31,7 +31,7 @@ from contextox.models import (
     DomainToolCall,
     EvidenceLocator,
     EvidenceRef,
-    Mission,
+    Mission, ConversationMissionOrigin, ConversationMessage,
     MissionDraftAttempt,
     MissionDraftPayload,
     MissionDraftConfirmRequest,
@@ -74,9 +74,11 @@ from contextox.sources import (
 
 
 from contextox import clarifications as r2
+from contextox import conversation_store as conversations
+from contextox import conversation_handoff
 
 DB_FILENAME = "contextox.sqlite3"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 V5_SCHEMA_VERSION = 5
 V3_SCHEMA_VERSION = 3
 V1_SCHEMA_VERSION = 1
@@ -1019,6 +1021,17 @@ _EXPECTED_V6_TABLES = tuple(
 ) + (("profile_interpretation_attempts", _EXPECTED_PROFILE_INTERPRETATIONS_SQL),)
 
 
+_EXPECTED_V7_MISSIONS_SQL = _EXPECTED_MISSIONS_SQL.replace(
+    "    original_attempt_id TEXT NOT NULL,",
+    "    original_attempt_id TEXT, conversation_origin_json TEXT,\n"
+    "    CHECK ((original_attempt_id IS NULL) != (conversation_origin_json IS NULL)),",
+)
+_EXPECTED_V7_TABLES = tuple(
+    (name, _EXPECTED_V7_MISSIONS_SQL if name == "missions" else sql)
+    for name, sql in _EXPECTED_V6_TABLES
+) + conversations.TABLES + conversation_handoff.TABLES
+
+
 _EXPECTED_V3_INDEXES: tuple[tuple[str, str, str], ...] = (
     (
         "runs_one_active_per_mission",
@@ -1115,7 +1128,7 @@ def _schema_is_exact(connection: sqlite3.Connection) -> bool:
         connection, 4, _EXPECTED_V4_TABLES, _EXPECTED_V3_INDEXES
     ) or _schema_matches(connection, 5, _EXPECTED_V5_TABLES, _EXPECTED_V3_INDEXES) or _schema_matches(
         connection, 6, _EXPECTED_V6_TABLES, _EXPECTED_V3_INDEXES
-    )
+    ) or _schema_matches(connection, 7, _EXPECTED_V7_TABLES, _EXPECTED_V3_INDEXES)
 
 
 def _configure_connection(connection: sqlite3.Connection) -> None:
@@ -1157,15 +1170,11 @@ def _create_v3_tables(
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
-    """Create a new empty database using the complete approved v6 schema."""
-
-    _create_v3_tables(connection, include_workspaces=True)
-    connection.execute(_EXPECTED_MESSAGE_INPUTS_SQL)
-    connection.execute(r2.MANIFEST_ALTER)
-    for _, sql in r2.TABLES:
+    """Create a new empty database using the exact approved v7 schema."""
+    for _, sql in _EXPECTED_V7_TABLES:
         connection.execute(sql)
-    connection.execute("ALTER TABLE runs ADD COLUMN phase TEXT NOT NULL DEFAULT 'prepare_context'")
-    connection.execute(_EXPECTED_PROFILE_INTERPRETATIONS_SQL)
+    for _, _, sql in _EXPECTED_V3_INDEXES:
+        connection.execute(sql)
     connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
@@ -1255,6 +1264,7 @@ class WorkspaceStore:
         migrate_dialogue: bool = False,
         migrate_clarifications: bool = False,
         migrate_profiles: bool = False,
+        migrate_conversations: bool = False,
     ) -> "WorkspaceStore":
         """Open a supported store, atomically initializing a new empty DB."""
 
@@ -1329,7 +1339,10 @@ class WorkspaceStore:
             store.migrate_clarification_answers()
         if migrate_profiles:
             store.migrate_profile_interpretations()
+        if migrate_conversations:
+            store.migrate_conversations()
         store.recover_interrupted_runs()
+        conversations.recover(store)
         return store
 
     @contextmanager
@@ -1357,6 +1370,7 @@ class WorkspaceStore:
             try:
                 yield connection
                 try:
+                    conversations.sync_task_messages(connection)
                     connection.commit()
                 except sqlite3.DatabaseError as exc:
                     raise Path2StateError("state_write_outcome_unknown") from exc
@@ -1768,7 +1782,7 @@ class WorkspaceStore:
         fingerprint = canonical_sha256(config)
         try:
             with self._write_transaction() as connection:
-                if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                     raise Path2StateError("profile_interpretation_not_implemented")
                 existing = connection.execute(
                     """
@@ -1839,7 +1853,7 @@ class WorkspaceStore:
         self._require_path2_workspace(workspace_id)
         self._get_source(workspace_id, revision_id)
         with self._connection() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+            if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                 raise Path2StateError("profile_interpretation_not_implemented")
             row = _profile_interpretation_row(
                 connection, workspace_id, revision_id, attempt_id
@@ -1854,7 +1868,7 @@ class WorkspaceStore:
         self._require_path2_workspace(workspace_id)
         self._get_source(workspace_id, revision_id)
         with self._connection() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+            if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                 raise Path2StateError("profile_interpretation_not_implemented")
             row = connection.execute(
                 """
@@ -1878,7 +1892,7 @@ class WorkspaceStore:
         self._require_path2_workspace(workspace_id)
         self._get_source(workspace_id, revision_id)
         with self._connection() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+            if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                 return None
             row = connection.execute(
                 """
@@ -1901,7 +1915,7 @@ class WorkspaceStore:
         self._require_path2_workspace(workspace_id)
         self._get_source(workspace_id, revision_id)
         with self._write_transaction() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+            if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                 raise Path2StateError("profile_interpretation_not_implemented")
             row = _profile_interpretation_row(
                 connection, workspace_id, revision_id, attempt_id
@@ -1942,7 +1956,7 @@ class WorkspaceStore:
             interpretation.model_dump(mode="json")
         )
         with self._write_transaction() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+            if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                 raise Path2StateError("profile_interpretation_not_implemented")
             row = _profile_interpretation_row(
                 connection, workspace_id, revision_id, attempt_id
@@ -1980,7 +1994,7 @@ class WorkspaceStore:
         self._require_path2_workspace(workspace_id)
         self._get_source(workspace_id, revision_id)
         with self._write_transaction() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+            if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                 raise Path2StateError("profile_interpretation_not_implemented")
             row = _profile_interpretation_row(
                 connection, workspace_id, revision_id, attempt_id
@@ -2015,6 +2029,154 @@ class WorkspaceStore:
         revision, _, content = self._get_source(workspace_id, revision_id)
         return read_source_fragment(revision, content, locator)
 
+    def migrate_conversations(self) -> Path | None:
+        """Explicit stopped-instance v6 -> v7 migration, preserving old rows."""
+        with self._connection() as connection:
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 7:
+                return None
+            if not _schema_matches(connection, 6, _EXPECTED_V6_TABLES, _EXPECTED_V3_INDEXES):
+                raise WorkspaceSchemaUnsupportedError()
+            # SQLite requires this before BEGIN for a referenced-parent rebuild.
+            # The stopped-instance lock is owned by the CLI; FK checks still run
+            # inside the transaction and enforcement is restored before return.
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("PRAGMA legacy_alter_table=ON")
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                for table in ("runs", "mission_draft_attempts", "profile_interpretation_attempts"):
+                    if connection.execute(f"SELECT 1 FROM {table} WHERE status IN ('queued','running') LIMIT 1").fetchone():
+                        raise Path2StateError("run_already_active")
+                backup = self.data_dir / ("conversations-v6-backup-" + str(uuid4()))
+                backup.mkdir(mode=0o700)
+                with closing(sqlite3.connect(self.db_path)) as source, closing(sqlite3.connect(backup / DB_FILENAME)) as target:
+                    source.backup(target)
+                (backup / DB_FILENAME).chmod(0o600)
+                manifest = {"schema_version": 6, "files": {}}
+                for ws, revision_id in connection.execute("SELECT workspace_id, revision_id FROM source_revisions"):
+                    revision, _ = _load_source_in_connection(connection, ws, revision_id)
+                    path = _source_path(self.data_dir, revision)
+                    content = _read_validated_source_file(path, revision)
+                    relative = path.relative_to(self.data_dir)
+                    destination = backup / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    destination.write_bytes(content)
+                    destination.chmod(0o600)
+                    manifest["files"][str(relative)] = hashlib.sha256(content).hexdigest()
+                manifest["files"][DB_FILENAME] = hashlib.sha256((backup / DB_FILENAME).read_bytes()).hexdigest()
+                (backup / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+                (backup / "manifest.json").chmod(0o600)
+                connection.execute("ALTER TABLE missions RENAME TO old_missions_v6")
+                connection.execute(_EXPECTED_V7_MISSIONS_SQL)
+                connection.execute("INSERT INTO missions SELECT *, NULL FROM old_missions_v6")
+                connection.execute("DROP TABLE old_missions_v6")
+                for _, sql in conversations.TABLES + conversation_handoff.TABLES:
+                    connection.execute(sql)
+                connection.execute("PRAGMA user_version=7")
+                _validate_connection_schema(connection)
+                connection.commit()
+                return backup
+            except BaseException:
+                connection.rollback()
+                raise
+            finally:
+                connection.execute("PRAGMA legacy_alter_table=OFF")
+                _configure_connection(connection)
+
+    def create_conversation(self, workspace_id, request):
+        return conversations.create(self, workspace_id, request)
+
+    def get_conversation(self, workspace_id, conversation_id):
+        self._require_path2_workspace(workspace_id)
+        with self._connection() as connection:
+            result=conversations.load_conversation(self, connection, workspace_id, conversation_id)
+            self._validate_source_identities(connection,workspace_id,result.source_refs)
+            return result
+
+    def list_conversations(self, workspace_id):
+        self._require_path2_workspace(workspace_id)
+        with self._connection() as connection:
+            conversations.require(connection)
+            items=[conversations.load_conversation(self,connection,workspace_id,row[0]) for row in connection.execute(
+                "SELECT conversation_id FROM workspace_conversations WHERE workspace_id=? ORDER BY rowid DESC",(workspace_id,))]
+            for item in items:
+                self._validate_source_identities(connection,workspace_id,item.source_refs)
+            return items
+
+    def list_conversation_messages(self, workspace_id, conversation_id, before_message_id=None, limit=20):
+        from contextox.models import ConversationMessagePage
+        self._require_path2_workspace(workspace_id)
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise Path2StateError("message_page_limit_invalid")
+        with self._connection() as c:
+            c.execute("BEGIN")
+            conversations.load_conversation(self,c,workspace_id,conversation_id)
+            cursor = 9223372036854775807
+            if before_message_id:
+                row=c.execute("SELECT rowid FROM conversation_messages WHERE workspace_id=? AND conversation_id=? AND message_id=?",
+                    (workspace_id,conversation_id,before_message_id)).fetchone()
+                if row is None:
+                    raise Path2StateError("message_not_found")
+                cursor=row[0]
+            rows=c.execute("SELECT message_id FROM conversation_messages WHERE workspace_id=? AND conversation_id=? AND rowid<? ORDER BY rowid DESC LIMIT ?",
+                (workspace_id,conversation_id,cursor,limit+1)).fetchall()
+            items=[]
+            more=len(rows)>limit
+            for row in rows[:limit]:
+                item=conversations.load_message(self,c,workspace_id,conversation_id,row[0])
+                page=ConversationMessagePage(items=[item,*items],next_before_message_id=item.message_id)
+                if len(page.model_dump_json().encode())>262144:
+                    if not items:
+                        raise Path2StateError("message_page_item_too_large")
+                    more=True
+                    break
+                items.insert(0,item)
+            return ConversationMessagePage(items=items,next_before_message_id=items[0].message_id if more and items else None)
+
+    def conversation_submission(self, workspace_id, conversation_id, request_id, request=None):
+        self._require_path2_workspace(workspace_id)
+        with self._connection() as c:
+            c.execute("BEGIN")
+            return conversations.submission(self,c,workspace_id,conversation_id,request_id,request)
+
+    def create_conversation_submission(self, workspace_id, conversation_id, request, config, p0_hash, output_schema_hash, *, demo_fast=False):
+        return conversations.create_submission(self,workspace_id,conversation_id,request,config,p0_hash,output_schema_hash,demo_fast=demo_fast)
+
+    def get_discussion_turn(self, workspace_id, conversation_id, turn_id, *, validate_sources=True):
+        self._require_path2_workspace(workspace_id)
+        with self._connection() as c:
+            result=conversations.load_turn(self,c,workspace_id,conversation_id,turn_id)
+            if validate_sources:
+                self._validate_source_identities(c,workspace_id,result.request.source_refs)
+            return result
+
+    def discussion_context(self, workspace_id, conversation_id, turn_id):
+        self._require_path2_workspace(workspace_id)
+        with self._connection() as c:
+            c.execute("BEGIN")
+            return conversations.context(self,c,workspace_id,conversation_id,turn_id)
+
+    def claim_discussion_turn(self, workspace_id, conversation_id, turn_id):
+        return conversations.claim(self,workspace_id,conversation_id,turn_id)
+
+    def finish_discussion_turn(self, workspace_id, conversation_id, turn_id, output, receipt):
+        return conversations.finish(self,workspace_id,conversation_id,turn_id,output,receipt)
+
+    def fail_discussion_turn(self, workspace_id, conversation_id, turn_id, status, error_code, receipt=None):
+        return conversations.fail(self,workspace_id,conversation_id,turn_id,status,error_code,receipt)
+
+    def cancel_discussion_turn(self, workspace_id, conversation_id, turn_id):
+        turn=self.get_discussion_turn(workspace_id,conversation_id,turn_id,validate_sources=False)
+        if turn.status=="succeeded":
+            return self.fail_conversation_start(workspace_id,conversation_id,turn_id,"cancelled")
+        return self.fail_discussion_turn(workspace_id,conversation_id,turn_id,"cancelled",
+            "cancelled_before_send" if turn.status=="queued" else "discussion_cancelled_outcome_unknown")
+
+    def start_conversation_task(self, workspace_id, conversation_id, turn_id, output, *, demo_fast=False):
+        return conversations.start_task(self,workspace_id,conversation_id,turn_id,output,demo_fast=demo_fast)
+
+    def fail_conversation_start(self, workspace_id, conversation_id, turn_id, error_code):
+        return conversations.fail_start(self,workspace_id,conversation_id,turn_id,error_code)
+
     def migrate_task_dialogue(self) -> Path | None:
         """Explicit, stopped-instance migration; caller must own the local service.
 
@@ -2022,7 +2184,7 @@ class WorkspaceStore:
         The complete backup remains private beneath the authorized data directory.
         """
         with self._connection() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] in {4, 5, 6}:
+            if connection.execute("PRAGMA user_version").fetchone()[0] in {4, 5, 6, 7}:
                 return None
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -2069,7 +2231,7 @@ class WorkspaceStore:
         The complete backup remains private beneath the authorized data directory.
         """
         with self._connection() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] in {5, 6}:
+            if connection.execute("PRAGMA user_version").fetchone()[0] in {5, 6, 7}:
                 return None
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -2115,7 +2277,7 @@ class WorkspaceStore:
         """Explicitly back up and migrate a stopped v5 Store to v6."""
 
         with self._connection() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] == 6:
+            if connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}:
                 return None
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -2318,67 +2480,70 @@ class WorkspaceStore:
         self._require_path2_workspace(workspace_id)
         request = TaskMessageSendRequest.model_validate(request.model_dump(mode="json"))
         with self._write_transaction() as connection:
-            mission = _load_mission(connection, workspace_id, mission_id)
-            replay = self._message_submission(connection, workspace_id, mission_id, request.client_request_id, request)
-            if replay is not None:
-                return replay, False
-            schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if schema_version != 6:
-                raise Path2StateError("task_dialogue_not_implemented")
-            if mission.state_version != request.expected_state_version:
-                raise Path2StateError("state_conflict")
-            r2.validate_send(self, connection, mission, request)
-            _check_message_start_state(connection, mission, allow_partial=True, allow_answers=bool(request.approved_answers),
-                                       regenerate_from_run_id=request.regenerate_from_run_id)
-            refs = _validated_source_identities(workspace_id, request.source_refs)
-            if any(ref not in mission.source_refs for ref in refs):
-                raise Path2StateError("source_refs_invalid")
-            self._validate_source_identities(connection, workspace_id, refs)
-            run_id, message_id = str(uuid4()), str(uuid4())
-            now = _utc_now().isoformat()
+            return self._send_task_message_in_connection(connection, workspace_id, mission_id, request, demo_fast=demo_fast)
+
+    def _send_task_message_in_connection(self, connection, workspace_id, mission_id, request, *, demo_fast=False):
+        mission = _load_mission(connection, workspace_id, mission_id)
+        replay = self._message_submission(connection, workspace_id, mission_id, request.client_request_id, request)
+        if replay is not None:
+            return replay, False
+        schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if schema_version not in {6, 7}:
+            raise Path2StateError("task_dialogue_not_implemented")
+        if mission.state_version != request.expected_state_version:
+            raise Path2StateError("state_conflict")
+        r2.validate_send(self, connection, mission, request)
+        _check_message_start_state(connection, mission, allow_partial=True, allow_answers=bool(request.approved_answers),
+                                   regenerate_from_run_id=request.regenerate_from_run_id)
+        refs = _validated_source_identities(workspace_id, request.source_refs)
+        if any(ref not in mission.source_refs for ref in refs):
+            raise Path2StateError("source_refs_invalid")
+        self._validate_source_identities(connection, workspace_id, refs)
+        run_id, message_id = str(uuid4()), str(uuid4())
+        now = _utc_now().isoformat()
+        connection.execute(
+            "INSERT INTO runs (workspace_id, mission_id, run_id, client_request_id, created_at, "
+            "started_at, finished_at, status, budget_json, last_sequence, final_output, error_code, start_request_sha256) "
+            "VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, 0, NULL, NULL, ?)",
+            (workspace_id, mission_id, run_id, request.client_request_id, now,
+             _canonical_json(RunBudget.demo_controller() if demo_fast else RunBudget.deterministic_controller()),
+             canonical_sha256(request)),
+        )
+        connection.executemany(
+            "INSERT INTO run_sources VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(workspace_id, mission_id, run_id, ordinal, ref.source_id, ref.revision_id, ref.sha256)
+             for ordinal, ref in enumerate(refs)],
+        )
+        connection.execute(
+            "INSERT INTO mission_messages VALUES (?, ?, ?, ?, 'user', ?, NULL, ?)",
+            (workspace_id, mission_id, message_id, now, request.content, run_id),
+        )
+        connection.execute(
+            "INSERT INTO run_message_inputs VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (workspace_id, mission_id, run_id, message_id, request.expected_state_version,
+             _canonical_json(request.references), _canonical_json(request.history_messages)),
+        )
+        r2.bind_run(connection, workspace_id, mission_id, run_id, request)
+        # The existing input event stores the explicit recovery acknowledgement.
+        if request.regenerate_from_run_id is not None:
+            pending_run = _load_run(connection, workspace_id, mission_id, run_id)
+            _append_event_in_transaction(connection, pending_run, "message_created", {
+                "message_id": message_id, "role":"user",
+                "regenerate_from_run_id":request.regenerate_from_run_id,
+            })
+        if request.approved_answers:
+            r2.seed_manifest(connection, workspace_id, mission_id, run_id, request, mission)
+        run = _load_run(connection, workspace_id, mission_id, run_id)
+        context = self._message_context(connection, run, validate_current=True)
+        if mission.status in {"blocked", "waiting_for_human"}:
             connection.execute(
-                "INSERT INTO runs (workspace_id, mission_id, run_id, client_request_id, created_at, "
-                "started_at, finished_at, status, budget_json, last_sequence, final_output, error_code, start_request_sha256) "
-                "VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', ?, 0, NULL, NULL, ?)",
-                (workspace_id, mission_id, run_id, request.client_request_id, now,
-                 _canonical_json(RunBudget.demo_controller() if demo_fast else RunBudget.deterministic_controller()),
-                 canonical_sha256(request)),
+                "UPDATE missions SET status='active', state_version=state_version+1 "
+                "WHERE workspace_id=? AND mission_id=?", (workspace_id, mission_id),
             )
-            connection.executemany(
-                "INSERT INTO run_sources VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [(workspace_id, mission_id, run_id, ordinal, ref.source_id, ref.revision_id, ref.sha256)
-                 for ordinal, ref in enumerate(refs)],
-            )
-            connection.execute(
-                "INSERT INTO mission_messages VALUES (?, ?, ?, ?, 'user', ?, NULL, ?)",
-                (workspace_id, mission_id, message_id, now, request.content, run_id),
-            )
-            connection.execute(
-                "INSERT INTO run_message_inputs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (workspace_id, mission_id, run_id, message_id, request.expected_state_version,
-                 _canonical_json(request.references), _canonical_json(request.history_messages)),
-            )
-            r2.bind_run(connection, workspace_id, mission_id, run_id, request)
-            # The existing input event stores the explicit recovery acknowledgement.
-            if request.regenerate_from_run_id is not None:
-                pending_run = _load_run(connection, workspace_id, mission_id, run_id)
-                _append_event_in_transaction(connection, pending_run, "message_created", {
-                    "message_id": message_id, "role":"user",
-                    "regenerate_from_run_id":request.regenerate_from_run_id,
-                })
-            if request.approved_answers:
-                r2.seed_manifest(connection, workspace_id, mission_id, run_id, request, mission)
-            run = _load_run(connection, workspace_id, mission_id, run_id)
-            context = self._message_context(connection, run, validate_current=True)
-            if mission.status in {"blocked", "waiting_for_human"}:
-                connection.execute(
-                    "UPDATE missions SET status='active', state_version=state_version+1 "
-                    "WHERE workspace_id=? AND mission_id=?", (workspace_id, mission_id),
-                )
-            if request.regenerate_from_run_id is None:
-                _append_event_in_transaction(connection, run, "message_created", {"message_id": message_id, "role": "user"})
-            return TaskMessageSendReceipt(input_message=context.input,
-                run=_load_run(connection, workspace_id, mission_id, run_id)), True
+        if request.regenerate_from_run_id is None:
+            _append_event_in_transaction(connection, run, "message_created", {"message_id": message_id, "role": "user"})
+        return TaskMessageSendReceipt(input_message=context.input,
+            run=_load_run(connection, workspace_id, mission_id, run_id)), True
 
     def _validate_message_references(self, connection: sqlite3.Connection, run: RunSnapshot,
                                      references: list, *, current: bool) -> None:
@@ -2501,7 +2666,7 @@ class WorkspaceStore:
         request_sha256 = canonical_sha256(request)
         try:
             with self._write_transaction() as connection:
-                if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+                if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                     raise Path2StateError("task_dialogue_not_implemented")
                 replay = connection.execute(
                     """
@@ -3063,7 +3228,7 @@ class WorkspaceStore:
             "validate": "apply",
         }
         with self._write_transaction() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] != 6:
+            if connection.execute("PRAGMA user_version").fetchone()[0] not in {6, 7}:
                 raise Path2StateError("state_conflict")
             run = _load_run(connection, workspace_id, mission_id, run_id)
             if run.status != "running" or transitions.get(run.phase) != phase:
@@ -3202,7 +3367,7 @@ class WorkspaceStore:
                 if run.status != "running":
                     raise Path2StateError("state_conflict")
                 if (
-                    connection.execute("PRAGMA user_version").fetchone()[0] == 6
+                    connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}
                     and run.phase != "apply"
                 ):
                     raise Path2StateError("state_conflict")
@@ -3889,7 +4054,7 @@ class WorkspaceStore:
              _canonical_json(terminal.tool_receipt_ids),
              _canonical_json(terminal.source_refs)),
         )
-        if connection.execute("PRAGMA user_version").fetchone()[0] == 6:
+        if connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}:
             connection.execute(
                 """
                 UPDATE runs SET status=?, phase='terminal', finished_at=?, error_code=NULL
@@ -4113,7 +4278,7 @@ class WorkspaceStore:
                 if status == "partial":
                     raise Path2StateError("state_conflict")
                 now = _utc_now().isoformat()
-                if connection.execute("PRAGMA user_version").fetchone()[0] == 6:
+                if connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}:
                     connection.execute(
                         """
                         UPDATE runs SET status=?, phase='terminal', finished_at=?, error_code=?
@@ -4204,7 +4369,7 @@ class WorkspaceStore:
                     stopped = run
                 else:
                     now = _utc_now()
-                    is_v6 = connection.execute("PRAGMA user_version").fetchone()[0] == 6
+                    is_v6 = connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}
                     if is_v6:
                         connection.execute(
                             """
@@ -4275,7 +4440,7 @@ class WorkspaceStore:
                     """
                 ).fetchall()
                 now = _utc_now()
-                is_v6 = connection.execute("PRAGMA user_version").fetchone()[0] == 6
+                is_v6 = connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}
                 for workspace_id, mission_id, run_id, last_sequence in rows:
                     active = _load_run(connection, workspace_id, mission_id, run_id)
                     if active.status not in {"queued", "running"}:
@@ -4588,7 +4753,7 @@ class WorkspaceStore:
                     status="blocked",
                     detail="The Workspace database schema is unsupported.",
                     actual=f"user_version={version}; objects={len(objects)}",
-                    expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5 or v6 table set",
+                    expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5, v6 or v7 table set",
                 )
                 readwrite_check = StoreDiagnostic(
                     key="workspace_store_readwrite",
@@ -4621,7 +4786,7 @@ class WorkspaceStore:
                         status="ready",
                         detail=f"The Workspace database uses schema version {version}.",
                         actual=f"user_version={version}",
-                        expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5 or v6 table set",
+                        expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5, v6 or v7 table set",
                     )
         except WorkspaceSchemaUnsupportedError:
             schema_check = StoreDiagnostic(
@@ -4629,7 +4794,7 @@ class WorkspaceStore:
                 status="blocked",
                 detail="The Workspace database schema is unsupported.",
                 actual="unsupported",
-                expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5 or v6 table set",
+                expected=f"user_version={SCHEMA_VERSION}; exact v3, v4, v5, v6 or v7 table set",
             )
             readwrite_check = StoreDiagnostic(
                 key="workspace_store_readwrite",
@@ -4965,9 +5130,52 @@ def _load_provider_receipt(
 
 def _mission_from_row(connection: sqlite3.Connection, row: tuple) -> Mission:
     try:
-        attempt = _load_attempt(connection, row[0], row[9])
-        if attempt.status != "confirmed" or attempt.mission_id != row[1]:
-            raise WorkspaceStoreUnavailableError()
+        origin = None
+        if row[9] is not None:
+            attempt = _load_attempt(connection, row[0], row[9])
+            if attempt.status != "confirmed" or attempt.mission_id != row[1]:
+                raise WorkspaceStoreUnavailableError()
+        else:
+            if len(row) < 11 or row[10] is None:
+                raise WorkspaceStoreUnavailableError()
+            origin = ConversationMissionOrigin.model_validate_json(row[10])
+            parent = connection.execute("SELECT mission_id FROM workspace_conversations WHERE workspace_id=? AND conversation_id=?",
+                (row[0], origin.conversation_id)).fetchone()
+            source = connection.execute("SELECT body_json FROM conversation_messages WHERE workspace_id=? AND conversation_id=? AND message_id=?",
+                (row[0], origin.conversation_id, origin.message_id)).fetchone()
+            if parent != (row[1],) or not source or not source[0]:
+                raise WorkspaceStoreUnavailableError()
+            message = ConversationMessage.model_validate_json(source[0])
+            if ((message.workspace_id,message.conversation_id,message.message_id)!=(row[0],origin.conversation_id,origin.message_id)
+                or message.sha256!=origin.message_sha256 or message.role!="user"
+                or canonical_sha256(message.model_dump(mode="json",exclude={"sha256","task_message"}))!=message.sha256
+                or message.source_refs!=origin.source_refs):
+                raise WorkspaceStoreUnavailableError()
+            submission=connection.execute("SELECT input_message_id,turn_id,request_sha256,request_json FROM conversation_submissions WHERE workspace_id=? AND conversation_id=? AND client_request_id=?",
+                (row[0],origin.conversation_id,origin.client_request_id)).fetchone()
+            if submission is None or submission[0]!=message.message_id or submission[1] is None:
+                raise WorkspaceStoreUnavailableError()
+            turn=conversations.load_turn(None,connection,row[0],origin.conversation_id,submission[1])
+            if (turn.input_message_id!=message.message_id or turn.request.client_request_id!=origin.client_request_id
+                or turn.request_sha256!=submission[2] or _canonical_json(turn.request)!=submission[3]
+                or turn.status!="succeeded" or turn.provider_receipt.usage_status!="known"):
+                raise WorkspaceStoreUnavailableError()
+            goal_messages=[]
+            for reference in origin.goal.message_refs:
+                goal_row=connection.execute("SELECT body_json FROM conversation_messages WHERE workspace_id=? AND conversation_id=? AND message_id=?",
+                    (row[0],origin.conversation_id,reference.message_id)).fetchone()
+                if not goal_row or not goal_row[0]:
+                    raise WorkspaceStoreUnavailableError()
+                item=ConversationMessage.model_validate_json(goal_row[0])
+                if ((item.workspace_id,item.conversation_id,item.message_id)!=(row[0],origin.conversation_id,reference.message_id)
+                    or item.role!="user" or item.sha256!=reference.sha256
+                    or canonical_sha256(item.model_dump(mode="json",exclude={"sha256","task_message"}))!=item.sha256
+                    or any(ref not in origin.source_refs for ref in item.source_refs)):
+                    raise WorkspaceStoreUnavailableError()
+                goal_messages.append(item)
+            if not (any(origin.goal.text in item.content for item in goal_messages)
+                or origin.goal.text=="\n".join(item.content for item in goal_messages)):
+                raise WorkspaceStoreUnavailableError()
         refs = connection.execute(
             """
             SELECT workspace_id, source_id, revision_id, sha256, ordinal
@@ -4982,7 +5190,7 @@ def _mission_from_row(connection: sqlite3.Connection, row: tuple) -> Mission:
             workspace_id=row[0], mission_id=row[1], created_at=_parse_created_at(row[2]),
             state_version=row[3], status=row[4], title=row[5], goal=row[6],
             completion_criteria=_json_value(row[7]), scope_notes=_json_value(row[8]),
-            original_attempt_id=row[9],
+            original_attempt_id=row[9], conversation_origin=origin,
             source_refs=[
                 SourceIdentity(workspace_id=ref[0], source_id=ref[1],
                                revision_id=ref[2], sha256=ref[3])
@@ -5163,7 +5371,7 @@ def _load_terminal_receipt(
 def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> RunSnapshot:
     try:
         schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if schema_version == 6:
+        if schema_version in {6, 7}:
             phase_row = connection.execute(
                 "SELECT phase FROM runs WHERE workspace_id=? AND mission_id=? AND run_id=?",
                 (row[0], row[1], row[2]),

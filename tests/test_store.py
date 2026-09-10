@@ -236,7 +236,8 @@ class StoreTests(unittest.TestCase):
             mission_id = "00000000-0000-4000-8000-000000000012"
             run_id = "00000000-0000-4000-8000-000000000013"
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
-                from test_clarifications import strip_r2_fixture
+                from test_clarifications import strip_conversation_fixture
+                strip_conversation_fixture(connection)
                 connection.execute("DROP TABLE profile_interpretation_attempts")
                 connection.execute("ALTER TABLE runs DROP COLUMN phase")
                 connection.execute("PRAGMA user_version=5")
@@ -286,14 +287,14 @@ class StoreTests(unittest.TestCase):
                 self.assertTrue(store_module._schema_is_exact(connection))
             self.assertIsNone(legacy.migrate_profile_interpretations())
 
-    def test_initializes_exact_v4_schema_and_persists_after_restart(self) -> None:
+    def test_initializes_exact_v7_schema_and_persists_after_restart(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
             data_dir = Path(directory)
             store = WorkspaceStore.open(data_dir)
             self.assertEqual(store.db_path, data_dir.resolve() / "contextox.sqlite3")
             self.assertEqual(store.list_workspaces(), [])
             with closing(sqlite3.connect(store.db_path)) as connection, connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
                 self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "delete")
                 self.assertEqual(
                     [
@@ -302,7 +303,7 @@ class StoreTests(unittest.TestCase):
                             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                         ).fetchall()
                     ],
-                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs", *[name for name,_ in store_module.r2.TABLES], "profile_interpretation_attempts"]),
+                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs", *[name for name,_ in store_module.r2.TABLES], "profile_interpretation_attempts", *[name for name,_ in store_module.conversations.TABLES], "conversation_handoffs"]),
                 )
                 self.assertTrue(store_module._schema_is_exact(connection))
                 active_indexes = connection.execute(
@@ -1279,7 +1280,7 @@ class StoreTests(unittest.TestCase):
             with self.assertRaises(WorkspaceStoreUnavailableError):
                 WorkspaceStore.open(corrupt)
 
-            for label, version in (("older", 0), ("newer", 7)):
+            for label, version in (("older", 0), ("newer", 8)):
                 with self.subTest(label=label):
                     candidate = root / label
                     candidate.mkdir()
@@ -1341,7 +1342,7 @@ class StoreTests(unittest.TestCase):
             ),
             (
                 "newer",
-                lambda connection: connection.execute("PRAGMA user_version=7"),
+                lambda connection: connection.execute("PRAGMA user_version=8"),
             ),
         )
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
@@ -1453,7 +1454,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(v3_diagnostics["workspace_store_schema"].status, "ready")
             self.assertEqual(v3_diagnostics["workspace_store_open"].actual, "open")
             self.assertEqual(v3_diagnostics["workspace_store_readwrite"].status, "ready")
-            self.assertEqual(v3_diagnostics["workspace_store_schema"].actual, "user_version=6")
+            self.assertEqual(v3_diagnostics["workspace_store_schema"].actual, "user_version=7")
 
     def test_open_and_doctor_fail_closed_for_foreign_key_violations(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
@@ -1597,7 +1598,7 @@ class StoreTests(unittest.TestCase):
                     store.list_workspaces()
             self.assertFalse(db_path.exists())
 
-    def test_failed_initialization_rolls_back_partial_v4_schema(self) -> None:
+    def test_failed_initialization_rolls_back_partial_v7_schema(self) -> None:
         with tempfile.TemporaryDirectory(prefix="contextox-store-") as directory:
             db_path = Path(directory) / "contextox.sqlite3"
 
@@ -1619,7 +1620,7 @@ class StoreTests(unittest.TestCase):
 
             initialized = WorkspaceStore.open(directory)
             with closing(sqlite3.connect(initialized.db_path)) as connection, connection:
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
                 self.assertTrue(store_module._schema_is_exact(connection))
 
     def test_source_persistence_supports_four_media_types_restart_and_isolation(self) -> None:
@@ -1880,6 +1881,6 @@ class StoreTests(unittest.TestCase):
                             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                         ).fetchall()
                     ],
-                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs", *[name for name,_ in store_module.r2.TABLES], "profile_interpretation_attempts"]),
+                    sorted([*EXPECTED_V2_TABLE_NAMES, "run_message_inputs", *[name for name,_ in store_module.r2.TABLES], "profile_interpretation_attempts", *[name for name,_ in store_module.conversations.TABLES], "conversation_handoffs"]),
                 )
             self.assertEqual(len(store.list_workspaces()), 1)

@@ -713,7 +713,7 @@ class Mission(ContextOxModel):
     completion_criteria: list[Text]
     scope_notes: list[Text]
     original_attempt_id: ID | None
-    conversation_origin: ConversationMissionOrigin | None = None
+    conversation_origin: ConversationMissionOrigin | None = Field(default=None, json_schema_extra=lambda schema: schema.pop("default", None))
     source_refs: list[SourceIdentity] = Field(max_length=8)
 
     @model_serializer(mode="wrap")
@@ -729,6 +729,8 @@ class Mission(ContextOxModel):
             raise ValueError("Mission requires exactly one original source")
         if self.conversation_origin and self.conversation_origin.source_refs != self.source_refs:
             raise ValueError("Mission sources differ from its conversation origin")
+        if self.conversation_origin and self.conversation_origin.goal.text != self.goal:
+            raise ValueError("Mission goal differs from its conversation origin")
         if any(reference.workspace_id != self.workspace_id for reference in self.source_refs):
             raise ValueError("Mission source references must match workspace_id")
         return self
@@ -2501,6 +2503,9 @@ class WorkspaceConversation(ContextOxModel):
     mission_id: ID | None = None
     source_refs: list[SourceIdentity] = Field(default_factory=list, max_length=8)
     goal: ConversationGoal | None = None
+    active_turn_id: ID | None = None
+    last_submission_id: ID | None = None
+    last_handoff_id: ID | None = None
 
 
 class ConversationMessage(ContextOxModel):
@@ -2573,10 +2578,12 @@ class DiscussionProviderReceipt(ContextOxModel):
     receipt_id: ID
     created_at: UTC
     request_sha256: Hash
+    context_sha256: Hash | None = None
     p0_sha256: Hash
     output_schema_sha256: Hash
     config: ProviderConfigSnapshot
     status: ProviderReceiptStatus
+    request_started: StrictBool | None = None
     input_tokens: Count | None
     output_tokens: Count | None
     cache_hit_tokens: Count | None = None
@@ -2609,6 +2616,7 @@ class DiscussionTurn(ContextOxModel):
     input_message_id: ID
     request: ConversationMessageSendRequest
     request_sha256: Hash
+    context_sha256: Hash | None = None
     status: Literal["queued", "running", "succeeded", "blocked", "failed", "cancelled"]
     config: ProviderConfigSnapshot
     p0_sha256: Hash
@@ -2622,6 +2630,15 @@ class DiscussionTurn(ContextOxModel):
     handoff_error_code: Key | None = None
 
 
+class DiscussionMissionContext(ContextOxModel):
+    mission_id: ID
+    state_version: PositiveInt
+    goal: Text
+    draft: DefinitionDraft | None
+    clarifications: list[ClarificationRequest]
+    clarification_cases: list[ClarificationCase] = Field(default_factory=list, max_length=50)
+
+
 class DiscussionContext(ContextOxModel):
     conversation: WorkspaceConversation
     input: ConversationMessage
@@ -2631,7 +2648,7 @@ class DiscussionContext(ContextOxModel):
     source_profiles: list[ProfilePackV1] = Field(default_factory=list, max_length=8)
     excerpts: list[SourceExcerpt] = Field(default_factory=list, max_length=16)
     allowed_references: MessageReferences = Field(default_factory=list)
-    mission: MissionSnapshot | None = None
+    mission: DiscussionMissionContext | None = None
 
 
 class ConversationSubmissionReceipt(ContextOxModel):
