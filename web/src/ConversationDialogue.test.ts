@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationBelongsTo, conversationUsesTaskHistory, conversationReviewMatches, conversationPreviewTarget, discussionStatusLabel, recentConversationHistory, mergeConversationPage, selectedConversationHistory } from "./ConversationDialogue";
+import { conversationBelongsTo, conversationUsesTaskHistory, conversationReviewMatches, conversationPreviewTarget, conversationSendGuidance, discussionStatusLabel, recentConversationHistory, mergeConversationPage, selectedConversationHistory } from "./ConversationDialogue";
 import { reviewedAnswer, receiptMatchesReviewedAnswers, answersCanCollapse, suggestedAnswerItems, mergeReviewedSave } from "./ConversationAnswers";
 import { answerOmissions } from "./ClarificationAnswers";
 import type { MessageReference } from "./TaskDialogue";
@@ -28,6 +28,12 @@ describe("continuous conversation boundaries",()=>{
     expect(discussionStatusLabel("succeeded")).toBe("答复已更新");
     expect(discussionStatusLabel("cancelled")).toBe("讨论已停止");
     for(const state of ["queued","running","blocked","failed"] as const)expect(discussionStatusLabel(state)).not.toMatch(/[a-z]/);
+  });
+  it("explains source selection and automatic task start without implying workspace-wide search",()=>{
+    expect(conversationSendGuidance(false,0,false)).toContain("不会自动使用工作区全部资料");
+    expect(conversationSendGuidance(false,2,false)).toContain("自动形成任务并开始分析");
+    expect(conversationSendGuidance(true,2,false)).toContain("推进当前任务");
+    expect(conversationSendGuidance(true,2,true)).toContain("不自动排队");
   });
   it("uses discussion history for a newly saved or stale answer even while mission remains blocked",()=>{
     const state={selectedMission:{mission_id:"mission",status:"blocked"},missionSnapshot:null,latestDraft:{status:"partial"}} as unknown as import("./Path2Workbench").Path2WorkbenchState;

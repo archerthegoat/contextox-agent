@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 import uvicorn
-from contextox import agent, local_settings
+from contextox import agent, conversation_store, local_settings
 from contextox.api import create_app
 from contextox.models import (ProviderConfigSnapshot, SourceIdentity, UpdateDefinitionDraftCall,
     CreateClarificationCall, FinishRunCall, canonical_sha256)
@@ -32,7 +32,7 @@ class SyntheticProvider:
                     for i,q in enumerate(case['request']['questions']):
                         suggestions.append({'origin_run_id':case['request']['run_id'],'clarification_id':case['request']['clarification_id'],'request_sha256':case['request_sha256'],'question_index':i,'disposition':'answered','answer':'扣除已退款金额' if i==0 else '缺失金额单独列出','respondent':'合成业务负责人' if '负责人' in content else None,'basis':'本条合成验收回答' if '依据' in content else None,'evidence_refs':[],'targets':[]})
                 output['answer_suggestions']=suggestions
-        elif ('统计' in content or '开始' in content) and context['source_refs']:
+        elif conversation_store.is_explicit_work_instruction(content) and context['source_refs']:
             output.update(public_reply='【合成验收】目标与资料范围已明确，开始整理候选。',next_action='start_task',title='按地区统计订单金额',goal={'text':content,'message_refs':[{'message_id':item['message_id'],'sha256':item['sha256']}]})
         return ProviderCompletion('synthetic',json.dumps(output,ensure_ascii=False),'',(),'stop',ProviderUsage(20,20))
 

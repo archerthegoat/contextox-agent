@@ -4188,9 +4188,15 @@ function DefinitionPanel({ state, mode }: { state: Path2WorkbenchState; mode: "c
     </div>
   );
 }
-export function Path2Workbench({ state, activeArea }: { state: Path2WorkbenchState; activeArea: Path2AreaId }) {
+export function Path2Workbench({ state, activeArea, focusUploadRequest = 0 }: { state: Path2WorkbenchState; activeArea: Path2AreaId; focusUploadRequest?: number }) {
+  const surface=useRef<HTMLElement>(null);
+  useEffect(()=>{
+    if(activeArea!=="sources"||focusUploadRequest===0)return;
+    surface.current?.scrollTo({top:0,behavior:"smooth"});
+    requestAnimationFrame(()=>surface.current?.querySelector<HTMLElement>(".path2-file-picker")?.focus());
+  },[activeArea,focusUploadRequest]);
   return (
-    <section className="path2-surface" aria-label="Path 2 Workbench">
+    <section ref={surface} className="path2-surface" aria-label="Path 2 Workbench">
       <WorkspaceContext state={state} />
       <div className="path2-content" key={state.workspaceId ?? "no-workspace"}>
         {activeArea === "sources" ? <SourceUploadPanel state={state} /> : null}

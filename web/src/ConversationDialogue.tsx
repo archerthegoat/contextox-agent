@@ -16,6 +16,12 @@ const createKey = (ws: string) => `contextox.conversation-create:${ws}`;
 export function discussionStatusLabel(status: Turn["status"]) {
   return {queued:"准备答复…",running:"正在理解你的问题…",succeeded:"答复已更新",blocked:"讨论暂时受阻",failed:"本次讨论未完成",cancelled:"讨论已停止"}[status];
 }
+export function conversationSendGuidance(hasMission:boolean,sourceCount:number,active:boolean) {
+  if(active)return "可以编辑下一条草稿；本轮结束后再发送，不自动排队。";
+  if(sourceCount===0)return "当前未选择资料。可以先聊天；如需基于资料工作，请先选择本轮资料。系统不会自动使用工作区全部资料。";
+  if(!hasMission)return `已选择 ${sourceCount} 份资料。发送明确的工作指令（例如“请分析订单表中的地区和金额字段”）后，会自动形成任务并开始分析；普通询问仍保持讨论。`;
+  return `本轮将使用 ${sourceCount} 份资料。发送后会根据你的话继续讨论或推进当前任务。`;
+}
 export function conversationPreviewTarget(conversation: WorkspaceConversation | null, messages: ConversationMessage[], workspaceId: string | null): {reference: MessageReference | null; source: SourceIdentity | null} {
   const empty={reference:null,source:null};
   if(!conversation||conversation.workspace_id!==workspaceId||conversation.mission_id)return empty;
@@ -269,8 +275,11 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
 export type ConversationDialogueState=ReturnType<typeof useConversationDialogue>;
 
 export function ConversationDialogue({state,d,onReference,onSources,onHistory}: {state:Path2WorkbenchState;d:ConversationDialogueState;onReference:(ref:MessageReference)=>void;onSources:()=>void;onHistory:()=>void}) {
-  const scroll=useRef<HTMLDivElement>(null);const nearEnd=useRef(true);
+  const scroll=useRef<HTMLDivElement>(null);const nearEnd=useRef(true);const scopePanel=useRef<HTMLDetailsElement>(null);
+  const [scopeOpen,setScopeOpen]=useState(false);
   useEffect(()=>{nearEnd.current=true;},[d.conversation?.conversation_id]);
+  useEffect(()=>{setScopeOpen(false);},[d.conversation?.conversation_id,state.workspaceId]);
+  useEffect(()=>{if(scopeOpen)scopePanel.current?.scrollIntoView({block:"nearest"});},[scopeOpen]);
   useEffect(()=>{if(scroll.current&&nearEnd.current)scroll.current.scrollTop=scroll.current.scrollHeight;},[d.messages.at(-1)?.message_id,d.turn?.status]);
   const blocked=Boolean(state.workspaceId)&&!["ready","empty"].includes(state.sourceState.status)||d.loading||d.sending||d.active||Boolean(d.pendingId)||Boolean(d.pendingCreate)||!d.ready||d.unavailableSources.length>0||d.unsupportedHistory.length>0;
   return <div className="task-conversation continuous-conversation">
@@ -290,10 +299,10 @@ export function ConversationDialogue({state,d,onReference,onSources,onHistory}: 
       {d.needsConnection&&<div className="conversation-connect"><p>先连接模型，消息草稿已保留。</p><ModelSettings onSend={()=>void d.submit()} canSend={Boolean(d.text.trim())}/></div>}
       {!d.reviewReady&&<p role="status">正在核对回答审阅状态。若卡片保留了修改，请先在卡片中重新读取并核对；本轮尚未发送。</p>}
       {d.unsupportedHistory.length>0&&<p role="alert">已选的 {d.unsupportedHistory.length} 条历史属于任务前或澄清讨论，本轮任务分析不能携带。请展开历史选择取消这些项；系统未改动你的选择。</p>}
-      <details><summary>本次对话使用 {d.sourceRefs.length} 份资料 · 携带 {d.historyIds.length} 条历史</summary><p>资料范围随本次发送保存。所选历史最多 4 条；不会自动发送全部历史。</p>{state.sourceState.items.map(source=><label className="history-choice" key={source.revision_id}><input type="checkbox" checked={state.selectedSourceIds.includes(source.revision_id)} disabled={d.active||Boolean(d.pendingId)||(!state.selectedSourceIds.includes(source.revision_id)&&d.sourceRefs.length>=8)} onChange={()=>state.toggleSource(source.revision_id)}/><span>{source.original_name} · {source.revision_id.slice(0,8)}</span></label>)}{d.unavailableSources.map(ref=><p key={ref.revision_id}>来源版本已不可用：{ref.revision_id.slice(0,8)}<button type="button" onClick={()=>d.removeUnavailable(ref)}>从本轮范围移除</button></p>)}<button type="button" onClick={onSources}>添加资料 / 查看文件</button>{d.messages.map(message=><label className="history-choice" key={message.message_id}><input type="checkbox" checked={d.historyIds.includes(message.message_id)} disabled={Boolean(d.pendingId)||(!d.historyIds.includes(message.message_id)&&d.historyIds.length>=4)} onChange={event=>d.setHistoryIds(event.target.checked?[...d.historyIds,message.message_id]:d.historyIds.filter(id=>id!==message.message_id))}/><span>{message.role==='user'?'你':'Agent'}：{message.content.slice(0,90)}{d.taskHistoryOnly&&!message.task_message?"（本轮任务分析不可携带）":""}</span></label>)}</details>
+      <details ref={scopePanel} open={scopeOpen} onToggle={event=>setScopeOpen(event.currentTarget.open)} className="conversation-scope-picker"><summary>本轮资料 {d.sourceRefs.length} 份 · 历史 {d.historyIds.length} 条</summary><p>这里只使用你明确勾选的资料，系统不会自动带上工作区全部资料。</p>{state.sourceState.items.length===0?<p className="conversation-scope-empty">当前工作区还没有资料，请先从本机导入。</p>:<div role="group" aria-label="选择本轮资料">{state.sourceState.items.map(source=><label className="history-choice" key={source.revision_id}><input type="checkbox" checked={state.selectedSourceIds.includes(source.revision_id)} disabled={d.active||Boolean(d.pendingId)||(!state.selectedSourceIds.includes(source.revision_id)&&d.sourceRefs.length>=8)} onChange={()=>state.toggleSource(source.revision_id)}/><span>{source.original_name} · {state.selectedSourceIds.includes(source.revision_id)?"本轮已选":"未选择"}</span></label>)}</div>}{d.unavailableSources.map(ref=><p key={ref.revision_id}>来源版本已不可用：{ref.revision_id.slice(0,8)}<button type="button" onClick={()=>d.removeUnavailable(ref)}>从本轮范围移除</button></p>)}<button type="button" className="conversation-import-source" onClick={onSources}>从本机导入新资料</button><p className="conversation-history-heading">本轮携带的对话历史（最多 4 条）</p>{d.messages.map(message=><label className="history-choice" key={message.message_id}><input type="checkbox" checked={d.historyIds.includes(message.message_id)} disabled={Boolean(d.pendingId)||(!d.historyIds.includes(message.message_id)&&d.historyIds.length>=4)} onChange={event=>d.setHistoryIds(event.target.checked?[...d.historyIds,message.message_id]:d.historyIds.filter(id=>id!==message.message_id))}/><span>{message.role==='user'?'你':'Agent'}：{message.content.slice(0,90)}{d.taskHistoryOnly&&!message.task_message?"（本轮任务分析不可携带）":""}</span></label>)}</details>
       {d.references.map((ref,index)=><button type="button" className="reference-chip" key={index} disabled={Boolean(d.pendingId)} onClick={()=>d.setReferences(d.references.filter((_,i)=>i!==index))}>{referenceLabel(ref,state.sourceState.items)} ×</button>)}
       <label className="sr-only" htmlFor="conversation-input">与 Agent 对话</label><textarea id="conversation-input" rows={3} maxLength={4096} value={d.text} placeholder="说说你想弄清什么，也可以先添加资料" onChange={event=>d.setText(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();if(!blocked&&d.text.trim()){nearEnd.current=true;void d.submit();}}}}/>
-      <div className="conversation-send-row"><button type="button" onClick={onSources}>＋ 资料</button>{d.active?<button type="button" disabled={d.sending} onClick={()=>void d.cancel()}>停止分析</button>:<button className="path2-primary-button" disabled={blocked||!d.text.trim()} type="submit">{d.sending?'正在发送…':'发送 ↑'}</button>}</div><p className="composer-scope">{d.active?'可以编辑下一条草稿；本轮结束后再发送，不自动排队。':'发送会将当前消息、所选资料与历史交给已配置模型，并推进有预算的讨论或分析。'}</p>
+      <div className="conversation-send-row"><button type="button" aria-expanded={scopeOpen} onClick={()=>setScopeOpen(value=>!value)}>＋ 资料 · {d.sourceRefs.length}</button>{d.active?<button type="button" disabled={d.sending} onClick={()=>void d.cancel()}>停止分析</button>:<button className="path2-primary-button" disabled={blocked||!d.text.trim()} type="submit">{d.sending?'正在发送…':'发送 ↑'}</button>}</div><p className="composer-scope">{conversationSendGuidance(Boolean(d.conversation?.mission_id),d.sourceRefs.length,d.active)}</p>
     </form>
   </div>;
 }

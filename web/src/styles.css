@@ -2432,6 +2432,13 @@ a:focus-visible {
 .agent-led-shell .composer-scope { font-size: 9px; color: #93a0b2; line-height: 1.7; }
 .agent-led-shell .conversation-composer details { font-size: 10px; color: #7b8ba1; padding: 5px 0 9px; }
 .agent-led-shell .conversation-composer details[open] { max-height: 180px; overflow-y: auto; }
+.agent-led-shell .conversation-scope-picker[open] { margin-bottom: 6px; padding: 9px 10px; border: 1px solid #dbe6f3; border-radius: 8px; background: #f8fbff; }
+.agent-led-shell .conversation-scope-picker summary { color: #425772; font-weight: 700; }
+.agent-led-shell .conversation-scope-picker > p { margin: 8px 0 5px; line-height: 1.55; }
+.agent-led-shell .conversation-scope-empty { color: #7b5c20; }
+.agent-led-shell .conversation-import-source { margin: 6px 0; border-color: #bad0eb; color: #176aca; background: white; }
+.agent-led-shell .conversation-history-heading { padding-top: 6px; border-top: 1px solid #e5edf7; color: #536985; font-weight: 700; }
+.path2-file-picker:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
 .agent-led-shell .agent-led-layout.agent-expanded { grid-template-columns: 220px minmax(0, 1fr); }
 .agent-led-shell .agent-expanded > .center-panel, .agent-led-shell .agent-expanded > .agent-width-separator { display: none; }
 .agent-led-shell .agent-expanded .task-conversation { width: min(800px, 100%); margin: 0 auto; }
