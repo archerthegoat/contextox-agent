@@ -3443,13 +3443,30 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
                     {artifactState?.status === "loading" ? "读取中…" : "查看证据"}
                   </button>
                   {artifactState?.issue ? <IssueCallout issue={artifactState.issue} /> : null}
-                  {artifactState?.artifact ? (
-                    <div className="path2-artifact-preview">
+                  {artifactState?.artifact ? <SourceArtifactPreview artifactState={artifactState} onReadExcerpt={() => state.readSourceExcerpt(revision.revision_id)} /> : null}
+                  {state.workspaceId ? (
+                    <SourceProfilePanel
+                      workspaceId={state.workspaceId}
+                      revision={revision}
+                    />
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SourceArtifactPreview({artifactState,onReadExcerpt}: {artifactState:SourceArtifactState;onReadExcerpt:()=>Promise<unknown>}) {
+  return <div className="path2-artifact-preview">
                       <div className="path2-artifact-meta">
-                        <span>parser: {artifactState.artifact.parser_version}</span>
-                        <StatusPill status={artifactState.artifact.parse_status}>{sourceParseLabel(artifactState.artifact.parse_status)}</StatusPill>
+                        <span>parser: {artifactState.artifact!.parser_version}</span>
+                        <StatusPill status={artifactState.artifact!.parse_status}>{sourceParseLabel(artifactState.artifact!.parse_status)}</StatusPill>
                       </div>
-                      {artifactState.artifact.tables.map((table) => (
+                      {artifactState.artifact!.tables.map((table) => (
                         <div className="path2-table-preview" key={table.table_id}>
                           <strong>表 {table.table_id || "根表"}</strong>
                           <small>{table.row_count.toLocaleString()} 行 · {table.columns.length} 列 · 重复行 {table.duplicate_row_count.toLocaleString()}</small>
@@ -3469,28 +3486,26 @@ function SourceUploadPanel({ state }: { state: Path2WorkbenchState }) {
                           ) : null}
                         </div>
                       ))}
-                      <button type="button" className="path2-secondary-button" onClick={() => void state.readSourceExcerpt(revision.revision_id)}>
+                      <button type="button" className="path2-secondary-button" onClick={() => void onReadExcerpt()}>
                         {artifactState.excerpt ? "重新读取片段" : "读取证据片段"}
                       </button>
                       {artifactState.excerpt ? (
                         <pre className="path2-excerpt"><code>{artifactState.excerpt.text}</code>{artifactState.excerpt.truncated ? "\n…展示已截断" : ""}</pre>
                       ) : null}
-                    </div>
-                  ) : null}
-                  {state.workspaceId ? (
-                    <SourceProfilePanel
-                      workspaceId={state.workspaceId}
-                      revision={revision}
-                    />
-                  ) : null}
-                </article>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
+                    </div>;
+}
+
+export function ConversationSourcePreview({state,source}: {state:Path2WorkbenchState;source:SourceIdentity}) {
+  const revision=state.sourceState.items.find(item=>sourceIdentityEquals(sourceIdentityFromRevision(item),source));
+  const readable=source.workspace_id===state.workspaceId&&revision?.permission_status==='read_allowed';
+  const artifact=state.sourceArtifacts[source.revision_id];
+  useEffect(()=>{if(readable&&!artifact?.artifact&&artifact?.status!=='loading')void state.loadSourceArtifact(source.revision_id);},[source.workspace_id,source.revision_id,source.sha256,readable]);
+  if(!readable)return <section className="mission-overview"><h2>本轮资料暂不可预览</h2><p role="alert">资料版本或读取权限已变化。请在右侧核对本轮范围；不会自动换用其他版本。</p></section>;
+  return <section className="mission-overview"><p className="path2-eyebrow">本轮讨论的资料</p><h2>{revision.original_name}</h2><p>正在展示已发送资料的精确版本。其他资料可从左侧打开，手动查看会暂停跟随。</p>
+    {!artifact||artifact.status==='loading'?<p role="status">正在读取资料预览…</p>:null}
+    {artifact?.issue&&<IssueCallout issue={artifact.issue}/>}
+    {artifact?.artifact&&<SourceArtifactPreview artifactState={artifact} onReadExcerpt={()=>state.readSourceExcerpt(source.revision_id)}/>}
+  </section>;
 }
 
 function SourceProfilePanel({

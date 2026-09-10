@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { conversationBelongsTo, recentConversationHistory, mergeConversationPage, selectedConversationHistory } from "./ConversationDialogue";
-import { reviewedAnswer, suggestedAnswerItems, mergeReviewedSave } from "./ConversationAnswers";
+import { conversationBelongsTo, conversationPreviewTarget, discussionStatusLabel, recentConversationHistory, mergeConversationPage, selectedConversationHistory } from "./ConversationDialogue";
+import { reviewedAnswer, answersCanCollapse, suggestedAnswerItems, mergeReviewedSave } from "./ConversationAnswers";
 import { answerOmissions } from "./ClarificationAnswers";
+import type { MessageReference } from "./TaskDialogue";
 import type { components } from "./generated/api";
 
 const hash="a".repeat(64);
@@ -10,6 +11,24 @@ const item:components["schemas"]["ClarificationCase"]={request:{workspace_id:"ws
 const suggestion:components["schemas"]["DiscussionAnswerSuggestion"]={origin_run_id:"origin",clarification_id:"question",request_sha256:hash,question_index:0,disposition:"answered",answer:"退款不纳入"};
 
 describe("continuous conversation boundaries",()=>{
+  it("follows only the latest submitted source snapshot, preferring its explicit evidence",()=>{
+    const source={workspace_id:"ws",source_id:"s",revision_id:"r",sha256:hash};
+    const other={...source,source_id:"s2",revision_id:"r2"};
+    const chat={workspace_id:"ws",conversation_id:"chat",title:"讨论",created_at:"2026-09-10T00:00:00Z",state_version:1,source_refs:[other]};
+    const input:components["schemas"]["ConversationMessage"]={workspace_id:"ws",conversation_id:"chat",message_id:"m",role:"user",content:"先看看资料",created_at:chat.created_at,sha256:hash,source_refs:[source,other]};
+    expect(conversationPreviewTarget(chat,[],"ws")).toEqual({reference:null,source:null});
+    expect(conversationPreviewTarget(chat,[input],"ws")).toEqual({reference:null,source});
+    const reference:MessageReference={kind:"source_column",source_ref:other,table_id:"orders",column_name:"amount"};
+    expect(conversationPreviewTarget(chat,[input,{...input,message_id:"reply",role:"assistant",references:[reference]}],"ws")).toEqual({reference,source:null});
+    expect(conversationPreviewTarget(chat,[input,{...input,message_id:"next",source_refs:[]}],"ws")).toEqual({reference:null,source:null});
+    expect(conversationPreviewTarget(chat,[input],"other-workspace")).toEqual({reference:null,source:null});
+    expect(conversationPreviewTarget({...chat,mission_id:"mission"},[input],"ws")).toEqual({reference:null,source:null});
+  });
+  it("labels every discussion state in user-facing Chinese",()=>{
+    expect(discussionStatusLabel("succeeded")).toBe("答复已更新");
+    expect(discussionStatusLabel("cancelled")).toBe("讨论已停止");
+    for(const state of ["queued","running","blocked","failed"] as const)expect(discussionStatusLabel(state)).not.toMatch(/[a-z]/);
+  });
   it("rejects cross-workspace conversation and source identities",()=>{
     const conversation={workspace_id:"ws",conversation_id:"chat",title:"讨论",created_at:"2026-09-10T00:00:00Z",state_version:1,source_refs:[]};
     expect(conversationBelongsTo(conversation,"ws","chat")).toBe(true);
@@ -48,6 +67,11 @@ describe("continuous conversation boundaries",()=>{
   it("pins the reviewed saved version and approval, while an edit requests a new version",()=>{
     const items=suggestedAnswerItems(item,[{...suggestion,respondent:"业务同事",basis:"本轮明确回答"}]);
     const saved:components["schemas"]["ClarificationCase"]={...item,review_state:"approved",latest_answer:{workspace_id:"ws",mission_id:"mission",origin_run_id:"origin",clarification_id:"question",version:2,request_sha256:hash,review_draft:{draft_id:"draft",version:1,sha256:hash},source_refs:[],items,saved_by:"local-owner",created_at:"2026-09-10T00:00:00Z",sha256:hash},latest_approval:{workspace_id:"ws",mission_id:"mission",origin_run_id:"origin",clarification_id:"question",answer_version:2,answer_sha256:hash,approval_id:"approval",approved_by:"local-owner",approved_at:"2026-09-10T00:00:00Z"}};
+    expect(answersCanCollapse([saved],{"origin/question":items},false,false,null)).toBe(true);
+    expect(answersCanCollapse([saved],{"origin/question":[{...items[0],answer:"修改"}]},false,false,null)).toBe(false);
+    expect(answersCanCollapse([saved],{"origin/question":items},true,false,null)).toBe(false);
+    expect(answersCanCollapse([saved],{"origin/question":items},false,true,null)).toBe(false);
+    expect(answersCanCollapse([{...saved,review_state:"stale"}],{"origin/question":items},false,false,null)).toBe(false);
     const other={...item,request:{...item.request,clarification_id:"other-question"}};
     const merged=mergeReviewedSave({mission_state_version:5,items:[item,other]},{operation:"save",client_request_id:"save-id",answer:saved.latest_answer!,approval:null,mission_state_version:6});
     expect(merged.mission_state_version).toBe(6);

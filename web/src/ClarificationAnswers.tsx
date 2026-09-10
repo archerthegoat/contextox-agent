@@ -66,16 +66,17 @@ export function AnswerForm({request, latest, draft, disabled, onSave, onDirty, i
   useEffect(() => {
     if (!dirty && initial.current !== (latest?.sha256 ?? "")) {setItems(latest?.items ?? blankAnswers(request)); initial.current = latest?.sha256 ?? "";}
   }, [latest, request, dirty]);
+  const observeDirty = useRef(onDirty); observeDirty.current = onDirty;
   useEffect(() => {
-    onDirty(dirty);
+    observeDirty.current(dirty);
     const beforeUnload = (event: BeforeUnloadEvent) => {if (dirty) {event.preventDefault(); event.returnValue = "";}};
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
-  }, [dirty, onDirty]);
+  }, [dirty]);
   const update = (index: number, value: Partial<AnswerItem>) => {setDirty(true); setItems(old => old.map((item, i) => i === index ? {...item, ...value} : item));};
   const available = draftTargets(draft);
   return <form className="clarification-answer-form" onSubmit={event => {event.preventDefault(); const missing = answerOmissions(items, request.questions.length); setIssues(missing); if (!missing.length) void onSave(items).then(() => {setDirty(false);}).catch(() => { /* Parent retains input and the original request identifier. */ });}}>
-    {latest && <p role="status">修改后保存为整份新版本，需要重新批准。旧版本保留供历史核对。</p>}
+    {latest && <p role="status">{dirty ? "修改后保存为整份新版本，需要重新批准。旧版本保留供历史核对。" : `当前已保存 v${latest.version}。编辑后需要保存新版本并重新确认。`}</p>}
     {request.questions.map((question, index) => {
       const item = items[index];
       return <fieldset disabled={disabled} key={index}><legend>{index + 1}. {question.question}</legend>

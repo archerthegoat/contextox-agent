@@ -184,6 +184,15 @@ describe("ContextOx Workbench v3 content boundaries", () => {
 
 
 describe("field semantic review", () => {
+  it("opens the recorded answer impact only for the current scoped terminal analysis",()=>{
+    const path2={workspaceId:"ws",selectedMission:{mission_id:"mission"},latestDraft:null,sourceState:{items:[]},runSnapshot:{workspace_id:"ws",mission_id:"mission",run_id:"run",status:"completed",approved_answers:[{}]}} as unknown as import("./Path2Workbench").Path2WorkbenchState;
+    const render=()=>renderToStaticMarkup(createElement(RelationshipGraph,{path2,onReference:()=>{}}));
+    expect(render()).toContain("正在读取本轮回答及草案变化");
+    path2.runSnapshot!.status="running";expect(render()).not.toContain("正在读取本轮回答及草案变化");
+    path2.runSnapshot!.status="partial";expect(render()).toContain("正在读取本轮回答及草案变化");
+    path2.runSnapshot!.workspace_id="other";expect(render()).not.toContain("正在读取本轮回答及草案变化");
+    path2.runSnapshot!.workspace_id="ws";path2.runSnapshot!.approved_answers=[];expect(render()).not.toContain("正在读取本轮回答及草案变化");
+  });
   it("shows a supplied missing-value policy and a separate unknown dimension without claiming approval", () => {
     const field: DefinitionDraft["fields"][number] = {field_key:"amount", name:"金额", meaning:"金额（元）", value_type:"decimal", grain:"每订单",
       rule:"源金额", time_basis:null, null_handling:"缺失金额行排除",

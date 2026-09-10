@@ -13,6 +13,26 @@ const conversationKey = (ws: string) => `contextox.conversation:${ws}`;
 const submissionKey = (ws: string, id: string) => `contextox.conversation-submission:${ws}/${id}`;
 const createKey = (ws: string) => `contextox.conversation-create:${ws}`;
 
+export function discussionStatusLabel(status: Turn["status"]) {
+  return {queued:"准备答复…",running:"正在理解你的问题…",succeeded:"答复已更新",blocked:"讨论暂时受阻",failed:"本次讨论未完成",cancelled:"讨论已停止"}[status];
+}
+export function conversationPreviewTarget(conversation: WorkspaceConversation | null, messages: ConversationMessage[], workspaceId: string | null): {reference: MessageReference | null; source: SourceIdentity | null} {
+  const empty={reference:null,source:null};
+  if(!conversation||conversation.workspace_id!==workspaceId||conversation.mission_id)return empty;
+  const current=messages.filter(message=>message.workspace_id===workspaceId&&message.conversation_id===conversation.conversation_id);
+  let lastInput=current.length-1;
+  while(lastInput>=0&&current[lastInput].role!=='user')lastInput--;
+  if(lastInput<0)return empty;
+  const scope=current[lastInput].source_refs??[];
+  // Only persisted messages from the latest submitted exchange drive the preview.
+  // Composer selections and imported files are not a submitted scope.
+  for(const message of current.slice(lastInput).reverse())for(const reference of message.references??[]) {
+    const source=reference.kind==='source_column'?reference.source_ref:reference.kind==='source_excerpt'?reference.evidence_ref:null;
+    if(source&&source.workspace_id===workspaceId&&scope.some(item=>sourceIdentityEquals(item,source)))return {reference,source:null};
+  }
+  return {reference:null,source:scope.find(source=>source.workspace_id===workspaceId)??null};
+}
+
 export function conversationError(error: unknown) {
   const code = error instanceof ApiRequestError ? error.code : null;
   return ({conversation_not_implemented:"此资料库需要显式迁移后才能使用连续对话，现有历史可继续查看。",conversation_stale:"会话版本已变化。请刷新核对当前目标与资料后重新发送。",message_context_scope_mismatch:"历史、草案或回答引用了本轮未选资料。请调整范围，系统不会自动补回。",workspace_store_busy:"已有模型工作正在执行，请稍后发送。草稿已保留。",conversation_submission_not_found:"尚未查到本次发送。这不能证明请求未执行，请保留原标识继续核对。",source_identity_stale:"资料版本已变化，请重新选择当前版本。"} as Record<string,string>)[code ?? ""] ?? (error instanceof ApiRequestError ? `操作未完成：${code ?? error.message}` : error instanceof Error ? error.message : "连接中断，结果待核对。请勿重复发送。");
@@ -244,7 +264,7 @@ export function ConversationDialogue({state,d,onReference,onSources,onHistory}: 
       {d.cursor&&<button disabled={d.loading} onClick={()=>void d.more()}>加载更早消息</button>}
       {!d.messages.length&&<div className="conversation-welcome"><p>你好，有什么想一起弄清楚的？</p><p>可以先聊业务问题，也可以从手头的资料开始。我会把相关资料和整理过程放在工作区，方便你随时核对。</p></div>}
       {d.messages.map(message=><article className={`conversation-message message-${message.role}`} key={message.message_id}><header><strong>{message.role==='user'?'你':'数契 Agent'}</strong><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time></header><p>{message.content}</p>{(message.references ?? []).map((ref,i)=><button className="reference-chip" key={i} onClick={()=>onReference(ref)}>{referenceLabel(ref,state.sourceState.items)}</button>)}</article>)}
-      {d.turn&&<div className="conversation-activity" role="status"><strong>讨论回合：{statusLabel(d.turn.status)}</strong>{d.turn.error_code&&<p>讨论未完成：{d.turn.error_code}</p>}{d.turn.handoff_error_code&&<p>讨论结束，但任务交接未完成：{d.turn.handoff_error_code}。请先核对当前状态。</p>}</div>}
+      {d.turn&&<div className="conversation-activity" role="status"><strong>{discussionStatusLabel(d.turn.status)}</strong>{d.turn.error_code&&<p>讨论未完成：{d.turn.error_code}</p>}{d.turn.handoff_error_code&&<p>讨论结束，但任务交接未完成：{d.turn.handoff_error_code}。请先核对当前状态。</p>}</div>}
       {state.runSnapshot&&<div className="conversation-activity"><strong>任务分析：{statusLabel(state.runSnapshot.status)}</strong>{state.runSnapshot.error_code&&<p>{state.runSnapshot.error_code}</p>}<button onClick={onHistory}>查看执行过程</button></div>}
       {d.conversation?.mission_id&&<ConversationAnswers key={`${d.conversation.workspace_id}/${d.conversation.conversation_id}`} state={state} conversation={d.conversation} suggestions={d.turn?.output?.answer_suggestions ?? []} onUpdated={d.refresh}/>}
     </div>
