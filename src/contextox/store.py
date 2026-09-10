@@ -26,6 +26,7 @@ from contextox.models import (
     ContextPacketManifest,
     ContextSnapshot,
     DefinitionDraft,
+    DefinitionField,
     DomainRejection,
     DomainToolCall,
     EvidenceLocator,
@@ -3129,27 +3130,10 @@ class WorkspaceStore:
             valid_paths.add(path)
             obligations[path] = False
 
-        covered: set[str] = set()
         for question in questions:
             paths = set(question.related_definition_paths)
             if not paths or not paths.issubset(valid_paths):
                 raise Path2StateError("semantic_definition_path_invalid")
-            covered_obligations = paths.intersection(obligations)
-            if covered_obligations and (
-                not question.suggested_owner_role
-                or not question.suggested_owner_role.strip()
-                or not question.evidence_requested
-                or any(not item.strip() for item in question.evidence_requested)
-            ):
-                raise Path2StateError("semantic_handoff_incomplete")
-            if (
-                question.blocking_impact != "blocking"
-                and any(obligations[path] for path in covered_obligations)
-            ):
-                raise Path2StateError("semantic_clarification_impact_conflict")
-            covered.update(covered_obligations)
-        if set(obligations) - covered:
-            raise Path2StateError("semantic_clarification_coverage_incomplete")
         return obligations
 
     def apply_semantic_proposal(
@@ -3207,6 +3191,13 @@ class WorkspaceStore:
                     raise Path2StateError("state_conflict")
 
                 self._validate_run_evidence_refs(connection, run, application.source_refs)
+                for candidate in [*application.fields, *application.relationships]:
+                    identities = ([column.source_ref for column in candidate.source_columns]
+                                  if isinstance(candidate, DefinitionField)
+                                  else [candidate.left.source_ref, candidate.right.source_ref])
+                    covered = {canonical_sha256(_source_identity(ref)) for ref in candidate.source_refs}
+                    if any(canonical_sha256(ref) not in covered for ref in identities):
+                        raise Path2StateError("semantic_evidence_incomplete")
                 self._validate_run_evidence_refs(
                     connection,
                     run,
@@ -3219,7 +3210,7 @@ class WorkspaceStore:
 
                 projected = latest
                 update_call: DomainToolCall | None = None
-                if application.action in {"draft_and_clarify", "draft_and_submit"}:
+                if application.action in {"draft_and_clarify", "draft_and_submit", "draft_only"}:
                     update_call = TypeAdapter(DomainToolCall).validate_python({
                         "call_id": "semantic_update_v1",
                         "name": "update_definition_draft",
@@ -3258,8 +3249,6 @@ class WorkspaceStore:
                     )
                     if application.action == "draft_and_submit" and obligations:
                         raise Path2StateError("semantic_clarification_required")
-                    if application.action == "draft_and_clarify" and not obligations:
-                        raise Path2StateError("semantic_proposal_invalid")
 
                 required_tool_calls = 2 if update_call is not None else 1
                 if required_tool_calls > run.budget.max_tool_calls:

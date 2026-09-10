@@ -90,13 +90,18 @@ Return exactly one JSON object matching the supplied SemanticProposalV1 schema. 
 Use only the current ContextPlanV1. Preserve unknown business meaning as null plus an explicit unknown reason.
 Use only supplied opaque handles. Every observed source claim and candidate supported by source data must carry a matching evidence handle.
 Task instructions and approved human answers are business provenance, not observed source evidence. Never invent approval or Mission completion.
-Choose one action: answer_only, draft_and_clarify, draft_and_submit, or clarify_only. The application validates and applies the proposal atomically.
+Use selected source excerpts as evidence. Partial/not_read coverage means uninspected content, not proof that the source lacks a fact.
+For draft requests, return the requested candidate fields and relationships: draft_and_clarify with up to three key questions, otherwise draft_only. Use answer_only for questions needing no draft change. Reserve draft_and_submit for explicit review requests.
+Send only new or changed fields/relationships; omitted existing items and dimensions are preserved. Approved human answers resolve their target definitions as business provenance. Keep unrelated unknowns visible without asking every question now.
+Questions may use targets [{kind: field or relationship, key: candidate key, property: definition dimension}]; the program builds exact paths. Owner and handoff metadata may be omitted. Public prose uses brief @source/table/column labels; put exact handles in evidence_handles, not prose.
+The application validates and applies the proposal atomically. Omitted dimensions on new fields remain unknown.
 Schema: """ + _SCHEMA_TEXT + "\nMinimal valid example: " + _EXAMPLE_TEXT
 P0_SEMANTIC_PROPOSAL_SHA256 = canonical_sha256({"text": P0_SEMANTIC_PROPOSAL})
 PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256 = "2ee5d7b89eaf5cf61be546cca69479410119e98d11dcbf081fdc8f7e08b81e16"
 SUPPORTED_SEMANTIC_HASH_PAIRS = frozenset({
     (P0_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
     (PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
+    ("7617399876810be036c322ce0cdd2d56e610f958eadf1ad21194bb21b348e790", EMPTY_TOOL_SCHEMA_SHA256),
 })
 
 
@@ -126,18 +131,41 @@ def _projected_draft(
     relationships = {
         item.relationship_key: item for item in current.relationships
     } if current else {}
-    normalized_fields = [DefinitionField.model_validate(adapter.field(item)) for item in proposal.fields]
-    normalized_relationships = [
-        RelationshipCandidate.model_validate(adapter.relationship(item))
-        for item in proposal.relationships
-    ]
+    normalized_fields = []
+    for item in proposal.fields:
+        value = adapter.field(item)
+        previous = fields.get(item.field_key)
+        if previous is not None:
+            omitted = set(type(item.semantics).model_fields) - item.semantics.model_fields_set
+            for name in omitted:
+                value[name] = getattr(previous, name)
+            value["unknowns"] = [unknown for unknown in value["unknowns"] if unknown["property_path"] not in omitted]
+            value["unknowns"].extend(unknown.model_dump(mode="json") for unknown in previous.unknowns
+                                     if unknown.property_path in omitted)
+        normalized_fields.append(DefinitionField.model_validate(value))
+    normalized_relationships = []
+    for item in proposal.relationships:
+        value = adapter.relationship(item)
+        previous = relationships.get(item.relationship_key)
+        if previous is not None:
+            for name in ("join_rule", "grain_notes", "risks", "unknowns"):
+                if name not in item.model_fields_set:
+                    value[name] = previous.model_dump(mode="json")[name]
+        for name in ("join_rule", "grain_notes"):
+            paths = {name, f"{item.relationship_key}.{name}"}
+            if value[name] is not None:
+                value["unknowns"] = [unknown for unknown in value["unknowns"] if unknown["property_path"] not in paths]
+            elif not any(unknown["property_path"] in paths for unknown in value["unknowns"]):
+                value["unknowns"].append({"property_path":name, "reason":"模型未提供，待补充"})
+        normalized_relationships.append(RelationshipCandidate.model_validate(value))
     adapter.validate_update(
         [item.model_dump(mode="json") for item in normalized_fields],
         [item.model_dump(mode="json") for item in normalized_relationships],
     )
     fields.update({item.field_key: item for item in normalized_fields})
     relationships.update({item.relationship_key: item for item in normalized_relationships})
-    unresolved = list(proposal.unresolved_items)
+    unresolved = (list(proposal.unresolved_items) if "unresolved_items" in proposal.model_fields_set
+                  else list(current.unresolved_items) if current else [])
     return list(fields.values()), list(relationships.values()), unresolved
 
 
@@ -186,37 +214,25 @@ def _question_contract(
 
     if proposal.action == "draft_and_submit" and obligations:
         raise SemanticProposalFailure("semantic_clarification_required")
-    if proposal.action == "draft_and_clarify" and not obligations:
-        raise SemanticProposalFailure("semantic_proposal_invalid")
-
-    covered: set[str] = set()
     questions: list[ClarificationQuestion] = []
     for question in proposal.questions:
         paths = list(question.related_definition_paths)
+        for target in question.targets:
+            collection = "fields" if target.kind == "field" else "relationships"
+            path = f"{collection}.{target.key}"
+            if target.property is not None:
+                path += f".{target.property}"
+            paths.append(path)
+        paths = list(dict.fromkeys(paths))
         if any(path not in valid_paths for path in paths):
             raise SemanticProposalFailure("semantic_definition_path_invalid")
-        covered_obligations = set(paths).intersection(obligations)
-        if covered_obligations and (
-            not question.suggested_owner_role
-            or not question.suggested_owner_role.strip()
-            or not question.evidence_requested
-            or any(not item.strip() for item in question.evidence_requested)
-        ):
-            raise SemanticProposalFailure("semantic_handoff_incomplete")
-        if (
-            question.blocking_impact != "blocking"
-            and any(obligations[path] for path in covered_obligations)
-        ):
-            raise SemanticProposalFailure("semantic_clarification_impact_conflict")
-        covered.update(covered_obligations)
-        values = question.model_dump(mode="json", exclude={"evidence_handles"})
+        values = question.model_dump(mode="json", exclude={"evidence_handles", "targets"})
+        values["related_definition_paths"] = paths
         values["source_refs"] = [
             item.model_dump(mode="json")
             for item in _resolved_evidence(adapter, question.evidence_handles)
         ]
         questions.append(ClarificationQuestion.model_validate(values))
-    if set(obligations) - covered:
-        raise SemanticProposalFailure("semantic_clarification_coverage_incomplete")
     return questions
 
 
@@ -227,7 +243,7 @@ def normalize_semantic_proposal(
     """Resolve opaque capabilities and validate the complete projected result."""
 
     try:
-        if proposal.action in {"draft_and_clarify", "draft_and_submit"}:
+        if proposal.action in {"draft_and_clarify", "draft_and_submit", "draft_only"}:
             fields, relationships, unresolved_items = _projected_draft(adapter, proposal)
         else:
             current = adapter.current_draft

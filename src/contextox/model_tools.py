@@ -154,21 +154,52 @@ class ContextPlanV1(ContextOxModel):
     approved_answers: list[dict[str, Any]] = Field(max_length=50)
 
 
+class CandidateSemantics(FieldSemantics):
+    """Omitted candidate dimensions remain unknown; legacy tool inputs stay strict."""
+
+    meaning: SemanticValue = Field(default_factory=lambda: SemanticValue(value=None, unknown_reason="模型未提供，待补充"))
+    value_type: SemanticKey = Field(default_factory=lambda: SemanticKey(value=None, unknown_reason="模型未提供，待补充"))
+    grain: SemanticValue = Field(default_factory=lambda: SemanticValue(value=None, unknown_reason="模型未提供，待补充"))
+    rule: SemanticValue = Field(default_factory=lambda: SemanticValue(value=None, unknown_reason="模型未提供，待补充"))
+    time_basis: SemanticValue = Field(default_factory=lambda: SemanticValue(value=None, unknown_reason="模型未提供，待补充"))
+    null_handling: SemanticValue = Field(default_factory=lambda: SemanticValue(value=None, unknown_reason="模型未提供，待补充"))
+
+
+class SemanticFieldInput(FieldInput):
+    semantics: CandidateSemantics = Field(default_factory=CandidateSemantics)
+
+
+class SemanticRelationshipInput(RelationshipInput):
+    join_rule: Text | None = None
+    grain_notes: Text | None = None
+    risks: list[Text] = Field(default_factory=list, max_length=100)
+    unknowns: list[UnknownItem] = Field(default_factory=list, max_length=100)
+
+
+class SemanticQuestionTarget(ContextOxModel):
+    kind: Literal["field", "relationship"]
+    key: Key
+    property: Key | None = None
+
+
 class SemanticQuestionInput(ContextOxModel):
     """Question paths target the projected draft produced by this proposal."""
 
     question: Text
     why_needed: Text
     expected_answer_type: AnswerType
-    suggested_owner_role: Key | None
-    related_definition_paths: list[Key] = Field(min_length=1, max_length=100)
-    evidence_requested: list[Text]
-    examples_or_options: list[Text]
-    blocking_impact: Literal["blocking", "non_blocking"]
-    evidence_handles: list[Handle]
+    suggested_owner_role: Key | None = None
+    targets: list[SemanticQuestionTarget] = Field(default_factory=list, max_length=100)
+    related_definition_paths: list[Key] = Field(default_factory=list, max_length=100)
+    evidence_requested: list[Text] = Field(default_factory=list, max_length=100)
+    examples_or_options: list[Text] = Field(default_factory=list, max_length=100)
+    blocking_impact: Literal["blocking", "non_blocking"] = "blocking"
+    evidence_handles: list[Handle] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def validate_paths(self) -> SemanticQuestionInput:
+        if not self.targets and not self.related_definition_paths:
+            raise ValueError("a question needs a draft target")
         if len(set(self.related_definition_paths)) != len(self.related_definition_paths):
             raise ValueError("related_definition_paths must be unique")
         if len(set(self.evidence_handles)) != len(self.evidence_handles):
@@ -182,8 +213,8 @@ class SemanticProposalV1(ContextOxModel):
     version: Literal["v1"]
     action: SemanticAction
     public_answer: FinalOutput
-    fields: list[FieldInput] = Field(default_factory=list, max_length=100)
-    relationships: list[RelationshipInput] = Field(default_factory=list, max_length=100)
+    fields: list[SemanticFieldInput] = Field(default_factory=list, max_length=100)
+    relationships: list[SemanticRelationshipInput] = Field(default_factory=list, max_length=100)
     unresolved_items: list[Text] = Field(default_factory=list, max_length=100)
     questions: list[SemanticQuestionInput] = Field(default_factory=list, max_length=20)
     evidence_handles: list[Handle] = Field(default_factory=list, max_length=100)
@@ -204,8 +235,8 @@ class SemanticProposalV1(ContextOxModel):
             raise ValueError("clarify_only requires questions and no draft changes")
         if self.action == "draft_and_clarify" and not self.questions:
             raise ValueError("draft_and_clarify requires questions")
-        if self.action == "draft_and_submit" and self.questions:
-            raise ValueError("draft_and_submit cannot contain questions")
+        if self.action in {"draft_and_submit", "draft_only"} and self.questions:
+            raise ValueError("this action cannot contain questions")
         return self
 
 

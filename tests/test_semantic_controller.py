@@ -85,8 +85,9 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
         self.assertNotIn("reasoning_effort", payload)
 
     def test_prompt_schema_is_compact_and_keeps_nested_contract(self):
-        self.assertLess(len(P0_SEMANTIC_PROPOSAL.encode("utf-8")), 5500)
-        self.assertIn('"FieldInput"', P0_SEMANTIC_PROPOSAL)
+        # The product limit applies to the full request, not an obsolete
+        # standalone schema size before candidate targets were added.
+        self.assertIn('"SemanticFieldInput"', P0_SEMANTIC_PROPOSAL)
         self.assertIn('"required":["version","action","public_answer"]', P0_SEMANTIC_PROPOSAL)
         self.assertIn('Minimal valid example:', P0_SEMANTIC_PROPOSAL)
         self.assertNotEqual(
@@ -324,11 +325,7 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
                     "question": "请确认 candidate_id 的业务定义、粒度、规则、时间口径和空值处理。",
                     "why_needed": "这些维度无法从获准数据中确定。",
                     "expected_answer_type": "text",
-                    "suggested_owner_role": "业务负责人",
-                    "related_definition_paths": [f"fields.candidate_id.{name}" for name in missing],
-                    "evidence_requested": ["批准的字段定义或数据字典"],
-                    "examples_or_options": [],
-                    "blocking_impact": "blocking",
+                    "targets": [{"kind":"field", "key":"candidate_id", "property":"meaning"}],
                     "evidence_handles": [evidence_handle],
                 }],
                 "evidence_handles": [evidence_handle],
@@ -344,11 +341,68 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             self.assertEqual(result.draft.version, 1)
             self.assertEqual([item.field_key for item in result.draft.fields], ["candidate_id"])
             self.assertEqual(len(result.clarifications), 1)
+            question = result.clarifications[0].questions[0]
+            self.assertIsNone(question.suggested_owner_role)
+            self.assertEqual(question.evidence_requested, [])
+            self.assertEqual(question.related_definition_paths, ["fields.candidate_id.meaning"])
+            self.assertEqual(len(result.draft.fields[0].unknowns), 5)
             self.assertEqual(result.clarifications[0].draft_sha256, result.draft.sha256)
             self.assertEqual(result.terminal_receipt.terminal_tool, "create_clarification")
             self.assertEqual(len(result.terminal_receipt.tool_receipt_ids), 2)
             page = store.list_task_messages(ws, mission.mission_id)
             self.assertEqual(page.items[-1].content, proposal.public_answer)
+
+    def test_incomplete_candidate_saves_but_cannot_be_submitted_and_unknown_handle_is_rejected(self):
+        with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
+            run, snapshot = self._running_semantic_case(store, ws, mission, refs)
+            plan, adapter = build_context_plan(snapshot, store)
+            source = plan.sources[0]
+            field = {"field_key":"candidate_id", "name":"候选标识",
+                     "source_column_handles":[source["tables"][0]["columns"][0]["column_handle"]],
+                     "evidence_status":"candidate", "evidence_handles":source["profile_pack"]["tables"][0]["evidence_handles"]}
+            proposal = SemanticProposalV1(version="v1", action="draft_only", public_answer="已保存待完善草案。", fields=[field])
+            for bad in (
+                proposal.model_copy(update={"action":"draft_and_submit"}),
+                proposal.model_copy(update={"evidence_handles":["evidence_unknown"]}),
+            ):
+                with self.assertRaises(SemanticProposalFailure):
+                    normalize_semantic_proposal(adapter, bad)
+            application = normalize_semantic_proposal(adapter, proposal)
+            without_evidence = application.model_copy(update={"fields":[
+                application.fields[0].model_copy(update={"source_refs":[]})]})
+            with self.assertRaises(fixtures.Path2StateError) as denied:
+                store.apply_semantic_proposal(ws, mission.mission_id, run.run_id, without_evidence)
+            self.assertEqual(denied.exception.code, "semantic_evidence_incomplete")
+            with patch.object(store, "_execute_terminal_tool", side_effect=fixtures.WorkspaceStoreUnavailableError()):
+                with self.assertRaises(fixtures.WorkspaceStoreUnavailableError):
+                    store.apply_semantic_proposal(ws, mission.mission_id, run.run_id, application)
+            self.assertIsNone(store.get_run_snapshot(ws, mission.mission_id, run.run_id).draft)
+            result = store.apply_semantic_proposal(ws, mission.mission_id, run.run_id, application)
+            self.assertEqual(result.status, "partial")
+            self.assertEqual(result.draft.semantic_approval, "pending")
+            self.assertEqual(len(result.draft.fields[0].unknowns), 6)
+            self.assertTrue(all(item.reason == "模型未提供，待补充" for item in result.draft.fields[0].unknowns))
+            self.assertEqual(result.terminal_receipt.terminal_tool, "finish_run")
+            self.assertEqual(result.clarifications, [])
+
+    def test_omitted_dimensions_preserve_existing_values_on_candidate_update(self):
+        with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
+            run, snapshot = self._running_semantic_case(store, ws, mission, refs)
+            plan, adapter = build_context_plan(snapshot, store)
+            source = plan.sources[0]
+            field = {"field_key":"candidate_id", "name":"标识",
+                     "semantics":{"value_type":{"value":"integer", "unknown_reason":None}},
+                     "source_column_handles":[source["tables"][0]["columns"][0]["column_handle"]],
+                     "evidence_status":"candidate", "evidence_handles":source["profile_pack"]["tables"][0]["evidence_handles"]}
+            first = SemanticProposalV1(version="v1", action="draft_only", public_answer="候选", fields=[field], unresolved_items=["保留未决事项"])
+            result = store.apply_semantic_proposal(ws, mission.mission_id, run.run_id, normalize_semantic_proposal(adapter, first))
+            adapter.current_draft = result.draft
+            field["semantics"] = {"meaning":{"value":"人工确认的标识", "unknown_reason":None}}
+            updated = normalize_semantic_proposal(adapter, SemanticProposalV1(version="v1", action="draft_only", public_answer="更新候选", fields=[field]))
+            self.assertEqual(updated.fields[0].value_type, "integer")
+            self.assertEqual(updated.fields[0].meaning, "人工确认的标识")
+            self.assertEqual(updated.unresolved_items, ["保留未决事项"])
+            self.assertEqual(len(updated.fields[0].unknowns), 4)
 
     def test_store_rejects_stale_draft_cas_with_zero_domain_writes(self):
         with fixtures.PersistedRunTests().store_case(

@@ -1707,6 +1707,7 @@ class FinishRunArguments(ContextOxModel):
 
 SemanticAction = Literal[
     "answer_only",
+    "draft_only",
     "draft_and_clarify",
     "draft_and_submit",
     "clarify_only",
@@ -1744,8 +1745,8 @@ class SemanticApplicationInput(ContextOxModel):
             raise ValueError("clarify_only requires questions and no draft changes")
         if self.action == "draft_and_clarify" and not self.questions:
             raise ValueError("draft_and_clarify requires questions")
-        if self.action == "draft_and_submit" and self.questions:
-            raise ValueError("draft_and_submit cannot contain questions")
+        if self.action in {"draft_and_submit", "draft_only"} and self.questions:
+            raise ValueError("this action cannot contain questions")
         return self
 
 
