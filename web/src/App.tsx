@@ -16,6 +16,7 @@ import WorkspaceSwitcher from "./WorkspaceSwitcher";
 import { ModelSettings } from "./ModelSettings";
 import { DemoEntry } from "./DemoEntry";
 import { CandidateExport } from "./CandidateExport";
+import { AgentLayout } from "./AgentLayout";
 import "./styles.css";
 
 export { WORKSPACE_STORAGE_KEY } from "./WorkspaceSwitcher";
@@ -151,161 +152,7 @@ function Brand() {
   );
 }
 
-function Topbar({
-  selectedWorkspace,
-  onWorkspaceChange,
-  onDemoLoaded,
-}: {
-  selectedWorkspace: Workspace | null;
-  onWorkspaceChange: (workspace: Workspace | null) => void;
-  onDemoLoaded: (workspace: Workspace, task: string, revisions: string[]) => void;
-}) {
-  return (
-    <header className="topbar">
-      <div className="topbar-brand">
-        <Brand />
-      </div>
-      <div className="topbar-workspace">
-        <WorkspaceSwitcher
-          selectedWorkspace={selectedWorkspace}
-          onWorkspaceChange={onWorkspaceChange}
-        />
-      </div>
-      <div className="topbar-actions" aria-label="工作区工具">
-        <ModelSettings />
-        <DemoEntry onLoaded={onDemoLoaded} />
-        <a className="utility-button" href="https://github.com/archerthegoat/contextox-agent#readme" target="_blank" rel="noreferrer">使用帮助 ↗</a>
-      </div>
-    </header>
-  );
-}
-
-function PrimaryRail({
-  areas,
-  activeArea,
-  onAreaChange,
-}: {
-  areas: AreaNavigationItem[];
-  activeArea: AreaId;
-  onAreaChange: (area: AreaId) => void;
-}) {
-  return (
-    <aside className="primary-rail" aria-label="工作区模块">
-      <nav className="primary-nav" aria-label="主要模块">
-        {areas.map((area) => {
-          const isActive = activeArea === area.id;
-          return (
-            <button
-              key={area.id}
-              type="button"
-              className={`primary-nav-item${isActive ? " primary-nav-item-active" : ""}`}
-              aria-current={isActive ? "page" : undefined}
-              title={area.description}
-              onClick={() => onAreaChange(area.id)}
-            >
-              <span className="primary-nav-icon">
-                <Icon name={AREA_NAV_ICONS[area.id]} />
-              </span>
-              <span className="primary-nav-label">{area.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-    </aside>
-  );
-}
-
 type MissionObjectId = string;
-
-function ObjectPane({
-  selectedObject,
-  onObjectSelect,
-  sources,
-  missionTitle, path2,
-}: {
-  selectedObject: MissionObjectId;
-  onObjectSelect: (objectId: MissionObjectId) => void;
-  sources: SourceRevision[];
-  missionTitle: string; path2: Path2WorkbenchState;
-}) {
-  return (
-    <aside className="object-pane" aria-label="任务对象">
-      <div className="object-pane-header">
-        <h2>任务</h2>
-      </div>
-      <label className="task-selector">当前任务<select aria-label="切换任务" value={path2.selectedMission?.mission_id ?? ""} onChange={e => void path2.selectMission(e.target.value)}><option value="" disabled>请选择任务</option>{path2.missionState.items.map(m => <option value={m.mission_id} key={m.mission_id}>{m.title}</option>)}</select></label>
-
-      <div className="object-tree" role="tree" aria-label="任务对象树">
-        <button
-          type="button"
-          className={`tree-row tree-root${selectedObject === "mission" ? " tree-row-selected" : ""}`}
-          role="treeitem"
-          aria-selected={selectedObject === "mission"}
-          onClick={() => onObjectSelect("mission")}
-        >
-          <span className="tree-disclosure" aria-hidden="true">
-            <Icon name="chevron-down" />
-          </span>
-          <span className="tree-row-icon">
-            <Icon name="target" />
-          </span>
-          <span className="tree-row-label">{missionTitle}</span>
-        </button>
-
-        <div className="tree-children" role="group">
-          <button type="button" className="tree-row tree-folder" role="treeitem" aria-expanded="true">
-            <span className="tree-disclosure" aria-hidden="true">
-              <Icon name="chevron-down" />
-            </span>
-            <span className="tree-row-icon">
-              <Icon name="archive" />
-            </span>
-            <span className="tree-row-label">数据与文档</span>
-          </button>
-
-          <div className="tree-file-list" role="group">
-            {sources.slice(0, 8).map((source) => {
-              const objectId = `source:${source.revision_id}`;
-              const isMarkdown = source.media_type === "text/markdown" || source.media_type === "text/plain";
-              return (
-                <button
-                  type="button"
-                  className={`tree-row tree-file${selectedObject === objectId ? " tree-row-selected" : ""}`}
-                  role="treeitem"
-                  aria-selected={selectedObject === objectId}
-                  key={source.revision_id}
-                  onClick={() => onObjectSelect(objectId)}
-                >
-                  <span className={`file-badge ${isMarkdown ? "file-badge-md" : "file-badge-csv"}`} aria-hidden="true">
-                    <Icon name={isMarkdown ? "reader" : "file-text"} />
-                  </span>
-                  <span className="tree-row-label">{source.original_name}</span>
-                </button>
-              );
-            })}
-            {sources.length === 0 ? <p className="tree-empty">当前 Workspace 尚无已回读来源</p> : null}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          className={`tree-row tree-relationship${selectedObject === "relationship" ? " tree-row-selected" : ""}`}
-          role="treeitem"
-          aria-selected={selectedObject === "relationship"}
-          onClick={() => onObjectSelect("relationship")}
-        >
-          <span className="tree-disclosure" aria-hidden="true">
-            <Icon name="chevron-down" />
-          </span>
-          <span className="object-type-tag" aria-hidden="true">
-            <Icon name="mix" />
-          </span>
-          <span className="tree-row-label">关系与字段</span>
-        </button>
-      </div>
-    </aside>
-  );
-}
 
 function OpenObjectTabs({ activeTab, onTabChange }: { activeTab: ObjectTabId; onTabChange: (tab: ObjectTabId) => void }) {
   return (
@@ -403,8 +250,9 @@ function CenterPanel({
   activeTab,
   onTabChange,
   dialogue, onReference, focusedReference, clearReference,
-  path2,
+  path2, following, onFollow,
 }: {
+  following: boolean; onFollow: () => void;
   activeArea: AreaId;
   activeTab: ObjectTabId;
   onTabChange: (tab: ObjectTabId) => void;
@@ -419,6 +267,8 @@ function CenterPanel({
 
   return (
     <main className="center-panel" aria-labelledby="center-title">
+      <WorkbenchProgress path2={path2} />
+      <div className="agent-follow-bar"><span>{following ? "跟随对话展示相关内容" : "手动查看中 · 新进展不会切换此视图"}</span>{!following && <button onClick={onFollow}>跟随当前进展</button>}</div>
       <OpenObjectTabs activeTab={activeTab} onTabChange={onTabChange} />
       <div className="center-toolbar">
         <h1 id="center-title">{title}</h1>
@@ -429,42 +279,24 @@ function CenterPanel({
           path2={path2}
         />
       ) : (
-        <Path2Workbench state={path2} activeArea={activeArea} />
+        activeArea === "mission" ? <MissionOverview path2={path2} /> : <Path2Workbench state={path2} activeArea={activeArea} />
       )}
     </main>
   );
 }
 
-function AgentPanel({ path2, dialogue, onReference, onHistory, onResults, onClarifications }: { path2: Path2WorkbenchState; dialogue: DialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onResults: () => void; onClarifications: () => void }) {
-  const [isOpen, setIsOpen] = useState(true);
-  const contentId = "agent-panel-content";
-  const toggleLabel = isOpen ? "折叠任务对话" : "展开任务对话";
-
-  return (
-    <aside className={`agent-panel${isOpen ? "" : " agent-panel-collapsed"}`} aria-label="任务 Agent 对话">
-      <div className="agent-panel-header">
-        <div className="agent-panel-title-group">
-          <h2>{AGENT_COPY.title}</h2>
-          <span>{AGENT_COPY.mode}</span>
-        </div>
-        <button
-          type="button"
-          className="agent-panel-toggle"
-          aria-label={toggleLabel}
-          aria-expanded={isOpen}
-          aria-controls={contentId}
-          title={toggleLabel}
-          onClick={() => setIsOpen((value) => !value)}
-        >
-          <Icon name={isOpen ? "double-arrow-right" : "double-arrow-left"} />
-          <span className="sr-only">{toggleLabel}</span>
-        </button>
-      </div>
-      <div id={contentId} className="agent-panel-content" hidden={!isOpen}>
-        <TaskConversation state={path2} dialogue={dialogue} onReference={onReference} onHistory={onHistory} onResults={onResults} onClarifications={onClarifications} />
-      </div>
-    </aside>
-  );
+function WorkbenchProgress({path2}: {path2: Path2WorkbenchState}) {
+  const mission = path2.missionSnapshot?.mission ?? path2.selectedMission;
+  const waiting = mission?.status === "waiting_for_human";
+  const current = !mission ? 0 : waiting ? 2 : path2.latestDraft ? 3 : 1;
+  return <header className="workbench-progress"><h2>{mission?.title ?? "从一个问题开始"}</h2><ol>{["明确目标", "理解资料", "澄清口径", "整理成果"].map((label,index) => <li key={label} className={current === index ? "current" : current > index ? "past" : ""} aria-current={current === index ? "step" : undefined}><span>{index + 1}</span>{label}</li>)}</ol><p>{!mission ? "先聊问题，目标与资料明确后再形成任务。" : waiting ? `等待业务回答 · ${path2.clarifications.reduce((sum,item) => sum + item.questions.length, 0)} 个已记录问题` : path2.runSnapshot ? `本轮：${statusLabel(path2.runSnapshot.status)}` : "已建立任务，尚未开始分析"}</p></header>;
+}
+function MissionOverview({path2}: {path2: Path2WorkbenchState}) {
+  const mission = path2.missionSnapshot?.mission ?? path2.selectedMission;
+  return <section className="mission-overview">{mission ? <><p className="path2-eyebrow">当前目标</p><h2>{mission.goal}</h2><p>资料范围与对话在右侧延续。你可以打开关系与字段核对草案，或查看执行历史。</p>{path2.latestDraft && <p>候选草案 v{path2.latestDraft.version} · {statusLabel(path2.latestDraft.status)}。候选结果不等于正式业务契约。</p>}</> : <><img src={BRAND_MARK_URL} alt="" /><p className="path2-eyebrow">从讨论到清晰的业务口径</p><h2>说出问题，<br/>一起找到有依据的答案。</h2><p>在右侧告诉 Agent 你想弄清什么。这里会随着对话，展示资料、待确认的问题和逐步形成的成果。</p><ol><li><strong>从你的问题开始</strong><p>不必预先定义任务，先聊业务背景。</p></li><li><strong>随时核对资料依据</strong><p>让字段、关系和未知事项有处可查。</p></li><li><strong>关键口径，由你确认</strong><p>自然语言补充，整理后再核对采用。</p></li></ol></>}</section>;
+}
+function AgentPanel({ path2, dialogue, onReference, onHistory, onResults, onClarifications, expanded, onExpand }: { path2: Path2WorkbenchState; dialogue: DialogueState; onReference: (ref: MessageReference) => void; onHistory: () => void; onResults: () => void; onClarifications: () => void; expanded: boolean; onExpand: () => void }) {
+  return <aside className="agent-panel" aria-label="Agent 对话"><header className="agent-panel-header"><div className="agent-panel-title-group"><h2>{AGENT_COPY.title}</h2><span>一起把问题弄清楚</span></div><button className="agent-panel-toggle" onClick={onExpand} aria-pressed={expanded}>{expanded ? "恢复双栏" : "展开对话"}</button></header><div id="agent-panel-content" className="agent-panel-content"><TaskConversation state={path2} dialogue={dialogue} onReference={onReference} onHistory={onHistory} onResults={onResults} onClarifications={onClarifications} /></div></aside>;
 }
 
 function App() {
@@ -488,10 +320,15 @@ function App() {
   const dialogue = useTaskDialogue(path2);
   const [focusedReference, setFocusedReference] = useState<MessageReference | null>(null);
   useEffect(() => {setFocusedReference(null);}, [path2.workspaceId, path2.selectedMission?.mission_id]);
-  const [mobileView, setMobileView] = useState<"result" | "agent">("result");
+  const [mobileView, setMobileView] = useState<"result" | "agent">("agent");
   const [navOpen, setNavOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [following, setFollowing] = useState(true);
+  const followCurrent = () => {setFocusedReference(null);setActiveArea(path2.selectedMission?.status === "waiting_for_human" ? "clarifications" : "mission");setActiveTab(path2.latestDraft && path2.selectedMission?.status !== "waiting_for_human" ? "relationship" : "mission");};
+  useEffect(() => {if(following) followCurrent();}, [following, path2.selectedMission?.mission_id, path2.selectedMission?.status, path2.latestDraft?.draft_id, path2.latestDraft?.version]);
   const addReference = (ref: MessageReference) => { dialogue.addReference(ref); setMobileView("agent"); };
   const inspectReference = (ref: MessageReference) => {
+    setFollowing(false);
     setFocusedReference(ref);
     setMobileView("result");
     if (ref.kind === "draft_field" || ref.kind === "draft_relationship") { setActiveArea("mission"); setActiveTab("relationship"); }
@@ -534,6 +371,7 @@ function App() {
 
   const areas = snapshot ? navigationForAreas(snapshot.areas) : AREA_NAV;
   const handleObjectSelect = (objectId: MissionObjectId) => {
+    setFollowing(false);setMobileView("result");
     setSelectedObject(objectId);
     setFocusedReference(null);
     setNavOpen(false);
@@ -552,41 +390,15 @@ function App() {
 
   return (
     <div
-      className="app-shell"
+      className="app-shell agent-led-shell"
       data-api-state={apiState}
       data-connection-state={connectionState}
       data-path2-state="workbench"
     >
-      <Topbar
-        selectedWorkspace={selectedWorkspace}
-        onWorkspaceChange={setSelectedWorkspace}
-        onDemoLoaded={(workspace, task, revisions) => {
-          setSelectedWorkspace(workspace); setDemoSetup({workspaceId: workspace.workspace_id, task, revisions});
-          setActiveArea("mission"); setActiveTab("mission"); setMobileView("result");
-        }}
-      />
-      <div className="compact-controls"><button aria-expanded={navOpen} onClick={() => setNavOpen(!navOpen)}>任务与资料</button><button aria-pressed={mobileView === "result"} onClick={() => setMobileView("result")}>结果</button><button aria-pressed={mobileView === "agent"} onClick={() => setMobileView("agent")}>Agent 对话</button></div>
-      <div className={`workspace-layout mobile-${mobileView}${navOpen ? " nav-open" : ""}`}>
-        <PrimaryRail areas={areas} activeArea={activeArea} onAreaChange={area => {setActiveArea(area); setActiveTab("mission"); setFocusedReference(null); setNavOpen(false);}} />
-        <ObjectPane
-          selectedObject={selectedObject}
-          onObjectSelect={handleObjectSelect}
-          sources={path2.sourceState.items}
-          missionTitle={path2.selectedMission?.title ?? "当前任务"}
-          path2={path2}
-        />
-        <CenterPanel
-          activeArea={activeArea}
-          activeTab={activeTab}
-          onTabChange={tab => {setActiveArea("mission"); setActiveTab(tab); setFocusedReference(null);}}
-          focusedReference={focusedReference}
-          clearReference={() => setFocusedReference(null)}
-          dialogue={dialogue}
-          onReference={addReference}
-          path2={path2}
-        />
-        <AgentPanel onClarifications={() => {setFocusedReference(null); setActiveArea("clarifications"); setActiveTab("mission"); setMobileView("result");}} path2={path2} dialogue={dialogue} onReference={inspectReference} onHistory={() => {setFocusedReference(null); setActiveTab("history"); setMobileView("result");}} onResults={() => {setFocusedReference(null); setActiveArea("mission"); setActiveTab("relationship"); setMobileView("result");}} />
-      </div>
+      <AgentLayout expanded={expanded} mobileView={mobileView} onMobileView={setMobileView} navOpen={navOpen} onNavOpen={setNavOpen}
+        sidebar={<aside className="agent-led-navigation" aria-label="工作区导航"><Brand/><WorkspaceSwitcher selectedWorkspace={selectedWorkspace} onWorkspaceChange={setSelectedWorkspace}/><p className="nav-section-label">最近任务</p>{path2.missionState.items.map(mission => <button className={path2.selectedMission?.mission_id === mission.mission_id ? "nav-conversation selected" : "nav-conversation"} key={mission.mission_id} onClick={() => {void path2.selectMission(mission.mission_id);setFollowing(true);setNavOpen(false);}}><Icon name="reader"/>{mission.title}</button>)}{!path2.missionState.items.length && <p className="nav-empty">从右侧开始新对话</p>}<div className="nav-section-label"><span>资料库</span><button onClick={() => {setFollowing(false);setActiveArea("sources");setActiveTab("mission");setMobileView("result");setNavOpen(false);}}>添加资料</button></div>{path2.sourceState.items.map(source => <button className={selectedObject === `source:${source.revision_id}` ? "nav-conversation selected" : "nav-conversation"} key={source.revision_id} onClick={() => handleObjectSelect(`source:${source.revision_id}`)}><Icon name="file-text"/><span>{source.original_name}</span></button>)}<div className="navigation-bottom"><details><summary>工作区视图</summary>{areas.map(area => <button key={area.id} onClick={() => {setFollowing(false);setActiveArea(area.id);setActiveTab("mission");setFocusedReference(null);setNavOpen(false);setMobileView("result");}}>{area.label}</button>)}</details><ModelSettings/><DemoEntry onLoaded={(workspace, task, revisions) => {setSelectedWorkspace(workspace);setDemoSetup({workspaceId:workspace.workspace_id,task,revisions});setFollowing(true);setMobileView("agent");}}/><small>仅在本机运行</small></div></aside>}
+        center={<CenterPanel activeArea={activeArea} activeTab={activeTab} onTabChange={tab => {setFollowing(false);setActiveArea("mission");setActiveTab(tab);setFocusedReference(null);}} focusedReference={focusedReference} clearReference={() => setFocusedReference(null)} dialogue={dialogue} onReference={addReference} path2={path2} following={following} onFollow={() => {setFollowing(true);followCurrent();}}/>}
+        agent={<AgentPanel expanded={expanded} onExpand={() => setExpanded(value => !value)} onClarifications={() => {setFollowing(false);setFocusedReference(null);setActiveArea("clarifications");setActiveTab("mission");setMobileView("result");}} path2={path2} dialogue={dialogue} onReference={inspectReference} onHistory={() => {setFollowing(false);setFocusedReference(null);setActiveTab("history");setMobileView("result");}} onResults={() => {setFollowing(false);setFocusedReference(null);setActiveArea("mission");setActiveTab("relationship");setMobileView("result");}}/>}/>
     </div>
   );
 }

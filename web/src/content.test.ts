@@ -124,11 +124,13 @@ describe("ContextOx Workbench v3 content boundaries", () => {
   it("renders the icon navigation and truthful control seams", () => {
     const markup = renderToStaticMarkup(createElement(App));
 
-    expect(markup.match(/primary-nav-icon/g)).toHaveLength(4);
+    expect(markup).toContain('aria-label="工作区导航"');
+    expect(markup).toContain('role="separator"');
+    expect(markup).not.toContain('class="primary-rail"');
     expect(markup).not.toContain("graph-node-icon");
     expect(markup).toContain("执行历史");
-    expect(markup).toContain("aria-label=\"任务 Agent 对话\"");
-    expect(markup).toContain("aria-expanded=\"true\"");
+    expect(markup).toContain("aria-label=\"Agent 对话\"");
+    expect(markup).toContain("展开对话");
     expect(markup).toContain("aria-controls=\"agent-panel-content\"");
     expect(markup).toContain("data-path2-state=\"workbench\"");
     expect(markup).toContain("围绕一个任务展开分析");
