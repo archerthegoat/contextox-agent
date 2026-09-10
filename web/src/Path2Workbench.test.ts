@@ -326,6 +326,39 @@ describe("Path 2 Workbench state boundaries", () => {
     expect(events.events).toHaveLength(2);
   });
 
+  it("replays deterministic phases and a direct non-stream proposal through the saved terminal", () => {
+    const listeners = new Map<string, (event: Event) => void>();
+    const source: RunEventSource = {
+      addEventListener: (type, listener) => { listeners.set(type, listener); },
+      removeEventListener: (type) => { listeners.delete(type); },
+      close: vi.fn(), onopen: null, onerror: null,
+    };
+    const state = vi.fn();
+    const issue = vi.fn();
+    let replay = createRunEventState();
+    const first = event(1, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const events: RunEventEnvelope[] = [
+      { ...first, event_type: "run_phase_changed", public_payload: { phase: "synthesize_once" } },
+      { ...event(2, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), event_type: "model_started", public_payload: {
+        turn_index: 1, transport: "non_stream", fallback_of_turn_index: null,
+      } },
+      { ...event(3, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"), event_type: "run_phase_changed",
+        public_payload: { phase: "terminal" } },
+      { ...event(4, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"), event_type: "run_partial",
+        public_payload: { status: "partial", terminal_receipt_id: runId, error_code: null } },
+    ];
+    const cleanup = replayTerminalRunEvents({ ...run, status: "partial", last_sequence: 4 }, () => source,
+      (value) => { replay = value; }, state, issue);
+    for (const item of events) listeners.get(item.event_type)!(new MessageEvent(item.event_type, { data: JSON.stringify(item) }));
+    expect(replay.events).toEqual(events);
+    expect(replay.hasSequenceGap).toBe(false);
+    expect(state).toHaveBeenLastCalledWith("closed");
+    expect(issue).toHaveBeenCalledExactlyOnceWith(null);
+    expect(source.close).toHaveBeenCalledTimes(1);
+    expect(parseRunEvent(JSON.stringify({ ...events[0], public_payload: { phase: "invented" } }))).toBeNull();
+    cleanup();
+  });
+
   it("fails closed on wrong-scope replay, malformed events, incomplete EOF and timeout", () => {
     vi.useFakeTimers();
     try {
@@ -735,8 +768,12 @@ describe("non-stream fallback history", () => {
   it("accepts legacy stream events and validates fallback linkage", () => {
     expect(parseRunEvent(JSON.stringify(first))).not.toBeNull();
     expect(parseRunEvent(JSON.stringify(fallback))).not.toBeNull();
+    for (const fallback_of_turn_index of [undefined, null]) {
+      expect(parseRunEvent(JSON.stringify({ ...fallback, public_payload: {
+        turn_index: 2, transport: "non_stream", fallback_of_turn_index,
+      } }))).not.toBeNull();
+    }
     for (const payload of [
-      { turn_index: 2, transport: "non_stream" },
       { turn_index: 2, transport: "non_stream", fallback_of_turn_index: 2 },
       { turn_index: 3, transport: "non_stream", fallback_of_turn_index: 1 },
       { turn_index: 2, transport: "stream", fallback_of_turn_index: 1 },

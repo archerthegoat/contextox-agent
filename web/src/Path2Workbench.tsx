@@ -676,6 +676,7 @@ export const browserRunEventSourceFactory: RunEventSourceFactory = (url) => {
 
 const RUN_EVENT_TYPES: RunEventEnvelope["event_type"][] = [
   "run_started",
+  "run_phase_changed",
   "message_created",
   "model_started",
   "model_delta",
@@ -807,6 +808,8 @@ function isRunEventPayload(eventType: string, payload: unknown): payload is Unkn
   switch (eventType) {
     case "run_started":
       return payload.status === "running";
+    case "run_phase_changed":
+      return isOneOf(payload.phase, ["prepare_context", "synthesize_once", "validate", "apply", "terminal", "legacy_loop"]);
     case "message_created":
       return hasString(payload, "message_id") && isOneOf(payload.role, ["user", "assistant"]);
     case "model_started": {
@@ -817,8 +820,9 @@ function isRunEventPayload(eventType: string, payload: unknown): payload is Unkn
       if (previous !== undefined && previous !== null &&
           (typeof previous !== "number" || !Number.isInteger(previous) || previous < 1 ||
             previous !== (payload.turn_index as number) - 1)) return false;
-      return transport === "non_stream" ? previous !== undefined && previous !== null
-        : previous === undefined || previous === null;
+      // A direct non-stream proposal has no fallback; only a declared fallback
+      // must point to the immediately preceding request, as in ModelStartedPayload.
+      return previous === undefined || previous === null || transport === "non_stream";
     }
     case "model_delta":
       return hasInteger(payload, "turn_index") && hasString(payload, "content");
