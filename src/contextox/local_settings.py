@@ -2,7 +2,7 @@
 import secrets
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 
 from contextox.credentials import CredentialUnavailableError, MacKeychain, environment_key
 from contextox.models import DeepSeekKeyRequest, DeepSeekSettings, WorkspaceError
@@ -112,12 +112,14 @@ def install_settings_routes(app: FastAPI, agent_profile: str) -> None:
         return snapshot(response)
 
     @app.put("/api/local-settings/deepseek", response_model=DeepSeekSettings, responses=errors, tags=["local-settings"])
-    def save_key(payload: DeepSeekKeyRequest, request: Request, response: Response):
+    def save_key(payload: DeepSeekKeyRequest, request: Request, response: Response,
+                 session_token: str = Header(alias="X-ContextOx-Session", min_length=32, max_length=64)):
         # Instantiate Keychain inside the operation so failures use the safe envelope.
         mutate(lambda: MacKeychain().save(payload.api_key.get_secret_value()))
         return snapshot(response)
 
     @app.delete("/api/local-settings/deepseek", response_model=DeepSeekSettings, responses=errors, tags=["local-settings"])
-    def remove_key(request: Request, response: Response):
+    def remove_key(request: Request, response: Response,
+                   session_token: str = Header(alias="X-ContextOx-Session", min_length=32, max_length=64)):
         mutate(lambda: MacKeychain().remove())
         return snapshot(response)

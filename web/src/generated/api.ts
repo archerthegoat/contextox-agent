@@ -3386,7 +3386,9 @@ export interface operations {
     save_key_api_local_settings_deepseek_put: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "X-ContextOx-Session": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3446,7 +3448,9 @@ export interface operations {
     remove_key_api_local_settings_deepseek_delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "X-ContextOx-Session": string;
+            };
             path?: never;
             cookie?: never;
         };

@@ -29,7 +29,7 @@ export async function fetchDeepSeekSettings(): Promise<DeepSeekSettings> {
 
 export async function saveDeepSeekKey(apiKey: string, sessionToken: string): Promise<DeepSeekSettings> {
   const result = await client.PUT("/api/local-settings/deepseek", {
-    body: { api_key: apiKey }, headers: { "X-ContextOx-Session": sessionToken }, cache: "no-store",
+    body: { api_key: apiKey }, params: { header: { "X-ContextOx-Session": sessionToken } }, cache: "no-store",
   });
   if (!result.response.ok || !result.data) throwForResult(result);
   return result.data;
@@ -37,7 +37,7 @@ export async function saveDeepSeekKey(apiKey: string, sessionToken: string): Pro
 
 export async function removeDeepSeekKey(sessionToken: string): Promise<DeepSeekSettings> {
   const result = await client.DELETE("/api/local-settings/deepseek", {
-    headers: { "X-ContextOx-Session": sessionToken }, cache: "no-store",
+    params: { header: { "X-ContextOx-Session": sessionToken } }, cache: "no-store",
   });
   if (!result.response.ok || !result.data) throwForResult(result);
   return result.data;

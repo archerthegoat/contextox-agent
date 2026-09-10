@@ -701,6 +701,9 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(
                 {
+                    "/api/demo",
+                    "/api/local-settings/deepseek",
+                    "/api/workspaces/{workspace_id}/missions/{mission_id}/draft-export",
                     "/api/workspaces/{workspace_id}/sources",
                     "/api/workspaces/{workspace_id}/sources/{revision_id}",
                     "/api/workspaces/{workspace_id}/sources/{revision_id}/profile",
