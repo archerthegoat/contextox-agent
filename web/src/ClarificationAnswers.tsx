@@ -310,7 +310,7 @@ export function ClarificationAnswers({state}: {state: Path2WorkbenchState}) {
       {item.latest_answer&&<details><summary>历史回答（只读）</summary>{Array.from({length:item.latest_answer.version},(_,i)=>i+1).map(version=><button key={version} disabled={busy} onClick={()=>{const generation=++historyGeneration.current;setHistory(null);void fetchClarificationAnswer(ws,mid,item.request.run_id,item.request.clarification_id,version).then(value=>{if(current.current===scope&&generation===historyGeneration.current&&value.answer.workspace_id===ws&&value.answer.mission_id===mid&&value.answer.origin_run_id===item.request.run_id&&value.answer.clarification_id===item.request.clarification_id&&value.answer.version===version)setHistory(value);}).catch(e=>{if(current.current===scope)setError(clarificationError(e));});}}>v{version}</button>)}</details>}
     </article>;})}
     {history&&<section className="path2-card"><h3>历史回答 · 只读</h3><p>{history.approval?"该版本有批准记录":"该版本未批准"}</p><AnswerReadback answer={history.answer} request={cases.find(item => item.request.run_id===history.answer.origin_run_id && item.request.clarification_id===history.answer.clarification_id)?.request}/><button onClick={()=>setHistory(null)}>关闭历史</button></section>}
-    {cases.length>0&&<section className="path2-card"><h3>继续分析</h3><p>本次携带 {refs.length} 份已批回答；{blockers} 个问题仍未解决。沿用每轮最多 8 次模型请求（包括替代请求）。</p>
+    {cases.length>0&&<section className="path2-card"><h3>继续分析</h3><p>本次携带 {refs.length} 份已批回答；{blockers} 个问题仍未解决。</p>
       {!sourceMatch&&<p>请在资料页选择与这些回答完全一致的 {required.length} 份资料后继续。</p>}
       {refs.length!==cases.length&&<p>所有请求都必须保存并批准最新整份版本。</p>}
       {state.latestDraft?.status==="in_review"&&<p>当前草案待审，本入口不能代替草案批准。</p>}
