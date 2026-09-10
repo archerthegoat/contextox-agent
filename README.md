@@ -1,144 +1,152 @@
-# ContextOx Workbench
+<p align="center"><img src="web/src/assets/contextox-mark.png" width="76" alt="数契 Logo"></p>
+<h1 align="center">数契 ContextOx</h1>
+<p align="center">把资料中的字段、关系和业务口径，整理成有依据、能讨论、可继续完善的定义草案。</p>
+<p align="center">本地工作台 · DeepSeek Flash · 公开合成示例 · MIT</p>
 
-数契（ContextOx）是帮助用户借助 Agent 理解和规范业务与数据知识的本地工作台，面向实际项目交付者、现有业务整理者，以及学习、转型和求职者。目前可在 Workspace 中导入授权资料、创建任务、对话分析并保存带证据的字段、关系、澄清候选和已批准回答。正式 Contract 和批准 Context 的复用闭环仍待实现。
+数契帮助你借助 Agent 理解和规范业务与数据知识。给它两张表和一份说明，它会整理字段与表关系、标出来源，并把缺少的业务规则变成具体问题。你回答并确认后，可以在同一任务中继续完善草案。
 
-当前实现与证据分层如下。任务对话详情见 [A–D 交付记录](docs/任务对话A-D交付与验收.md)。
+当前阶段是 **Demo 1.0**，运行包版本为 **0.2.0**。GitHub 仓库是产品介绍、安装和反馈的入口。
 
-规划阅读入口：[开发路径图](开发路径图.md)定义目标用户、差异化与路径通过门；[架构与迁移报告](docs/架构与迁移报告.md)定义领域状态和权限边界；[Agent 任务协作开发实施计划](docs/Agent任务协作开发实施计划.md)第 0 节说明现行合同、证据入口与开发路径对应关系。旧计划和执行卡中的“当前/下一步”须按其历史基线理解，不能据此重做已交付能力或跳过未完成验收。
+## 先看它能做什么
 
-| 能力或证据层 | 当前边界 |
-| --- | --- |
-| 本地 Python API、React/TypeScript Workbench、SQLite Workspace | 已实现 |
-| 授权本地资料导入、来源版本、确定性解析与证据读取 | 已实现；只处理明确授权材料 |
-| 任务草案确认、持久对话、有限历史与引用、执行历史 | 已实现 |
-| 单次 high 语义提案、确定性事务落地、取消、阶段事件与收据 | 已实现；真实 Provider 可用性需要独立运行证据 |
-| 全表确定性 ProfilePack 与可选非思考画像解释 | 已实现；解释需单独确认发送且保持候选/partial |
-| 字段与关系草案、生成澄清、提交候选审核 | 已实现；候选不代表业务事实获批 |
-| 澄清回答与批准后续接 | 已实现；不等于正式 Contract 完成 |
-| 正式 Contract、批准 Context 复用 | 尚未实现 |
-| 本批真实 Provider、私有资料迁移 | `NOT RUN` |
-| 人工验收与用户价值 | `PENDING` / `NOT VERIFIED`；不能从测试、构建或 fake Provider 推导 |
+例如，你想按地区汇总订单金额，但资料还没有说明是否纳入退款订单、按哪个时间字段归属日期。
 
-## 任务对话增量
+1. 点击工作台顶部的 **体验示例**。不用 Key，也能查看明确标记的预制候选和三份合成来源。
+2. 点击 **载入示例，亲自运行**，创建全新的本地工作区，并预填任务描述。
+3. 配置 DeepSeek Key，确认发送任务描述，再确认任务与来源。
+4. 请 Agent 整理字段、关系和问题。点击简短的 `@notes.md` 等引用，可以回到准确来源。
+5. 在 **待澄清** 中回答并批准，再继续同一个任务，查看更新后的草案。
+6. 在 **关系与字段** 或 **业务契约** 中导出 Markdown / JSON，带走版本、引用、回答记录和未决项。
 
-Workbench 支持在同一任务中明确发送问题、查看持久消息、选择有限历史、引用资料与草案字段/关系。生产默认每次 Run 向 high 模型请求一次 JSON 语义提案，程序再以精确版本和证据引用事务落地。普通消息不能代替业务裁决；澄清回答需要单独保存和批准。
+公开示例包含 [6 笔订单](src/contextox/demo/orders.csv)、[3 个客户](src/contextox/demo/customers.csv)和[一份说明](src/contextox/demo/notes.md)，全部为合成数据。预制结果是人工编写的展示材料；亲自运行得到的内容取决于模型，仍需你核对。
 
-最小 Demo 可在 `contextox start` 后显式添加 `--agent-profile demo-fast`，任务草拟与交互 Run 使用同一 Flash 的非思考模式。省略此参数仍使用生产默认 high；配置不会在运行中自动切换。选中的 Markdown/文本正文与明确引用的片段进入有界上下文，表格使用确定性画像；未读完的文字明确标为 partial。
+![工作台中的预制只读示例：字段、引用、表关系和需要回答的问题](docs/assets/demo-preview.jpg)
 
-候选草案允许保留待补充维度，当前问题无需覆盖所有未知项；正式提交审阅仍执行完整校验。`demo-fast` 的交互 Run 只保存候选：程序不会把模型选择的提交动作执行为审阅，也不会公开声称已提交。Demo 对已完整返回的 JSON/Schema 格式错误至多纠正一次，两次请求共享 75 秒 Run 上限，单次 Provider 仍至多 70 秒。纯生成失败且已确认未进入领域写入时，任务对话提供“重新生成并发送”；保留原未知回执，不自动重试。短 @ 引用点击后从本地 Store 读取精确来源版本与片段。
+*工作台实际截图。图中是明确标记的预制候选，用于先了解流程，不代表模型生成结果。*
 
-新资料库使用 schema v6。旧资料库仍可按其既有合同回读，但新 Run 和画像解释需要显式迁移。先停止使用该资料目录的旧实例，再用已核验的新构建启动；`--migrate-profile-interpretations` 会按顺序补齐仍缺少的对话与澄清迁移：
+## 安装与启动
 
-```bash
-uv run contextox start --host 127.0.0.1 --port 8787 \
-  --data-dir /absolute/path/to/authorized-data \
-  --static-dir /absolute/path/to/matching-build \
-  --migrate-profile-interpretations
+首批运行包面向 **macOS Apple 芯片**，自带 Python、依赖和网页，无需预装 Python、Node.js 或 UV。只使用 DeepSeek，由使用者提供自己的 API Key。
+
+**发布状态：0.2.0 仍在交付验证中，Release 尚未发布。以下固定版本安装命令将在 `v0.2.0` Release 发布后生效；当前可使用下方源码启动方式。**
+
+发布后，整段复制到终端即可安装并打开工作台：
+
+```sh
+contextox_download=$(mktemp -d)
+curl --fail --location --proto '=https' --tlsv1.2 \
+  https://github.com/archerthegoat/contextox-agent/releases/download/v0.2.0/install.sh \
+  --output "$contextox_download/install.sh" && sh "$contextox_download/install.sh"
 ```
 
-迁移会在授权资料目录内保留数据库、已知来源文件及校验清单的备份，拒绝存在活动执行或不符预期的 schema。不要向同一资料目录同时启动多个实例，也不要通过恢复旧备份丢弃迁移后产生的新消息。迁移失败时保留备份并核对状态，具体恢复边界见交付记录。
+安装程序下载固定版本并校验 SHA256，安装到 `~/.local/share/contextox`，随后启动本地服务并打开浏览器。无需管理员权限，不修改 shell 配置。再次启动：
 
-多个本地服务应使用各自版本匹配的静态目录。可用 `npm --prefix web run build -- --outDir /absolute/path/to/matching-build` 单独构建，避免覆盖旧服务正在使用的 `web/dist`。本轮自动预览只使用合成资料与 fake Provider，不能据此认定真实模型、已有私有资料迁移或人工验收通过。
+```sh
+"$HOME/.local/share/contextox/contextox" start
+```
 
-ContextOx Workbench 的产品目标是把明确授权的文档、样例数据、数据库结构和人的经验，整理成有来源、可追溯、可验收、可复用的业务定义 Contract。实际使用者可以围绕自己的业务或交付任务梳理实体、字段、指标和规则；学习者可以通过明确标记的公开或合成案例练习业务理解、澄清和定义交付，学习入口的具体功能及效果仍待验证。
+默认访问地址为 <http://127.0.0.1:8787>。保持终端运行；按 `Ctrl+C` 停止。重复启动同一资料目录会打开已有实例。端口被其他程序占用时，可以显式选择另一个端口：
 
-产品聚焦文档、样例数据、表结构和不同角色说法之间的定义缺口：粒度、身份、时间、口径、例外和责任人需要被明确。目标流程是从业务对象定位证据，把缺口转成可回答的问题，再将人的确认、版本和适用范围保存在可复用的 Workspace Context 中。
+```sh
+"$HOME/.local/share/contextox/contextox" start --port 8788
+```
 
-与 Codex、Claude Code 等通用 Agent 的差异化目标，是将业务对象、证据、澄清、确认、版本和交付物整合为可直接使用的流程，减少用户自行组织和维护这些工作的投入。通用 Agent 配合合适的 Skills、项目上下文、模板和工具是正式比较基线；资料读取、项目记忆和工具接入本身不作为独占优势。目前差异化收益仍为 `NOT VERIFIED`。定义包也可作为后续通用 Agent 的输入，当前不据此承诺新增自动集成。
+这轮提供终端安装与浏览器工作台；原生 `.app`、DMG、签名和公证不在当前交付范围。
 
-近期“规范数据库”指梳理数据库背后的业务含义、关系与定义，产出整理建议和可确认的规范。练习材料及模拟裁决必须明确标记；真实业务批准、学习效果和求职成效分别判断。
+## 配置 DeepSeek
 
-N1 首阶段只交付了本地 Workbench 壳层；其历史能力与验证记录保留在下表，当前增量能力以上文为准。
+在工作台顶部点击 **配置模型**，填入自己的 Key 并保存到 **macOS Keychain**。Key 不写入工作区数据库、普通配置文件或浏览器存储；网页也不会回显已保存的 Key。保存不调用模型，首次明确发送任务时才会产生 API 费用。
 
-## 产品闭环
+- [获取 DeepSeek API Key](https://platform.deepseek.com/api_keys)。Key 是否有效、账户是否有余额，以真实请求为准。
+- 已设置 `DEEPSEEK_API_KEY` 环境变量时，它优先于 Keychain，页面显示“由启动环境管理”。
+- 任务正在执行时不能替换或移除 Key；结束后可刷新状态再修改。
+- Keychain 无法访问时，请解锁 macOS 登录钥匙串。程序不会回退到明文文件保存。
+
+新请求使用正式 API 名称 `deepseek-flash`，对应 [DeepSeek V4.1 Flash](https://api-docs.deepseek.com/zh-cn/updates/)。安装包默认显式启用 `demo-fast` 非思考模式；源码 CLI 的默认配置仍为生产 `high`。配置不会在运行中自动切换，历史回执保留当时记录的模型名称。
+
+## 数据留在哪里，什么时候发送
+
+工作区、资料、草案、回答与执行记录保存在本机：
 
 ```text
-授权资料 → 确定性证据 → 结构化澄清 → 人的裁决 → Contract → 批准 Context
+~/Library/Application Support/ContextOx/
 ```
 
-这条链路是产品目标。目前已覆盖资料、证据、澄清候选、人的回答与批准，以及批准后的任务续接；正式 Contract 与批准 Context 复用仍待实现。
+升级运行包保留资料目录与旧版本。使用旧版资料目录的用户应继续显式传入 `--data-dir`；默认目录变更不会搬走旧数据。
 
-## N1 历史能力与验证记录
+导入和查看资料发生在本机。你确认发送后，当前任务的必要上下文才发送给 DeepSeek：表格先由 Python 统计，模型获得有界画像与少量样例；选中的说明文档和引用片段按预算提供正文。画像解释是单独的可选发送动作，不会在导入示例时自动调用。
 
-| 能力或证据层 | 状态 |
+当前单个来源上限为 **2 MiB**，表格准入上限为 **5,000 行**。服务只绑定 `127.0.0.1`，不提供远程访问、多用户协作或任意文件、SQL、Shell 执行。请只导入和发送你有权使用的材料。
+
+## 当前能用到哪一步
+
+| 能力 | Demo 边界 |
 | --- | --- |
-| 本地 Python API + React/TypeScript Workbench 壳层 | `IMPLEMENTED` |
-| `contextox doctor` / `contextox start` | `IMPLEMENTED` |
-| Pydantic → OpenAPI → TypeScript 类型与 typed client | `IMPLEMENTED` |
-| SSE 连接骨架 | `IMPLEMENTED`；当前只有公开连接事件和心跳 |
-| N1 自动验证、构建与外部临时目录运行烟测 | `PASS`；仅限 N1 壳层范围 |
-| Workspace、来源读取、解析与 profiling | `NOT STARTED` |
-| Agent Loop、领域工具与真实 provider | `NOT STARTED`；真实模型为 `NOT RUN` |
-| Clarifications、审批、Contract、Context 持久化 | `NOT STARTED` |
-| 浏览器人工 Workbench 验收 | `PENDING` |
-| 用户价值或 FDE 对比证据 | `NOT VERIFIED` |
+| 资料、表格画像和引用 | 来源版本可追溯；点击引用读取本地证据 |
+| 字段与关系草案 | 可以不完整，缺项与未知继续保留 |
+| 澄清与续接 | 回答、批准，再更新同一任务；普通聊天不能代替业务批准 |
+| 失败后继续 | 符合无领域写入条件的纯生成失败，可由用户明确重新生成；结果未知不自动重试 |
+| Markdown / JSON 导出 | 导出候选、当前版本、证据和澄清回答；不是正式 Contract |
+| 正式 Contract、批准 Context 的跨任务复用 | 后续开发 |
+| 大文件、Windows / Linux 运行包、其他模型供应商 | 当前不提供 |
 
-`PASS` 只表示对应自动化或运行证据通过，不代表产品完成、真实模型可用或人已验收。Human acceptance 仍由人针对精确 commit/build 记录。
+Demo 每轮正常交互的目标是 60 秒内返回；单次 Provider 上限 70 秒，Run 上限 75 秒。完整返回但格式不合规时，Demo 至多纠正一次，两次请求共享原截止时间。少量成功案例不能证明 P95 或生产 high 的稳定性。分层测试、真实调用、代理浏览器检查和人工验收状态见 [实施与验收记录](docs/R1系统重规划与验收指标.md)。
 
-## 本地快速开始
+## 从源码运行
 
-需要 Python `3.14.7`、UV 和 Node.js/npm。依赖版本已锁定；安装前核对项目中的依赖审查记录。
+开发需要 Python `3.14.7`、UV 和 Node.js `22.19.0` 以上版本。Python 与前端依赖均使用仓库锁定版本；安装不运行 npm 生命周期脚本。
 
-```bash
+```sh
+git clone https://github.com/archerthegoat/contextox-agent.git
+cd contextox-agent
 uv sync --locked
-
-cd web
-npm ci --ignore-scripts
-npm run generate:api
-npm run check:api
-npm run typecheck
-npm test
-npm run build
-cd ..
-
-uv run contextox doctor
-uv run contextox start
+npm --prefix web ci --ignore-scripts
+npm --prefix web run build
+uv run --locked contextox start --agent-profile demo-fast --open-browser
 ```
 
-然后打开 <http://127.0.0.1:8787>。服务只绑定本机回环地址；默认数据目录为 `.contextox-agent/`。用于验收时请明确指定仓库外的临时数据目录；已有资料目录的迁移需要单独授权。
+本地诊断使用 `uv run --locked contextox doctor`。`doctor` 意为环境检查：核对 Python、依赖、API 合同及网页资源，不读取凭据或调用模型，因此整体 `partial` 和 Provider `not_run` 可以是正常结果。
 
-也可以导出当前 API 合同：
+开发检查：
 
-```bash
-uv run contextox openapi --output /tmp/contextox-openapi.json
+```sh
+uv run --locked python -m compileall -q src tests
+uv run --locked python -m unittest discover -s tests
+npm --prefix web run check:api
+npm --prefix web run typecheck
+npm --prefix web test
+npm --prefix web run build
 ```
 
-`doctor` 核对 Python、锁定依赖、公开接口与构建资源；传入 `--data-dir` 时还会检查现有资料库。它不读取凭据、不发起模型请求、不导入业务资料，因此 Provider 与 customer_data 检查保持 `not_run`，整体可以是 `partial`。输出的 `scope: n2a` 是兼容现有接口的诊断范围标识，不是当前产品版本或能力清单。
+新资料库使用 schema v6。已有资料需要迁移时，先停止旧服务、保留备份并按 [架构与迁移报告](docs/架构与迁移报告.md) 执行；不要通过恢复旧备份丢弃新记录。多个版本应使用各自匹配的静态资源目录。
 
-如果旧虚拟环境指向已经失效的临时 Python 目录，先保存 `.venv/pyvenv.cfg` 和解释器链接，再用 UV 在原位置修复，保留现有包：
+## 构建固定版本运行包
 
-```bash
-uv venv --allow-existing --no-python-downloads --python /absolute/path/to/installed/python3.14 .venv
+维护者在 macOS arm64、干净的已提交源码上构建：
+
+```sh
 uv sync --locked
-uv run python --version
+npm --prefix web ci --ignore-scripts
+uv run --locked python scripts/build_release.py --output-dir /absolute/path/outside-repository
 ```
 
-选定的解释器必须是已批准的 `3.14.7`；不要修改系统 Python。
+输出压缩包、`SHA256SUMS` 和 `install.sh`。包内 `BUILD.json` 记录源码 commit、内容指纹与依赖锁指纹；构建脚本校验官方 Python 归档并从锁定依赖组装，不复制开发虚拟环境或工作区。`--allow-dirty` 仅用于明确标记的开发验证，不能用作正式发布构建。脚本不会创建标签或上传 Release。
 
-## Workbench 里的四个区域
+发布前可通过 `sh scripts/install.sh --archive <压缩包路径> --sha256 <校验值> --install-dir <独立验证目录> --no-start` 验证离线安装。升级前停止服务；出现问题时保留资料目录与旧包，使用兼容的旧运行包或修正版本恢复，不降级数据库历史。
 
-- **资料来源**：导入授权材料，查看解析结果、全表统计、来源版本与证据；画像解释需再次明确确认，只发送统计画像，不发送整表。
-- **任务**：选择实际任务，在右侧发送问题，中间查看结果与执行历史。
-- **待澄清**：查看模型生成的问题及依据，保存并批准业务回答，再续接任务。
-- **业务契约**：查看字段与关系草案、未知项和版本；正式 Contract 审批尚未实现。
+## 反馈与开发方向
 
-运行范围限本机回环服务，不提供任意文件/SQL/shell 执行、远程同步、SSO、多用户协作、云端部署或发布。聊天与模型推断不会自动成为获批的公司事实。
+欢迎通过 [GitHub Issues](https://github.com/archerthegoat/contextox-agent/issues) 反馈：你想完成什么任务、在哪一步卡住、看到什么结果。请附运行包版本和脱敏的错误代码，不要上传 Key、私有资料库、客户数据或原始 Provider 内容。
 
-## 技术边界
+数契的目标是把业务对象、证据、澄清、确认、版本和交付物组织成可直接使用的流程。与通用 Agent 配合 Skills、项目上下文和模板的效果差异，仍需要实际案例验证。
 
-- Python 后端由 UV 管理；FastAPI、Pydantic 和 Uvicorn 是锁定的运行时依赖。
-- Pydantic 模型是 HTTP JSON、SSE envelope 和错误边界的权威来源；OpenAPI 生成 TypeScript 类型，前端通过 `openapi-fetch` 使用 typed client。
-- React + TypeScript 构建本地静态 SPA，由同一个绑定 `127.0.0.1` 的 Python 进程提供。
-- N1 使用标准库测试，不引入 ORM、Redux、CSS/UI framework、pytest、Agent framework 或 provider SDK。
+- [开发路径图](开发路径图.md)：产品方向与后续开发顺序。
+- [架构与迁移报告](docs/架构与迁移报告.md)：已批准的状态、权限、失败和恢复语义。
+- [R1 实施与验收记录](docs/R1系统重规划与验收指标.md)：当前切片、历史试验和待验项。
+- [任务对话交付记录](docs/任务对话A-D交付与验收.md)：此前任务对话的实现与验证。
 
-## 权威文档
+完整品牌和独立官网在产品方向验证后再推进。当前统一沿用工作台 Logo，以这个 GitHub 仓库作为入口。
 
-- [`开发路径图.md`](开发路径图.md)：人工控制的产品方向与开发顺序；不会由代码或测试自动同步。
-- [`docs/架构与迁移报告.md`](docs/架构与迁移报告.md)：批准的架构、状态、失败语义、迁移边界和验收清单。
-- [`docs/migration-publication-manifest.json`](docs/migration-publication-manifest.json)：旧材料公开迁移的逐文件决策记录。
+## 许可证
 
-## 隐私与许可证
-
-客户资料、公司私有资料、运行数据库、凭证、原始 provider payload、敏感日志和私有评测数据不得进入 Git、普通日志或测试。只处理明确授权的本地材料；发送给 Provider 前必须确认本次输入与资料范围。具体边界以 [`AGENTS.md`](AGENTS.md) 和上述架构报告为准。
-
-本项目采用 [MIT License](LICENSE)。
+项目采用 [MIT License](LICENSE)。运行包中保留 Python、后端依赖、React/Vite 及图标的第三方许可证与声明。公开示例为人工合成材料，不构成真实业务规则或批准。
