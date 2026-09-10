@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 
-from contextox.credentials import CredentialUnavailableError, MacKeychain, environment_key
+from contextox.credentials import CredentialUnavailableError, MacKeychain, external_key_source
 from contextox.models import DeepSeekKeyRequest, DeepSeekSettings, WorkspaceError
 from contextox.store import WorkspaceStoreBusyError
 
@@ -80,21 +80,20 @@ def install_settings_routes(app: FastAPI, agent_profile: str) -> None:
     def snapshot(response: Response):
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        if environment_key():
-            source = "environment"
-        else:
+        source = external_key_source()
+        if source is None:
             try:
                 source = "keychain" if MacKeychain().contains() else "missing"
             except CredentialUnavailableError:
                 source = "unavailable"
         runtime = app.state.path2_runtime
-        return DeepSeekSettings(source=source, configured=source in {"environment", "keychain"},
+        return DeepSeekSettings(source=source, configured=source in {"environment", "env_file", "keychain"},
             busy=runtime.busy if runtime else False, agent_profile=agent_profile,
             thinking="disabled" if agent_profile == "demo-fast" else "enabled", session_token=token)
 
     def mutate(operation):
-        if environment_key():
-            raise HTTPException(409, "当前 Key 由环境变量管理，请在启动环境中修改。")
+        if external_key_source():
+            raise HTTPException(409, "当前 Key 由启动环境或显式配置文件管理，请修改后重启服务。")
         runtime = app.state.path2_runtime
         if runtime is None:
             raise HTTPException(503, "请先恢复本地资料库，再修改模型设置。")

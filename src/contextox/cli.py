@@ -10,6 +10,7 @@ from typing import Sequence
 
 from contextox import __version__
 from contextox.api import create_app
+from contextox.credentials import EnvFileError, load_env_file
 from contextox.models import DoctorCheck, DoctorReport
 from contextox.store import WorkspaceStore
 from contextox.local_install import InstanceAlreadyRunning, data_directory, own_instance, static_directory
@@ -182,6 +183,8 @@ def _build_parser() -> argparse.ArgumentParser:
     start = commands.add_parser("start", help="Start the local Workbench server.")
     start.add_argument("--agent-profile", choices=("production", "demo-fast"), default="production",
                        help="Use production high (default) or explicitly select the non-thinking demo.")
+    start.add_argument("--env-file", type=Path,
+                       help="Read DEEPSEEK_API_KEY from this UTF-8 file; environment variables take priority.")
     start.add_argument("--migrate-profile-interpretations", action="store_true", help="Back up and migrate a stopped v5 store to profile interpretations v6.")
     start.add_argument("--migrate-clarification-answers", action="store_true", help="Back up and migrate a stopped store to clarification answers v5.")
     start.add_argument("--migrate-task-dialogue", action="store_true", help="Explicitly back up and migrate a stopped v3 store to task dialogue v4.")
@@ -221,6 +224,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("ContextOx only binds to 127.0.0.1 in N1.")
         if not 1 <= args.port <= 65535:
             parser.error("port must be between 1 and 65535")
+        try:
+            load_env_file(args.env_file)
+        except EnvFileError as error:
+            parser.error(str(error))
         data_dir = args.data_dir.resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
         if not data_dir.is_dir():

@@ -58,9 +58,24 @@ curl --fail --location --proto '=https' --tlsv1.2 \
 在工作台顶部点击 **配置模型**，填入自己的 Key 并保存到 **macOS Keychain**。Key 不写入工作区数据库、普通配置文件或浏览器存储；网页也不会回显已保存的 Key。保存不调用模型，首次明确发送任务时才会产生 API 费用。
 
 - [获取 DeepSeek API Key](https://platform.deepseek.com/api_keys)。Key 是否有效、账户是否有余额，以真实请求为准。
-- 已设置 `DEEPSEEK_API_KEY` 环境变量时，它优先于 Keychain，页面显示“由启动环境管理”。
+- 支持三种方式，优先级为 `DEEPSEEK_API_KEY` 环境变量 → `--env-file` 指定文件 → Keychain。页面显示当前配置来源。
 - 任务正在执行时不能替换或移除 Key；结束后可刷新状态再修改。
 - Keychain 无法访问时，请解锁 macOS 登录钥匙串。程序不会回退到明文文件保存。
+
+习惯本地配置文件的开发者，可以自行创建一个 UTF-8 文件，例如 `contextox.env`：
+
+```dotenv
+DEEPSEEK_API_KEY=your-deepseek-api-key
+```
+
+将示例值替换为自己的 Key，限制文件访问权限，再明确指定文件启动：
+
+```sh
+chmod 600 contextox.env
+"$HOME/.local/share/contextox/contextox" start --env-file ./contextox.env
+```
+
+也可以使用名称为 `.env` 的文件，但程序不会自动寻找它。文件在启动时只读一次；修改后重启服务。支持空行、`#` 注释、可选的 `export` 前缀及成对单/双引号，只读取 `DEEPSEEK_API_KEY`，不展开变量、不执行命令、不向进程环境导入其他变量。指定文件必须有效且不超过 16 KiB；缺项、重复或无效值会明确停止启动，不静默换用其他 Key。网页不会创建、修改或回显该文件；本地配置文件应保留在 Git 之外。使用源码启动时同样支持 `uv run --locked contextox start --env-file ./contextox.env`。
 
 新请求使用正式 API 名称 `deepseek-flash`，对应 [DeepSeek V4.1 Flash](https://api-docs.deepseek.com/zh-cn/updates/)。安装包默认显式启用 `demo-fast` 非思考模式；源码 CLI 的默认配置仍为生产 `high`。配置不会在运行中自动切换，历史回执保留当时记录的模型名称。
 

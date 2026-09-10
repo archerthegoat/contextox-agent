@@ -7,7 +7,56 @@ the provisioning profile required for the data-protection keychain.
 from contextlib import contextmanager
 import ctypes as C
 import os
+from pathlib import Path
+import re
+import stat
 import sys
+
+
+_env_file_key: str | None = None
+
+
+class EnvFileError(Exception):
+    """A configuration error with no file contents, path, or secret in its message."""
+
+
+def load_env_file(path: Path | None) -> None:
+    """Read one explicit, bounded configuration file once, before serving requests."""
+    global _env_file_key
+    _env_file_key = None
+    if path is None:
+        return
+    try:
+        with os.fdopen(os.open(path.expanduser(), os.O_RDONLY | os.O_NONBLOCK), "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise EnvFileError("--env-file 必须指向普通文件。")
+            raw = handle.read(16 * 1024 + 1)
+        if len(raw) > 16 * 1024:
+            raise EnvFileError("--env-file 不能超过 16 KiB。")
+        contents = raw.decode("utf-8-sig")
+    except (OSError, UnicodeError):
+        raise EnvFileError("无法读取 --env-file；请检查文件是否存在、可读且使用 UTF-8 编码。") from None
+    key = None
+    for line in contents.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        assignment = re.fullmatch(r"(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)", line)
+        if not assignment:
+            raise EnvFileError("--env-file 仅支持 KEY=value、空行和注释，不执行命令。")
+        if assignment[1] != "DEEPSEEK_API_KEY":
+            continue  # Other assignments are never imported or evaluated.
+        if key is not None:
+            raise EnvFileError("--env-file 中 DEEPSEEK_API_KEY 不能重复。")
+        value = re.fullmatch(r'''(?:'([^']*)'|"([^"]*)"|([^\s#'"`]+))(?:\s+#.*)?''', assignment[2].strip())
+        if not value:
+            raise EnvFileError("DEEPSEEK_API_KEY 格式无效；支持单行值和成对的单引号或双引号。")
+        key = next(group for group in value.groups() if group is not None)
+        if not 16 <= len(key) <= 512 or any(not 33 <= ord(char) <= 126 or char in "$`" for char in key):
+            raise EnvFileError("DEEPSEEK_API_KEY 必须是 16–512 个可打印 ASCII 字符，不支持空白、变量展开或命令替换。")
+    if key is None:
+        raise EnvFileError("--env-file 中缺少 DEEPSEEK_API_KEY。")
+    _env_file_key = key
 
 
 class CredentialUnavailableError(Exception):
@@ -127,5 +176,11 @@ def environment_key() -> str | None:
     return os.environ.get("DEEPSEEK_API_KEY") or None
 
 
+def external_key_source() -> str | None:
+    if environment_key():
+        return "environment"
+    return "env_file" if _env_file_key else None
+
+
 def provider_key() -> str | None:
-    return environment_key() or MacKeychain().read()
+    return environment_key() or _env_file_key or MacKeychain().read()

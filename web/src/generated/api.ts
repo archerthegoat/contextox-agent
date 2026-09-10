@@ -973,7 +973,7 @@ export interface components {
              * Source
              * @enum {string}
              */
-            source: "environment" | "keychain" | "missing" | "unavailable";
+            source: "environment" | "env_file" | "keychain" | "missing" | "unavailable";
             /** Configured */
             configured: boolean;
             /** Busy */

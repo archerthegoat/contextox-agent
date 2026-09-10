@@ -240,7 +240,7 @@ class WorkspaceError(ContextOxModel):
 
 
 class DeepSeekSettings(ContextOxModel):
-    source: Literal["environment", "keychain", "missing", "unavailable"]
+    source: Literal["environment", "env_file", "keychain", "missing", "unavailable"]
     configured: bool
     busy: bool
     model: Literal["deepseek-flash"] = "deepseek-flash"
