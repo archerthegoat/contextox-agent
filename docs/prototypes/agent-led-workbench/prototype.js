@@ -36,19 +36,24 @@ function setScene(scene) {
 function resultMessage(){return '<p>回答已确认，草案已更新。<button class="citation" data-view="result">查看本次变化 ↗</button></p><p>已纳入你确认的订单状态、退款处理与日期归属规则。金额中的税费、折扣仍未知，所以目前保留为<strong>不完整的候选草案</strong>。</p><p>你可以检查左侧草案，也可以继续补充口径。</p>';}
 function failedMessage(){return '<p>业务回答已经确认，但后续分析尚未启动。</p><div class="answer-card"><div class="receipt"><span>回答版本 1 的批准</span><span>已成功保存</span></div><div class="receipt"><span>后续分析</span><span>启动失败 · 尚未运行</span></div><div class="notice error">合成故障：连接暂时不可用。已确认的回答会保留。</div><button class="primary" data-action="retry">重试后续分析</button></div>';}
 function stage(){if(state.scene==='entry'||state.scene==='discussion'||state.scene==='connect')return 0;if(['question','answer','failed'].includes(state.scene))return 2;if(state.scene==='result')return 3;return 1;}
-function render(){
- state.messages=state.messages.map(m=>m.body.includes('id="answer-version"')?{...m,body:'<p>请核对或修改这份业务回答。</p>'+answerCard()}:m);
- $('#messages').innerHTML=state.messages.map(m=>'<div class="message '+m.role+'">'+(m.role==='agent'?'<div class="sender">数契</div>':'')+m.body+'</div>').join('');
- $('#messages').scrollTop=$('#messages').scrollHeight;
- const step=stage();$('#progress').innerHTML=labels.map((label,i)=>'<li class="'+(i===step?'current':i<step?'past':'')+'"'+(i===step?' aria-current="step"':'')+'><span class="step-index">'+(i<step?'✓':i+1)+'</span>'+label+'</li>').join('');
- const noTask=['entry','discussion','connect'].includes(state.scene);$('#task-title').textContent=noTask?'从一个问题开始':'按地区理解订单金额';
+function updateTaskStatus(){
  const statuses={entry:'尚未形成任务',discussion:'讨论中',connect:'等待连接',analysis:'正在理解资料',question:'3 个问题待回答',answer:state.saved?'回答已保存 · 待确认':'待确认回答',result:'候选草案 · 不完整',failed:'已批准 · 续接失败',unknown:'执行结果未知',cancelled:'已停止'};
  $('#task-status').textContent=statuses[state.scene]||'讨论中';$('#task-status').className='badge '+(['question','answer','failed','unknown'].includes(state.scene)?'amber':'blue');
+}
+function render(){
+ $('#scenario').value=state.scene;
+ state.messages=state.messages.map(m=>m.body.includes('id="answer-version"')?{...m,body:'<p>请核对或修改这份业务回答。</p>'+answerCard()}:m);
+ $('#messages').innerHTML=state.messages.map(m=>'<div class="message '+m.role+'">'+(m.role==='agent'?'<div class="sender">数契</div>':'')+m.body+'</div>').join('');
+ const step=stage();$('#progress').innerHTML=labels.map((label,i)=>'<li class="'+(i===step?'current':i<step?'past':'')+'"'+(i===step?' aria-current="step"':'')+'><span class="step-index">'+(i<step?'✓':i+1)+'</span>'+label+'</li>').join('');
+ const noTask=['entry','discussion','connect'].includes(state.scene);$('#task-title').textContent=noTask?'从一个问题开始':'按地区理解订单金额';
+ updateTaskStatus();
  $('#agent-status').textContent=state.running?'正在分析 · 可以停止':noTask?'一起把问题弄清楚':state.scene==='result'?'草案已更新，仍有未知事项':'对话与资料持续保留';
  $('#send').disabled=state.running||state.scene==='unknown';$('#send').hidden=state.running;$('#stop').hidden=!state.running;
  $('#composer-notice').textContent=state.running?'分析进行中。你可以编辑下一条草稿，停止或结束后再发送。':state.scene==='unknown'?'请先核对上次执行结果。消息草稿会保留，不自动重试。':'';
  $('#scope-label').textContent='本次对话使用 '+state.sources.length+' 份资料';$('#follow-label').textContent=state.following?'跟随对话展示相关内容':'你正在查看资料 · 新进展不会切换此视图';$('#follow').hidden=state.following;
  renderContent();
+ // Scroll after composer and panel layout changes; input/save handlers do not render.
+ $('#messages').scrollTop=$('#messages').scrollHeight;
 }
 function sheet(title,body){return '<section class="sheet"><div class="sheet-head">'+title+'</div><div class="sheet-body">'+body+'</div></section>';}
 function renderContent(){let html=''; const view=state.view;
@@ -83,7 +88,7 @@ $('#nav-toggle').addEventListener('click',()=>$('#app').classList.toggle('nav-op
 $('#workspace-choice').addEventListener('click',()=>toast('原型仅有一个本地工作区，资料不会跨工作区使用。'));
 $$('[data-source]').forEach(input=>input.addEventListener('change',()=>{state.sources=$$('[data-source]:checked').map(el=>el.dataset.source);$('#scope-label').textContent='本次对话使用 '+state.sources.length+' 份资料';toast('当前对话资料范围已更新（仅本页合成状态）。');}));
 $('#file').addEventListener('change',event=>{const file=event.target.files[0];if(file)$('#file-notice').textContent='已选择文件名：'+file.name+'。原型不读取、不上传、不加入分析。';});
-document.addEventListener('input',event=>{if(event.target.closest('.answer-card')&&event.target.matches('input,textarea')){state.answers[event.target.id.replace('answer-','')]=event.target.value;state.version++;state.saved=false;const version=$('#answer-version');if(version)version.textContent=state.version;$('#save-note').textContent='内容已修改：需确认新版本 '+state.version+'，此前保存不代表批准。';}});
+document.addEventListener('input',event=>{if(event.target.closest('.answer-card')&&event.target.matches('input,textarea')){state.answers[event.target.id.replace('answer-','')]=event.target.value;state.version++;state.saved=false;updateTaskStatus();const version=$('#answer-version');if(version)version.textContent=state.version;$('#save-note').textContent='内容已修改：需确认新版本 '+state.version+'，此前保存不代表批准。';}});
 document.addEventListener('click',event=>{const target=event.target.closest('button');if(!target)return;if(target.dataset.view){showView(target.dataset.view);return;}if(target.dataset.prompt){$('#message').value=target.dataset.prompt;sendMessage();return;}const action=target.dataset.action;
  if(action==='new'){setScene('entry');$('#app').classList.remove('nav-open');setMobile('chat');}
  if(action==='recent')setScene('discussion');
@@ -91,7 +96,7 @@ document.addEventListener('click',event=>{const target=event.target.closest('but
  if(action==='sources')$('#source-scope').open=!$('#source-scope').open;
  if(action==='attach')$('#file').click();
  if(action==='finish-analysis')finishAnalysis();
- if(action==='save-answer'){state.saved=true;$('#save-note').textContent='回答版本 '+state.version+' 已保存（合成状态）。尚未批准，也未开始后续分析。';toast('回答已保存，稍后仍需确认。');}
+ if(action==='save-answer'){state.saved=true;updateTaskStatus();$('#save-note').textContent='回答版本 '+state.version+' 已保存（合成状态）。尚未批准，也未开始后续分析。';toast('回答已保存，稍后仍需确认。');}
  if(action==='confirm'){const fields=$$('.answer-card input, .answer-card textarea');if(fields.some(el=>!el.value.trim())){toast('请填写完整回答；未知可以明确写为“未知”。');return;}if(state.approved||state.running)return;state.approved=true;target.disabled=true;const summary=fields.map(el=>escapeHtml(el.value)).join('；');state.messages=state.messages.map(m=>m.body.includes('id="answer-version"')?{role:'agent',body:'<div class="answer-card"><h3>回答版本 '+state.version+' 已确认</h3><p>'+summary+'</p><span class="meta">批准已保存 · 合成回执</span></div>'}:m);startAnalysis();}
  if(action==='retry'){if(!state.resumeFailed||state.running)return;state.resumeFailed=false;startAnalysis();}
  if(action==='reconcile'){state.scene='cancelled';followView('cancelled');agent('<p>核对完成（合成回执）：上次分析已停止，没有草案更新。现在可以继续发送消息。</p>');render();}
