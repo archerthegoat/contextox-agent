@@ -73,7 +73,11 @@ def request_in(connection, ws, mid, origin, cid):
     return found
 
 
-def load_version(connection, ws, mid, origin, cid, version):
+def _load_version_record(connection, ws, mid, origin, cid, version):
+    """Verify immutable answer bindings without reading source content.
+
+    Used only by internal Run control; public reads also require source access.
+    """
     from contextox import store as db
     row = connection.execute("SELECT sha256,payload_json FROM clarification_answer_versions "
         "WHERE workspace_id=? AND mission_id=? AND origin_run_id=? AND clarification_id=? AND version=?",
@@ -88,19 +92,30 @@ def load_version(connection, ws, mid, origin, cid, version):
         if a.request_sha256 != canonical_sha256(q) or len(a.items) != len(q.questions):
             raise ValueError("question binding mismatch")
         for source in a.source_refs:
-            revision, _ = db._load_source_in_connection(connection, ws, source.revision_id)
-            if revision.permission_status != "read_allowed":
-                raise db.Path2StateError("source_permission_denied")
-            if db._source_identity(revision) != source:
+            identity = connection.execute(
+                "SELECT source_id,sha256 FROM source_revisions WHERE workspace_id=? AND revision_id=?",
+                (ws, source.revision_id),
+            ).fetchone()
+            if source.workspace_id != ws or identity != (source.source_id, source.sha256):
                 raise db.Path2StateError("source_revision_mismatch")
-            main_path = next((item[2] for item in connection.execute("PRAGMA database_list") if item[1] == "main"), None)
-            if not main_path:
-                raise db.WorkspaceStoreUnavailableError()
-            data_dir = db.canonical_data_dir(Path(main_path).parent)
-            db._read_validated_source_file(db._source_path(data_dir, revision), revision)
         return a
     except (ValueError, TypeError) as exc:
         raise db.WorkspaceStoreUnavailableError() from exc
+
+
+def load_version(connection, ws, mid, origin, cid, version):
+    from contextox import store as db
+    answer = _load_version_record(connection, ws, mid, origin, cid, version)
+    for source in answer.source_refs:
+        revision, _ = db._load_source_in_connection(connection, ws, source.revision_id)
+        if revision.permission_status != "read_allowed":
+            raise db.Path2StateError("source_permission_denied")
+        main_path = next((item[2] for item in connection.execute("PRAGMA database_list") if item[1] == "main"), None)
+        if not main_path:
+            raise db.WorkspaceStoreUnavailableError()
+        data_dir = db.canonical_data_dir(Path(main_path).parent)
+        db._read_validated_source_file(db._source_path(data_dir, revision), revision)
+    return answer
 
 
 def load_approval(connection, answer):
@@ -258,7 +273,7 @@ def mutate(store, ws, mid, origin, cid, payload, *, version=None):
         return submission(store,connection,ws,mid,payload.client_request_id),created
 
 
-def load_run_answers(connection, ws, mid, run_id):
+def load_run_answers(connection, ws, mid, run_id, *, _for_control: bool = False):
     from contextox import store as db
     if not enabled(connection):
         return []
@@ -268,7 +283,7 @@ def load_run_answers(connection, ws, mid, run_id):
         raise db.WorkspaceStoreUnavailableError()
     result=[]
     for origin,cid,version,sha,aid in rows:
-        answer=load_version(connection,ws,mid,origin,cid,version)
+        answer=(_load_version_record if _for_control else load_version)(connection,ws,mid,origin,cid,version)
         approval=load_approval(connection,answer)
         if approval is None or approval.approval_id != aid or answer.sha256 != sha:
             raise db.WorkspaceStoreUnavailableError()
@@ -365,7 +380,7 @@ def answer_impact(store, connection, ws, mid, run_id):
         changes=changes,remaining_blockers=blockers,result_state="no_result" if after is None else "available" if run.status in {"partial","waiting_for_human"} else "partial")
 
 
-def manifest_refs(connection, ws, mid, run_id, manifest_id):
+def manifest_refs(connection, ws, mid, run_id, manifest_id, *, _for_control: bool = False):
     from contextox import store as db
     from pydantic import TypeAdapter
     if not enabled(connection):
@@ -374,7 +389,7 @@ def manifest_refs(connection, ws, mid, run_id, manifest_id):
     if row is None:
         raise db.WorkspaceStoreUnavailableError()
     values=TypeAdapter(list[ApprovedAnswerRef]).validate_json(row[0])
-    if db._canonical_json(values)!=row[0] or values!=refs(load_run_answers(connection,ws,mid,run_id)):
+    if db._canonical_json(values)!=row[0] or values!=refs(load_run_answers(connection,ws,mid,run_id,_for_control=_for_control)):
         raise db.WorkspaceStoreUnavailableError()
     return values
 

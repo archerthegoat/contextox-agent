@@ -4267,46 +4267,48 @@ class WorkspaceStore:
             raise Path2StateError("state_conflict")
         try:
             with self._write_transaction() as connection:
-                run = _load_run(connection, workspace_id, mission_id, run_id)
-                if run.status in {"cancelled", "waiting_for_human", "partial", "completed"}:
-                    return run
+                run = _load_run_control(connection, workspace_id, mission_id, run_id)
                 if run.status in {"blocked", "failed"}:
                     if run.status != status or run.error_code != code:
                         raise Path2StateError("state_conflict")
-                    return run
-                if status == "partial":
+                elif run.status not in {"queued", "running"}:
+                    pass
+                elif status == "partial":
                     raise Path2StateError("state_conflict")
-                now = _utc_now().isoformat()
-                if connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}:
-                    connection.execute(
-                        """
-                        UPDATE runs SET status=?, phase='terminal', finished_at=?, error_code=?
-                        WHERE workspace_id=? AND mission_id=? AND run_id=?
-                          AND status IN ('queued','running')
-                        """,
-                        (status, now, code, workspace_id, mission_id, run_id),
-                    )
-                    _append_event_in_transaction(
-                        connection, run, "run_phase_changed", {"phase": "terminal"}
-                    )
                 else:
+                    now = _utc_now().isoformat()
+                    if connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}:
+                        connection.execute(
+                            """
+                            UPDATE runs SET status=?, phase='terminal', finished_at=?, error_code=?
+                            WHERE workspace_id=? AND mission_id=? AND run_id=?
+                              AND status IN ('queued','running')
+                            """,
+                            (status, now, code, workspace_id, mission_id, run_id),
+                        )
+                        _append_event_in_transaction(
+                            connection, run, "run_phase_changed", {"phase": "terminal"}
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            UPDATE runs SET status=?, finished_at=?, error_code=?
+                            WHERE workspace_id=? AND mission_id=? AND run_id=?
+                              AND status IN ('queued','running')
+                            """,
+                            (status, now, code, workspace_id, mission_id, run_id),
+                        )
                     connection.execute(
                         """
-                        UPDATE runs SET status=?, finished_at=?, error_code=?
-                        WHERE workspace_id=? AND mission_id=? AND run_id=?
-                          AND status IN ('queued','running')
+                        UPDATE missions SET status='blocked', state_version=state_version+1
+                        WHERE workspace_id=? AND mission_id=?
+                          AND status NOT IN ('completed','cancelled')
                         """,
-                        (status, now, code, workspace_id, mission_id, run_id),
+                        (workspace_id, mission_id),
                     )
-                connection.execute(
-                    """
-                    UPDATE missions SET status='blocked', state_version=state_version+1
-                    WHERE workspace_id=? AND mission_id=?
-                      AND status NOT IN ('completed','cancelled')
-                    """,
-                    (workspace_id, mission_id),
-                )
-                return _load_run(connection, workspace_id, mission_id, run_id)
+                    _load_run_control(connection, workspace_id, mission_id, run_id)
+            # Terminal persistence must not roll back if public source access was revoked.
+            return self.get_run_snapshot(workspace_id, mission_id, run_id)
         except WorkspaceStoreError:
             raise
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
@@ -4363,10 +4365,8 @@ class WorkspaceStore:
         published: RunEventEnvelope | None = None
         try:
             with self._write_transaction() as connection:
-                run = _load_run(connection, workspace_id, mission_id, run_id)
-                if run.status not in {"queued", "running"}:
-                    stopped = run
-                else:
+                run = _load_run_control(connection, workspace_id, mission_id, run_id)
+                if run.status in {"queued", "running"}:
                     now = _utc_now()
                     is_v6 = connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}
                     if is_v6:
@@ -4380,7 +4380,7 @@ class WorkspaceStore:
                         _append_event_in_transaction(
                             connection, run, "run_phase_changed", {"phase": "terminal"}
                         )
-                        run = _load_run(connection, workspace_id, mission_id, run_id)
+                        run = _load_run_control(connection, workspace_id, mission_id, run_id)
                     sequence = run.last_sequence + 1
                     connection.execute(
                         """
@@ -4416,7 +4416,7 @@ class WorkspaceStore:
                         (workspace_id, mission_id, run_id, sequence, str(sequence),
                          now.isoformat(), _canonical_json(payload)),
                     )
-                    stopped = _load_run(connection, workspace_id, mission_id, run_id)
+                    _load_run_control(connection, workspace_id, mission_id, run_id)
         except WorkspaceStoreError:
             raise
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
@@ -4426,7 +4426,7 @@ class WorkspaceStore:
                 self._event_sink(published)
             except Exception:
                 pass
-        return stopped
+        return self.get_run_snapshot(workspace_id, mission_id, run_id)
 
     def recover_interrupted_runs(self) -> int:
         recovered = 0
@@ -4441,7 +4441,7 @@ class WorkspaceStore:
                 now = _utc_now()
                 is_v6 = connection.execute("PRAGMA user_version").fetchone()[0] in {6, 7}
                 for workspace_id, mission_id, run_id, last_sequence in rows:
-                    active = _load_run(connection, workspace_id, mission_id, run_id)
+                    active = _load_run_control(connection, workspace_id, mission_id, run_id)
                     if active.status not in {"queued", "running"}:
                         raise WorkspaceStoreUnavailableError()
                     last_sequence = active.last_sequence
@@ -4456,7 +4456,7 @@ class WorkspaceStore:
                         _append_event_in_transaction(
                             connection, active, "run_phase_changed", {"phase": "terminal"}
                         )
-                        active = _load_run(connection, workspace_id, mission_id, run_id)
+                        active = _load_run_control(connection, workspace_id, mission_id, run_id)
                     sequence = active.last_sequence + 1
                     connection.execute(
                         """
@@ -4487,6 +4487,7 @@ class WorkspaceStore:
                         (workspace_id, mission_id, run_id, sequence, str(sequence),
                          now.isoformat(), _canonical_json(payload)),
                     )
+                    _load_run_control(connection, workspace_id, mission_id, run_id)
                     recovered += 1
             return recovered
         except WorkspaceStoreError:
@@ -5367,7 +5368,9 @@ def _load_terminal_receipt(
     return None if row is None else _terminal_from_row(row)
 
 
-def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> RunSnapshot:
+def _run_from_row(
+    connection: sqlite3.Connection, row: tuple[object, ...], *, _for_control: bool = False,
+) -> RunSnapshot:
     try:
         schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
         if schema_version in {6, 7}:
@@ -5389,7 +5392,7 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
             source_refs=_run_source_refs(connection, row[0], row[1], row[2]),
             draft=_load_latest_draft(connection, row[0], row[1]),
             clarifications=_load_clarifications(connection, row[0], row[1], row[2]),
-            approved_answers=r2.load_run_answers(connection, row[0], row[1], row[2]),
+            approved_answers=r2.load_run_answers(connection, row[0], row[1], row[2], _for_control=_for_control),
             last_sequence=row[9], terminal_receipt=_load_terminal_receipt(
                 connection, row[0], row[1], row[2]
             ), final_output=row[10], error_code=row[11],
@@ -5455,7 +5458,7 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
             ).fetchone()
             if manifest_row is None:
                 raise WorkspaceStoreUnavailableError()
-            manifest = _context_manifest_from_row(manifest_row, connection)
+            manifest = _context_manifest_from_row(manifest_row, connection, _for_control=_for_control)
             if (
                 receipt.workspace_id != run.workspace_id
                 or receipt.mission_id != run.mission_id
@@ -5542,9 +5545,9 @@ def _run_from_row(connection: sqlite3.Connection, row: tuple[object, ...]) -> Ru
         raise WorkspaceStoreUnavailableError() from exc
 
 
-def _load_run(
+def _run_row(
     connection: sqlite3.Connection, workspace_id: str, mission_id: str, run_id: str,
-) -> RunSnapshot:
+) -> tuple[object, ...]:
     row = connection.execute(
         """
         SELECT workspace_id, mission_id, run_id, client_request_id, created_at,
@@ -5556,7 +5559,36 @@ def _load_run(
     ).fetchone()
     if row is None:
         raise Path2StateError("run_not_found")
-    return _run_from_row(connection, row)
+    return row
+
+
+def _load_run(
+    connection: sqlite3.Connection, workspace_id: str, mission_id: str, run_id: str,
+) -> RunSnapshot:
+    return _run_from_row(connection, _run_row(connection, workspace_id, mission_id, run_id))
+
+
+@dataclass(frozen=True)
+class _RunControlState:
+    workspace_id: str
+    mission_id: str
+    run_id: str
+    status: str
+    last_sequence: int
+    error_code: str | None
+
+
+def _load_run_control(
+    connection: sqlite3.Connection, workspace_id: str, mission_id: str, run_id: str,
+) -> _RunControlState:
+    """Preserve object/hash checks, expose only stop/recovery metadata internally."""
+    _load_mission(connection, workspace_id, mission_id)
+    run = _run_from_row(
+        connection, _run_row(connection, workspace_id, mission_id, run_id), _for_control=True,
+    )
+    return _RunControlState(
+        run.workspace_id, run.mission_id, run.run_id, run.status, run.last_sequence, run.error_code,
+    )
 
 
 def _tool_receipt_from_row(row: tuple[object, ...]) -> ToolReceipt:
@@ -5611,7 +5643,7 @@ def _insert_tool_receipt(
 
 
 def _append_event_in_transaction(
-    connection: sqlite3.Connection, run: RunSnapshot, event_type: str,
+    connection: sqlite3.Connection, run: RunSnapshot | _RunControlState, event_type: str,
     public_payload: dict[str, object],
 ) -> RunEventEnvelope:
     current = connection.execute(
@@ -5652,9 +5684,11 @@ def _append_event_in_transaction(
     return envelope
 
 
-def _context_manifest_from_row(row: tuple[object, ...], connection: sqlite3.Connection) -> ContextPacketManifest:
+def _context_manifest_from_row(
+    row: tuple[object, ...], connection: sqlite3.Connection, *, _for_control: bool = False,
+) -> ContextPacketManifest:
     try:
-        answer_refs = r2.manifest_refs(connection, row[0], row[1], row[2], row[3])
+        answer_refs = r2.manifest_refs(connection, row[0], row[1], row[2], row[3], _for_control=_for_control)
         packet = ContextPacketManifest(
             approved_answer_refs=answer_refs,
             workspace_id=row[0], mission_id=row[1], run_id=row[2], manifest_id=row[3],
