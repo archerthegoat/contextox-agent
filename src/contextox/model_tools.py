@@ -176,10 +176,21 @@ class SemanticRelationshipInput(RelationshipInput):
     unknowns: list[UnknownItem] = Field(default_factory=list, max_length=100)
 
 
-class SemanticQuestionTarget(ContextOxModel):
-    kind: Literal["field", "relationship"]
+class SemanticFieldQuestionTarget(ContextOxModel):
+    kind: Literal["field"]
     key: Key
-    property: Key | None = None
+    property: Literal["meaning", "value_type", "grain", "rule", "time_basis", "null_handling"] | None = None
+
+
+class SemanticRelationshipQuestionTarget(ContextOxModel):
+    kind: Literal["relationship"]
+    key: Key
+    property: Literal["join_rule", "grain_notes", "risks"] | None = None
+
+
+SemanticQuestionTarget = Annotated[
+    SemanticFieldQuestionTarget | SemanticRelationshipQuestionTarget, Field(discriminator="kind")
+]
 
 
 class SemanticQuestionInput(ContextOxModel):

@@ -385,6 +385,35 @@ class SemanticProposalBoundaryTests(unittest.TestCase):
             self.assertEqual(result.terminal_receipt.terminal_tool, "finish_run")
             self.assertEqual(result.clarifications, [])
 
+    def test_question_addresses_resolve_proposal_shape_without_guessing_targets(self):
+        with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
+            run, snapshot = self._running_semantic_case(store, ws, mission, refs)
+            plan, adapter = build_context_plan(snapshot, store)
+            source = plan.sources[0]
+            field = {"field_key":"candidate_id", "name":"候选标识",
+                "source_column_handles":[source["tables"][0]["columns"][0]["column_handle"]],
+                "evidence_status":"candidate", "evidence_handles":source["profile_pack"]["tables"][0]["evidence_handles"]}
+            payload = {"version":"v1", "action":"draft_and_clarify", "public_answer":"需要业务确认规则。",
+                "fields":[field], "questions":[{"question":"标识是否保留前导零？", "why_needed":"确定关联规则。",
+                    "expected_answer_type":"text", "related_definition_paths":[]}]}
+            for path in ("fields.candidate_id.rule", "fields.candidate_id.semantics.rule",
+                         "fields.0.semantics.rule", "/fields/0/semantics/rule"):
+                payload["questions"][0]["related_definition_paths"] = [path]
+                application = normalize_semantic_proposal(adapter, SemanticProposalV1.model_validate(payload))
+                self.assertEqual(application.questions[0].related_definition_paths, ["fields.candidate_id.rule"])
+            for path in ("fields.missing.rule", "fields.0.made_up_dimension"):
+                payload["questions"][0]["related_definition_paths"] = [path]
+                with self.assertRaisesRegex(SemanticProposalFailure, "semantic_definition_path_invalid"):
+                    normalize_semantic_proposal(adapter, SemanticProposalV1.model_validate(payload))
+            payload["fields"].append({**field, "field_key":"0"})
+            payload["questions"][0]["related_definition_paths"] = ["fields.0.rule"]
+            with self.assertRaisesRegex(SemanticProposalFailure, "semantic_definition_path_invalid"):
+                normalize_semantic_proposal(adapter, SemanticProposalV1.model_validate(payload))
+            self.assertIsNone(store.get_run_snapshot(ws, mission.mission_id, run.run_id).draft)
+            result = store.apply_semantic_proposal(ws, mission.mission_id, run.run_id, application)
+            self.assertEqual(result.status, "waiting_for_human")
+            self.assertEqual(result.clarifications[0].questions[0].related_definition_paths, ["fields.candidate_id.rule"])
+
     def test_omitted_dimensions_preserve_existing_values_on_candidate_update(self):
         with fixtures.PersistedRunTests().store_case(with_sources=True, controller=True) as (store, ws, mission, refs):
             run, snapshot = self._running_semantic_case(store, ws, mission, refs)

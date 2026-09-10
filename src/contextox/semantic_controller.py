@@ -102,6 +102,7 @@ PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256 = "2ee5d7b89eaf5cf61be546cca69479410119e98d
 SUPPORTED_SEMANTIC_HASH_PAIRS = frozenset({
     (P0_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
     (PRE_COMPACT_SEMANTIC_PROPOSAL_SHA256, EMPTY_TOOL_SCHEMA_SHA256),
+    ("a2a1c67e0ea2e50ca9911b1c64f6c09f256065a835874a09c187b5b2eba4ab06", EMPTY_TOOL_SCHEMA_SHA256),
     ("7617399876810be036c322ce0cdd2d56e610f958eadf1ad21194bb21b348e790", EMPTY_TOOL_SCHEMA_SHA256),
 })
 
@@ -172,6 +173,40 @@ def _projected_draft(
     return list(fields.values()), list(relationships.values()), unresolved
 
 
+def _question_path_aliases(
+    fields: list[DefinitionField], relationships: list[RelationshipCandidate],
+    proposal: SemanticProposalV1, valid_paths: set[str],
+) -> dict[str, set[str]]:
+    """Translate proposal-shaped addresses only when they identify one target.
+
+    The model sees arrays and nested field semantics; the Store addresses
+    objects by key and stores their definition dimensions flat. Never infer a
+    business dimension or accept an address to a nonexistent object.
+    """
+    aliases: dict[str, set[str]] = {path: {path} for path in valid_paths}
+    for collection, items, key_name in (
+        ("fields", proposal.fields or fields, "field_key"),
+        ("relationships", proposal.relationships or relationships, "relationship_key"),
+    ):
+        for index, item in enumerate(items):
+            key = getattr(item, key_name)
+            root = f"{collection}.{key}"
+            dimensions = ("meaning", "value_type", "grain", "rule", "time_basis", "null_handling") if collection == "fields" else ("join_rule", "grain_notes", "risks")
+            for dimension in (None, *dimensions):
+                canonical = root + (f".{dimension}" if dimension else "")
+                if canonical not in valid_paths:
+                    continue
+                for object_id in (key, str(index)):
+                    segments = [collection, object_id] + ([dimension] if dimension else [])
+                    variants = [segments]
+                    if collection == "fields" and dimension:
+                        variants.append([collection, object_id, "semantics", dimension])
+                    for parts in variants:
+                        for alias in (".".join(parts), "/" + "/".join(part.replace("~", "~0").replace("/", "~1") for part in parts)):
+                            aliases.setdefault(alias, set()).add(canonical)
+    return aliases
+
+
 def _question_contract(
     adapter: ToolAdapter,
     fields: list[DefinitionField],
@@ -217,9 +252,15 @@ def _question_contract(
 
     if proposal.action == "draft_and_submit" and obligations:
         raise SemanticProposalFailure("semantic_clarification_required")
+    aliases = _question_path_aliases(fields, relationships, proposal, valid_paths)
     questions: list[ClarificationQuestion] = []
     for question in proposal.questions:
-        paths = list(question.related_definition_paths)
+        paths = []
+        for path in question.related_definition_paths:
+            candidates = aliases.get(path, set())
+            if len(candidates) != 1:
+                raise SemanticProposalFailure("semantic_definition_path_invalid")
+            paths.append(next(iter(candidates)))
         for target in question.targets:
             collection = "fields" if target.kind == "field" else "relationships"
             path = f"{collection}.{target.key}"
