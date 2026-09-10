@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from contextox import agent, store as db
+from contextox.runtime import Path2Runtime
 
 
 class RunControlTests(unittest.TestCase):
@@ -62,6 +63,21 @@ class RunControlTests(unittest.TestCase):
                 read()
             self.assertEqual(raised.exception.code, "source_permission_denied")
 
+    def assert_one_failure_event(self, case, run_id, status, code, published):
+        expected_payload = {"status": status, "terminal_receipt_id": None, "error_code": code}
+        with case.store._connection() as connection:
+            rows = connection.execute(
+                "SELECT event_type,public_payload_json FROM run_events "
+                "WHERE workspace_id=? AND mission_id=? AND run_id=? "
+                "AND event_type IN ('run_blocked','run_failed') ORDER BY sequence",
+                (case.ws, case.mid, run_id),
+            ).fetchall()
+        self.assertEqual([(kind, json.loads(payload)) for kind, payload in rows],
+                         [(f"run_{status}", expected_payload)])
+        self.assertEqual(len(published), 1)
+        self.assertEqual(published[0].event_type, f"run_{status}")
+        self.assertEqual(published[0].public_payload.model_dump(), expected_payload)
+
     def test_cancel_revoked_approved_run_commits_before_public_rejection(self):
         case, run_id, request = self.running_case()
         self.revoke(case)
@@ -95,6 +111,8 @@ class RunControlTests(unittest.TestCase):
             with self.subTest(status=status):
                 case, run_id, request = self.running_case()
                 self.revoke(case)
+                published = []
+                case.store.set_event_sink(published.append)
                 with patch.object(db, "_read_validated_source_file", side_effect=AssertionError("control read source")) as reader:
                     with self.assertRaises(db.Path2StateError) as raised:
                         case.store.fail_run(case.ws, case.mid, run_id, status, "synthetic_failure")
@@ -107,6 +125,56 @@ class RunControlTests(unittest.TestCase):
                     case.store = db.WorkspaceStore.open(case.store.data_dir)
                     self.assert_public_reads_denied(case, run_id, request)
                     reader.assert_not_called()
+                self.assert_one_failure_event(case, run_id, status, "synthetic_failure", published)
+
+    def test_runtime_failure_after_revocation_emits_one_content_free_event(self):
+        case, run_id, request = self.running_case()
+        self.revoke(case)
+        runtime = Path2Runtime(case.store)
+        with patch.object(db, "_read_validated_source_file", side_effect=AssertionError("failure read source")) as reader:
+            runtime._fail_run(case.ws, case.mid, run_id, "agent_worker_failed")
+            stopped = self.raw_state(case, run_id)
+            runtime._fail_run(case.ws, case.mid, run_id, "agent_worker_failed")
+            self.assertEqual(self.raw_state(case, run_id), stopped)
+            self.assertEqual(stopped[:3], ("failed", "terminal", "agent_worker_failed"))
+            self.assert_public_reads_denied(case, run_id, request)
+            reader.assert_not_called()
+        self.assert_one_failure_event(case, run_id, "failed", "agent_worker_failed",
+                                      runtime.buffered_events(case.ws, case.mid, run_id, 0))
+
+    def test_readable_runtime_and_agent_stop_paths_do_not_duplicate_events(self):
+        for caller, status in (("runtime", "failed"), ("agent", "failed"), ("agent", "blocked")):
+            with self.subTest(caller=caller, status=status):
+                case, run_id, _ = self.running_case()
+                runtime = Path2Runtime(case.store)
+                for _ in range(2):
+                    if caller == "runtime":
+                        runtime._fail_run(case.ws, case.mid, run_id, "synthetic_failure")
+                    else:
+                        agent._stop_run(case.store, case.ws, case.mid, run_id, status, "synthetic_failure")
+                self.assertEqual(case.store.get_run_snapshot(case.ws, case.mid, run_id).status, status)
+                self.assert_one_failure_event(case, run_id, status, "synthetic_failure",
+                                              runtime.buffered_events(case.ws, case.mid, run_id, 0))
+
+    def test_failed_terminal_event_write_rolls_back_run_transition(self):
+        case, run_id, _ = self.running_case()
+        before = self.raw_state(case, run_id)
+        published = []
+        case.store.set_event_sink(published.append)
+        append = db._append_event_in_transaction
+
+        def reject_terminal(connection, run, event_type, payload):
+            if event_type == "run_failed":
+                raise db.WorkspaceStoreUnavailableError()
+            return append(connection, run, event_type, payload)
+
+        with patch.object(db, "_append_event_in_transaction", side_effect=reject_terminal):
+            with self.assertRaises(db.WorkspaceStoreUnavailableError):
+                case.store.fail_run(case.ws, case.mid, run_id, "failed", "synthetic_failure")
+        self.assertEqual(self.raw_state(case, run_id), before)
+        self.assertEqual(published, [])
+        self.assertFalse(any(event.event_type == "run_failed"
+                             for event in case.store.list_run_events(case.ws, case.mid, run_id)))
 
     def test_open_recovers_revoked_approved_run_without_reading_source(self):
         case, run_id, request = self.running_case()

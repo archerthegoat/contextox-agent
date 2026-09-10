@@ -4262,9 +4262,11 @@ class WorkspaceStore:
         status: Literal["blocked", "failed", "partial"],
         code: str,
     ) -> RunSnapshot:
+        """Persist failure and its terminal event atomically, then authorize readback."""
         self._require_path2_workspace(workspace_id)
         if status not in {"blocked", "failed", "partial"}:
             raise Path2StateError("state_conflict")
+        published: RunEventEnvelope | None = None
         try:
             with self._write_transaction() as connection:
                 run = _load_run_control(connection, workspace_id, mission_id, run_id)
@@ -4306,13 +4308,23 @@ class WorkspaceStore:
                         """,
                         (workspace_id, mission_id),
                     )
+                    published = _append_event_in_transaction(
+                        connection, run, f"run_{status}", {
+                            "status": status, "terminal_receipt_id": None, "error_code": code,
+                        },
+                    )
                     _load_run_control(connection, workspace_id, mission_id, run_id)
-            # Terminal persistence must not roll back if public source access was revoked.
-            return self.get_run_snapshot(workspace_id, mission_id, run_id)
         except WorkspaceStoreError:
             raise
         except (sqlite3.DatabaseError, ValidationError, TypeError, ValueError) as exc:
             raise WorkspaceStoreUnavailableError() from exc
+        if published is not None and self._event_sink is not None:
+            try:
+                self._event_sink(published)
+            except Exception:
+                pass
+        # Terminal state and its content-free event survive denied public reads.
+        return self.get_run_snapshot(workspace_id, mission_id, run_id)
 
     def save_run_final_output(
         self,

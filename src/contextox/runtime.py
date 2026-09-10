@@ -19,8 +19,6 @@ from contextox.models import (
     ProfileInterpretationAttempt,
     ProfileInterpretationCreateRequest,
     RunEventEnvelope,
-    RunFailedEventInput,
-    RunFailedPayload,
     RunSnapshot,
     RunStartRequest,
 )
@@ -430,20 +428,9 @@ class Path2Runtime:
         self, workspace_id: str, mission_id: str, run_id: str, code: str,
     ) -> None:
         try:
-            stopped = self.store.fail_run(
+            self.store.fail_run(
                 workspace_id, mission_id, run_id, "failed", code
             )
-            if stopped.status == "failed":
-                self.store.append_run_event(
-                    workspace_id, mission_id, run_id,
-                    RunFailedEventInput(
-                        event_type="run_failed",
-                        public_payload=RunFailedPayload(
-                            status="failed", terminal_receipt_id=None,
-                            error_code=code,
-                        ),
-                    ),
-                )
         except WorkspaceStoreError:
             pass
 

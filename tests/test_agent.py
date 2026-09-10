@@ -25,6 +25,7 @@ from contextox.models import (
     RunBudget,
     RunCompletedEventInput,
     RunCompletedPayload,
+    RunEventInput,
     RunStartRequest,
     RunSnapshot,
     RunToolResult,
@@ -1756,10 +1757,16 @@ class FakeStore:
 
     def fail_run(self, workspace_id, mission_id, run_id, status, code):
         self.failures.append(("run", status, code))
+        if self.context.run.status not in {"queued", "running"}:
+            return self.context.run
         run_data = self.context.run.model_dump(mode="python")
         run_data.update({"status": status, "error_code": code})
         stopped = RunSnapshot(**run_data)
         self.context = self.context.model_copy(update={"run": stopped})
+        self.append_run_event(workspace_id, mission_id, run_id, RunEventInput.model_validate({
+            "event_type": f"run_{status}",
+            "public_payload": {"status": status, "terminal_receipt_id": None, "error_code": code},
+        }))
         return stopped
 
     def cancel_run(self, workspace_id, mission_id, run_id):

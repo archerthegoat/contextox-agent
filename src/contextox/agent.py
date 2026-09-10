@@ -43,12 +43,8 @@ from contextox.models import (
     ProviderConfigSnapshot,
     ProviderReceipt,
     ReadSourceArguments,
-    RunBlockedEventInput,
-    RunBlockedPayload,
     RunBudget,
     RunEventInput,
-    RunFailedEventInput,
-    RunFailedPayload,
     RunPartialEventInput,
     RunPartialPayload,
     RunSnapshot,
@@ -1046,27 +1042,6 @@ def _append_tool_failed(
     )
 
 
-def _append_run_failure_event(
-    store: WorkspaceStoreLike,
-    workspace_id: str,
-    mission_id: str,
-    run_id: str,
-    status: Literal["blocked", "failed"],
-    code: str,
-) -> None:
-    if status == "blocked":
-        event = RunBlockedEventInput(
-            event_type="run_blocked",
-            public_payload=RunBlockedPayload(status="blocked", terminal_receipt_id=None, error_code=code),
-        )
-    else:
-        event = RunFailedEventInput(
-            event_type="run_failed",
-            public_payload=RunFailedPayload(status="failed", terminal_receipt_id=None, error_code=code),
-        )
-    _append_event(store, workspace_id, mission_id, run_id, event)
-
-
 def _append_run_partial_event(
     store: WorkspaceStoreLike,
     workspace_id: str,
@@ -1105,14 +1080,6 @@ def _stop_run(
         return
     if stopped.status not in {"blocked", "failed"}:
         raise WorkspaceStoreError("fail_run did not return a terminal RunSnapshot.")
-    _append_run_failure_event(
-        store,
-        workspace_id,
-        mission_id,
-        run_id,
-        stopped.status,
-        stopped.error_code or code,
-    )
 
 
 def _cancel_run(
