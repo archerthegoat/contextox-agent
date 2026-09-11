@@ -19,6 +19,7 @@ from contextox.models import (
     FinishRunCall,
     ProviderConfigSnapshot,
     SourceIdentity,
+    SubmitForReviewCall,
     UpdateDefinitionDraftCall,
 )
 from contextox.provider import ProviderCompletion, ProviderError, ProviderUsage
@@ -28,6 +29,7 @@ _DIMENSIONS = ("meaning", "value_type", "grain", "rule", "time_basis", "null_han
 _REFUND_QUESTION = "退款是否从订单金额中扣除？"
 _MISSING_QUESTION = "缺失金额如何处理？"
 _TIME_QUESTION = "本次统计采用什么时间范围？"
+_TIME_BASIS = "使用当前两份资料的全部记录，不设日期筛选"
 
 
 def _unknown_field(key: str = "amount") -> dict[str, object]:
@@ -48,7 +50,7 @@ def _unknown_field(key: str = "amount") -> dict[str, object]:
 def _answer_target(question: dict[str, object]) -> list[dict[str, str]]:
     targets = []
     for path in question.get("related_definition_paths", []):
-        if path in {"fields.amount.rule", "fields.amount.null_handling"}:
+        if path in {"fields.amount.rule", "fields.amount.null_handling", "fields.amount.time_basis"}:
             targets.append({"kind": "field", "key": "amount", "property": path.rsplit(".", 1)[1]})
     return targets
 
@@ -111,6 +113,27 @@ class SyntheticProvider:
                             }
                         )
                 output["answer_suggestions"] = suggestions
+            elif "全部记录" in content and "不设日期筛选" in content:
+                suggestions = []
+                for case in cases:
+                    for index, question in enumerate(case["request"]["questions"]):
+                        if question["question"] != _TIME_QUESTION:
+                            continue
+                        suggestions.append(
+                            {
+                                "origin_run_id": case["request"]["run_id"],
+                                "clarification_id": case["request"]["clarification_id"],
+                                "request_sha256": case["request_sha256"],
+                                "question_index": index,
+                                "disposition": "answered",
+                                "answer": _TIME_BASIS,
+                                "respondent": "合成业务负责人" if "负责人" in content else None,
+                                "basis": "本条合成验收回答" if "依据" in content else None,
+                                "evidence_refs": [],
+                                "targets": _answer_target(question),
+                            }
+                        )
+                output["answer_suggestions"] = suggestions
         elif conversation_store.is_explicit_work_instruction(content) and context["source_refs"]:
             output.update(
                 public_reply="【合成验收】目标与资料范围已明确，开始整理候选。",
@@ -160,12 +183,22 @@ def _table_id_with_columns(store, workspace_id: str, source, required: set[str])
     return matches[0]
 
 
-def _approved_fixture_answers(snapshot) -> None:
-    if len(snapshot.approved_answers) != 1:
-        raise ValueError("synthetic continuation requires one approved clarification")
-    approved = snapshot.approved_answers[0]
+def _approved_case(snapshot, questions: list[str]):
+    matches = [
+        approved
+        for approved in snapshot.approved_answers
+        if [question.question for question in approved.request.questions] == questions
+    ]
+    if len(matches) != 1:
+        raise ValueError("synthetic continuation requires the expected approved clarification")
+    approved = matches[0]
     if approved.answer.version != 1:
         raise ValueError("synthetic continuation requires approved answer v1")
+    return approved
+
+
+def _approved_fixture_answers(snapshot) -> None:
+    approved = _approved_case(snapshot, [_REFUND_QUESTION, _MISSING_QUESTION])
     questions = approved.request.questions
     items = {item.question_index: item for item in approved.answer.items}
     if [question.question for question in questions] != [_REFUND_QUESTION, _MISSING_QUESTION]:
@@ -188,6 +221,27 @@ def _approved_fixture_answers(snapshot) -> None:
             )
         ):
             raise ValueError("synthetic approved answer changed")
+
+
+def _approved_time_answer(snapshot) -> None:
+    _approved_fixture_answers(snapshot)
+    approved = _approved_case(snapshot, [_TIME_QUESTION])
+    items = {item.question_index: item for item in approved.answer.items}
+    item = items.get(0)
+    if (
+        item is None
+        or item.disposition != "answered"
+        or item.answer != _TIME_BASIS
+        or item.respondent != "合成业务负责人"
+        or item.basis != "本条合成验收回答"
+        or not any(
+            target.kind == "field"
+            and target.key == "amount"
+            and target.property == "time_basis"
+            for target in item.targets
+        )
+    ):
+        raise ValueError("synthetic approved time answer changed")
 
 
 def _apply_approved_fixture(store, workspace_id: str, mission_id: str, run_id: str, snapshot) -> None:
@@ -290,6 +344,52 @@ def _apply_approved_fixture(store, workspace_id: str, mission_id: str, run_id: s
     )
 
 
+def _apply_approved_time(store, workspace_id: str, mission_id: str, run_id: str, snapshot) -> None:
+    _approved_time_answer(snapshot)
+    _selected_fixture_sources(store, workspace_id, snapshot.source_refs)
+    current = snapshot.draft
+    if current is None or current.version != 2:
+        raise ValueError("synthetic time continuation requires draft v2")
+
+    field = current.fields[0].model_dump(mode="json")
+    if field["field_key"] != "amount":
+        raise ValueError("synthetic amount field changed")
+    field["time_basis"] = _TIME_BASIS
+    field["unknowns"] = []
+    draft = store.execute_run_tool(
+        workspace_id,
+        mission_id,
+        run_id,
+        UpdateDefinitionDraftCall(
+            call_id=str(uuid4()),
+            name="update_definition_draft",
+            arguments={
+                "expected_version": current.version,
+                "expected_sha256": current.sha256,
+                "fields": [field],
+                "relationships": [item.model_dump(mode="json") for item in current.relationships],
+                "unresolved_items": [],
+            },
+        ),
+    ).output
+    store.execute_run_tool(
+        workspace_id,
+        mission_id,
+        run_id,
+        SubmitForReviewCall(
+            call_id=str(uuid4()),
+            name="submit_for_review",
+            arguments={"draft_version": draft.version, "draft_sha256": draft.sha256},
+        ),
+    )
+    store.save_run_final_output(
+        workspace_id,
+        mission_id,
+        run_id,
+        "【合成验收】已应用时间范围回答 v1，候选草案已更新为 v3 并提交审核；当前没有待回答的业务口径。",
+    )
+
+
 def synthetic_run(store, workspace_id: str, mission_id: str, run_id: str, cancel: Event, **kwargs) -> None:
     store.mark_run_running(workspace_id, mission_id, run_id)
     if cancel.wait(0.7):
@@ -354,6 +454,12 @@ def synthetic_run(store, workspace_id: str, mission_id: str, run_id: str, cancel
     if snapshot.draft.version == 1:
         try:
             _apply_approved_fixture(store, workspace_id, mission_id, run_id, snapshot)
+        except ValueError:
+            store.fail_run(workspace_id, mission_id, run_id, "failed", "synthetic_fixture_invalid")
+        return
+    if snapshot.draft.version == 2:
+        try:
+            _apply_approved_time(store, workspace_id, mission_id, run_id, snapshot)
         except ValueError:
             store.fail_run(workspace_id, mission_id, run_id, "failed", "synthetic_fixture_invalid")
         return

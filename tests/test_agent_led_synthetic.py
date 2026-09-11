@@ -23,6 +23,7 @@ from scripts.agent_led_synthetic import (
     SyntheticProvider,
     _MISSING_QUESTION,
     _REFUND_QUESTION,
+    _TIME_BASIS,
     _TIME_QUESTION,
     synthetic_run,
 )
@@ -124,7 +125,23 @@ class AgentLedSyntheticTests(unittest.TestCase):
         self.assertIn("时间范围仍需业务确认", output.public_reply)
         self.assertEqual(output.answer_suggestions, [])
 
-    def test_approved_continuation_creates_v2_impact_and_survives_restart(self):
+        context["input"]["content"] = (
+            "时间范围使用当前两份资料的全部记录，不设日期筛选。"
+            "我是合成业务负责人，依据就是本条合成验收回答。"
+        )
+        completion = provider.complete(
+            [{"role": "system", "content": ""}, {"role": "user", "content": json.dumps(context)}],
+            cancel_event=_ImmediateEvent(),
+        )
+        output = DiscussionOutput.model_validate_json(completion.content)
+        self.assertEqual(len(output.answer_suggestions), 1)
+        suggestion = output.answer_suggestions[0]
+        self.assertEqual(suggestion.answer, _TIME_BASIS)
+        self.assertEqual(suggestion.respondent, "合成业务负责人")
+        self.assertEqual(suggestion.basis, "本条合成验收回答")
+        self.assertEqual(suggestion.targets[0].property, "time_basis")
+
+    def test_approved_continuations_create_v2_then_review_ready_v3_and_survive_restart(self):
         with self.subTest(stage="approved continuation"):
             first = self.store.start_run(
                 self.workspace_id,
@@ -256,11 +273,136 @@ class AgentLedSyntheticTests(unittest.TestCase):
             self.assertEqual({item.question_index for item in amount_change.question_refs}, {0, 1})
             self.assertTrue(any(change.kind == "relationship" for change in impact.changes))
 
+            time_case = next(
+                item
+                for item in self.store.list_clarification_cases(
+                    self.workspace_id, self.mission.mission_id
+                ).items
+                if [question.question for question in item.request.questions] == [_TIME_QUESTION]
+            )
+            mission_state = self.store.get_mission_snapshot(self.workspace_id, self.mission.mission_id)
+            time_saved, created = self.store.save_clarification_answer(
+                self.workspace_id,
+                self.mission.mission_id,
+                time_case.request.run_id,
+                time_case.request.clarification_id,
+                ClarificationAnswerSaveRequest(
+                    client_request_id=str(uuid4()),
+                    expected_latest_version=0,
+                    expected_state_version=mission_state.mission.state_version,
+                    request_sha256=canonical_sha256(time_case.request),
+                    review_draft=draft_ref(mission_state.draft),
+                    source_refs=self.source_refs,
+                    items=[
+                        {
+                            "question_index": 0,
+                            "disposition": "answered",
+                            "answer": _TIME_BASIS,
+                            "respondent": "合成业务负责人",
+                            "basis": "本条合成验收回答",
+                            "evidence_refs": [],
+                            "targets": [{"kind": "field", "key": "amount", "property": "time_basis"}],
+                            "blocker": None,
+                        }
+                    ],
+                ),
+            )
+            self.assertTrue(created)
+            state_version = self.store.get_mission_snapshot(
+                self.workspace_id, self.mission.mission_id
+            ).mission.state_version
+            self.store.approve_clarification_answer(
+                self.workspace_id,
+                self.mission.mission_id,
+                time_case.request.run_id,
+                time_case.request.clarification_id,
+                time_saved.answer.version,
+                ClarificationAnswerApproveRequest(
+                    client_request_id=str(uuid4()),
+                    expected_state_version=state_version,
+                    expected_answer_sha256=time_saved.answer.sha256,
+                ),
+            )
+            approved = [
+                ApprovedAnswerSnapshot(
+                    request=item.request,
+                    answer=item.latest_answer,
+                    approval=item.latest_approval,
+                )
+                for item in self.store.list_clarification_cases(
+                    self.workspace_id, self.mission.mission_id
+                ).items
+                if item.review_state == "approved"
+            ]
+            self.assertEqual(len(approved), 2)
+            state = self.store.get_mission_snapshot(self.workspace_id, self.mission.mission_id)
+            final_request = TaskMessageSendRequest(
+                kind="message",
+                client_request_id=str(uuid4()),
+                expected_state_version=state.mission.state_version,
+                content="请依据已批准的时间范围回答继续整理候选。",
+                references=[],
+                history_messages=[],
+                source_refs=self.source_refs,
+                provider_send_confirmed=True,
+                approved_answers=answer_refs(approved),
+                expected_draft=draft_ref(state.draft),
+            )
+            final_continuation, created = self.store.send_task_message(
+                self.workspace_id,
+                self.mission.mission_id,
+                final_request,
+                demo_fast=True,
+            )
+            self.assertTrue(created)
+            replay, created = self.store.send_task_message(
+                self.workspace_id,
+                self.mission.mission_id,
+                final_request,
+                demo_fast=True,
+            )
+            self.assertFalse(created)
+            self.assertEqual(replay.run.run_id, final_continuation.run.run_id)
+
+            synthetic_run(
+                self.store,
+                self.workspace_id,
+                self.mission.mission_id,
+                final_continuation.run.run_id,
+                _ImmediateEvent(),
+            )
+            final = self.store.get_run_snapshot(
+                self.workspace_id,
+                self.mission.mission_id,
+                final_continuation.run.run_id,
+            )
+            self.assertEqual(final.status, "waiting_for_human", final.error_code)
+            self.assertEqual(final.terminal_receipt.terminal_tool, "submit_for_review")
+            self.assertEqual(final.draft.version, 3)
+            self.assertEqual(final.draft.status, "in_review")
+            self.assertEqual(final.draft.fields[0].time_basis, _TIME_BASIS)
+            self.assertEqual(final.draft.fields[0].unknowns, [])
+            self.assertEqual(final.draft.unresolved_items, [])
+            self.assertEqual(final.clarifications, [])
+            self.assertIn("当前没有待回答的业务口径", final.final_output)
+
+            final_impact = self.store.get_answer_impact(
+                self.workspace_id, self.mission.mission_id, final.run_id
+            )
+            self.assertEqual(final_impact.result_state, "available")
+            self.assertEqual(final_impact.after_draft.version, 3)
+            final_amount_change = next(
+                change
+                for change in final_impact.changes
+                if change.kind == "field" and change.key == "amount"
+            )
+            self.assertTrue(any(ref.question_index == 0 for ref in final_amount_change.question_refs))
+
             reopened = WorkspaceStore.open(Path(self.temp.name))
-            restored = reopened.get_run_snapshot(self.workspace_id, self.mission.mission_id, result.run_id)
-            self.assertEqual(restored.draft, result.draft)
-            self.assertEqual(restored.final_output, result.final_output)
-            self.assertEqual(len(reopened.list_task_runs(self.workspace_id, self.mission.mission_id).items), 2)
+            restored = reopened.get_run_snapshot(self.workspace_id, self.mission.mission_id, final.run_id)
+            self.assertEqual(restored.draft, final.draft)
+            self.assertEqual(restored.final_output, final.final_output)
+            self.assertEqual(len(reopened.list_task_runs(self.workspace_id, self.mission.mission_id).items), 3)
 
 
 if __name__ == "__main__":

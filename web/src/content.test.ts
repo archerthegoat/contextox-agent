@@ -12,6 +12,7 @@ import {
   OBJECT_TABS,
   navigationForAreas,
   relationshipGraphResolution,
+  resolveWorkbenchProgress,
 } from "./App";
 import App from "./App";
 import { sourceIdentityFromRevision, type DefinitionDraft, type SourceRevision } from "./Path2Workbench";
@@ -179,6 +180,26 @@ describe("ContextOx Workbench v3 content boundaries", () => {
       mode: "任务对话",
       composerPlaceholder: "围绕当前任务继续提问",
     });
+  });
+
+  it("moves a review-ready draft out of clarification even while the mission awaits human review", () => {
+    const waiting = resolveWorkbenchProgress({
+      missionSnapshot: null,
+      selectedMission: {mission_id:"mission", title:"候选任务", status:"waiting_for_human"} as never,
+      runSnapshot: {status:"waiting_for_human"} as never,
+      latestDraft: {version:2, status:"draft"} as never,
+      clarifications: [{questions:[{question:"时间范围？"}]}] as never,
+    });
+    expect(waiting).toMatchObject({current:2, waitingForAnswers:true, description:"等待业务回答 · 1 个已记录问题"});
+
+    const review = resolveWorkbenchProgress({
+      missionSnapshot: null,
+      selectedMission: {mission_id:"mission", title:"候选任务", status:"waiting_for_human"} as never,
+      runSnapshot: {status:"waiting_for_human"} as never,
+      latestDraft: {version:3, status:"in_review"} as never,
+      clarifications: [],
+    });
+    expect(review).toMatchObject({current:3, waitingForAnswers:false, description:"候选草案 v3 待审核"});
   });
 });
 

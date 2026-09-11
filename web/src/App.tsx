@@ -293,12 +293,27 @@ function CenterPanel({
   );
 }
 
-function WorkbenchProgress({path2}: {path2: Path2WorkbenchState}) {
+export function resolveWorkbenchProgress(path2: Pick<Path2WorkbenchState, "missionSnapshot" | "selectedMission" | "runSnapshot" | "latestDraft" | "clarifications">) {
   const mission = path2.missionSnapshot?.mission ?? path2.selectedMission;
-  const waiting = mission?.status === "waiting_for_human";
+  const questionCount = path2.clarifications.reduce((sum,item) => sum + item.questions.length, 0);
+  const waitingForAnswers = questionCount > 0;
   const active = path2.runSnapshot?.status === "queued" || path2.runSnapshot?.status === "running";
-  const current = !mission ? 0 : waiting ? 2 : active ? (path2.runSnapshot?.phase === "apply" ? 3 : 1) : path2.latestDraft ? 3 : 1;
-  return <header className="workbench-progress"><h2>{mission?.title ?? "从一个问题开始"}</h2><ol>{["明确目标", "理解资料", "澄清口径", "整理成果"].map((label,index) => <li key={label} className={current === index ? "current" : current > index ? "past" : ""} aria-current={current === index ? "step" : undefined}><span>{index + 1}</span>{label}</li>)}</ol><p>{!mission ? "先聊问题，目标与资料明确后再形成任务。" : waiting ? `等待业务回答 · ${path2.clarifications.reduce((sum,item) => sum + item.questions.length, 0)} 个已记录问题` : path2.runSnapshot ? `本轮：${statusLabel(path2.runSnapshot.status)}` : "已建立任务，尚未开始分析"}</p></header>;
+  const current = !mission ? 0 : waitingForAnswers ? 2 : active ? (path2.runSnapshot?.phase === "apply" ? 3 : 1) : path2.latestDraft ? 3 : 1;
+  const description = !mission
+    ? "先聊问题，目标与资料明确后再形成任务。"
+    : waitingForAnswers
+      ? `等待业务回答 · ${questionCount} 个已记录问题`
+      : path2.latestDraft?.status === "in_review"
+        ? `候选草案 v${path2.latestDraft.version} 待审核`
+        : path2.runSnapshot
+          ? `本轮：${statusLabel(path2.runSnapshot.status)}`
+          : "已建立任务，尚未开始分析";
+  return {mission, current, description, waitingForAnswers};
+}
+
+function WorkbenchProgress({path2}: {path2: Path2WorkbenchState}) {
+  const {mission, current, description} = resolveWorkbenchProgress(path2);
+  return <header className="workbench-progress"><h2>{mission?.title ?? "从一个问题开始"}</h2><ol>{["明确目标", "理解资料", "澄清口径", "整理成果"].map((label,index) => <li key={label} className={current === index ? "current" : current > index ? "past" : ""} aria-current={current === index ? "step" : undefined}><span>{index + 1}</span>{label}</li>)}</ol><p>{description}</p></header>;
 }
 function MissionOverview({path2}: {path2: Path2WorkbenchState}) {
   const mission = path2.missionSnapshot?.mission ?? path2.selectedMission;
@@ -344,7 +359,8 @@ function App() {
     if(!path2.selectedMission&&(preview.reference||preview.source)) {
       setFocusedReference(preview.reference);setFollowedSource(preview.source);setActiveArea("sources");setActiveTab("mission");return;
     }
-    setFollowedSource(null);setFocusedReference(null);setActiveArea(path2.selectedMission?.status === "waiting_for_human" ? "clarifications" : "mission");setActiveTab(path2.latestDraft && path2.selectedMission?.status !== "waiting_for_human" ? "relationship" : "mission");
+    const waitingForAnswers = path2.clarifications.some(item => item.questions.length > 0);
+    setFollowedSource(null);setFocusedReference(null);setActiveArea(waitingForAnswers ? "clarifications" : "mission");setActiveTab(path2.latestDraft && !waitingForAnswers ? "relationship" : "mission");
   };
   useEffect(() => {if(following) followCurrent();}, [following,progressKey]);
   const addReference = (ref: MessageReference) => { conversation.addReference(ref); setMobileView("agent"); };
