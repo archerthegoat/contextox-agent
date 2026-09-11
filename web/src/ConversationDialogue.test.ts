@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationBelongsTo, conversationUsesTaskHistory, conversationReviewMatches, conversationPreviewTarget, conversationSendGuidance, discussionStatusLabel, recentConversationHistory, mergeConversationPage, selectedConversationHistory } from "./ConversationDialogue";
+import { conversationBelongsTo, conversationUsesTaskHistory, conversationReviewMatches, conversationPreviewTarget, conversationSendGuidance, discussionStatusLabel, recentConversationHistory, mergeConversationPage, selectedConversationHistory, taskAnalysisLabel } from "./ConversationDialogue";
 import { reviewedAnswer, receiptMatchesReviewedAnswers, answersCanCollapse, suggestedAnswerItems, mergeReviewedSave } from "./ConversationAnswers";
 import { answerOmissions } from "./ClarificationAnswers";
 import type { MessageReference } from "./TaskDialogue";
@@ -28,6 +28,10 @@ describe("continuous conversation boundaries",()=>{
     expect(discussionStatusLabel("succeeded")).toBe("答复已更新");
     expect(discussionStatusLabel("cancelled")).toBe("讨论已停止");
     for(const state of ["queued","running","blocked","failed"] as const)expect(discussionStatusLabel(state)).not.toMatch(/[a-z]/);
+  });
+  it("distinguishes a review-ready candidate from an unresolved business question",()=>{
+    expect(taskAnalysisLabel({runSnapshot:{status:"waiting_for_human"} as never,latestDraft:{status:"draft"} as never,clarifications:[{questions:[question]}] as never})).toBe("待业务裁决");
+    expect(taskAnalysisLabel({runSnapshot:{status:"waiting_for_human"} as never,latestDraft:{status:"in_review"} as never,clarifications:[]})).toBe("候选草案待审核");
   });
   it("explains source selection and automatic task start without implying workspace-wide search",()=>{
     expect(conversationSendGuidance(false,0,false)).toContain("不会自动使用工作区全部资料");

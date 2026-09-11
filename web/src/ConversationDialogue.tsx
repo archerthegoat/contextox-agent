@@ -274,6 +274,12 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
 }
 export type ConversationDialogueState=ReturnType<typeof useConversationDialogue>;
 
+export function taskAnalysisLabel(state: Pick<Path2WorkbenchState, "runSnapshot" | "latestDraft" | "clarifications">): string {
+  if (!state.runSnapshot) return "";
+  if (state.latestDraft?.status === "in_review" && state.clarifications.length === 0) return "候选草案待审核";
+  return statusLabel(state.runSnapshot.status);
+}
+
 export function ConversationDialogue({state,d,onReference,onSources,onHistory}: {state:Path2WorkbenchState;d:ConversationDialogueState;onReference:(ref:MessageReference)=>void;onSources:()=>void;onHistory:()=>void}) {
   const scroll=useRef<HTMLDivElement>(null);const nearEnd=useRef(true);const scopePanel=useRef<HTMLDetailsElement>(null);
   const [scopeOpen,setScopeOpen]=useState(false);
@@ -289,7 +295,7 @@ export function ConversationDialogue({state,d,onReference,onSources,onHistory}: 
       {!d.messages.length&&<div className="conversation-welcome"><p>你好，有什么想一起弄清楚的？</p><p>可以先聊业务问题，也可以从手头的资料开始。我会把相关资料和整理过程放在工作区，方便你随时核对。</p></div>}
       {d.messages.map(message=><article className={`conversation-message message-${message.role}`} key={message.message_id}><header><strong>{message.role==='user'?'你':'数契 Agent'}</strong><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time></header><p>{message.content}</p>{(message.references ?? []).map((ref,i)=><button className="reference-chip" key={i} onClick={()=>onReference(ref)}>{referenceLabel(ref,state.sourceState.items)}</button>)}</article>)}
       {d.turn&&<div className="conversation-activity" role="status"><strong>{discussionStatusLabel(d.turn.status)}</strong>{d.turn.error_code&&<p>讨论未完成：{d.turn.error_code}</p>}{d.turn.handoff_error_code&&<p>讨论结束，但任务交接未完成：{d.turn.handoff_error_code}。请先核对当前状态。</p>}</div>}
-      {state.runSnapshot&&<div className="conversation-activity"><strong>任务分析：{statusLabel(state.runSnapshot.status)}</strong>{state.runSnapshot.error_code&&<p>{state.runSnapshot.error_code}</p>}<button onClick={onHistory}>查看执行过程</button></div>}
+      {state.runSnapshot&&<div className="conversation-activity"><strong>任务分析：{taskAnalysisLabel(state)}</strong>{state.runSnapshot.error_code&&<p>{state.runSnapshot.error_code}</p>}<button onClick={onHistory}>查看执行过程</button></div>}
       {d.conversation?.mission_id&&<ConversationAnswers key={`${d.conversation.workspace_id}/${d.conversation.conversation_id}`} state={state} conversation={d.conversation} suggestions={d.turn?.output?.answer_suggestions ?? []} onUpdated={d.refresh} onReviewState={d.updateReviewState}/>}
     </div>
     <form className="conversation-composer" onSubmit={event=>{event.preventDefault();nearEnd.current=true;void d.submit();}}>
