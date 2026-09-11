@@ -21,9 +21,13 @@ export function CandidateExport({ draft }: { draft: DefinitionDraft | null }) {
     finally { setPending(false); }
   };
   if (!draft) return null;
-  return <div className="candidate-export"><span>导出候选 v{draft.version}</span>
-    <button type="button" className="utility-button" disabled={pending} onClick={() => void download("markdown")}>Markdown ↓</button>
-    <button type="button" className="utility-button" disabled={pending} onClick={() => void download("json")}>JSON ↓</button>
-    {pending && <span role="status">核对当前版本…</span>}{error && <p role="alert">{error}</p>}
-  </div>;
+  return <details className="candidate-export"><summary>导出候选成果</summary>
+    <div>
+      <button type="button" className="utility-button" disabled={pending} onClick={() => void download("markdown")}>下载 Markdown</button>
+      <button type="button" className="utility-button" disabled={pending} onClick={() => void download("json")}>下载 JSON</button>
+    </div>
+    <p>导出前会核对当前候选，避免把过期内容当成最新结果。</p>
+    <details className="technical-details"><summary>技术详情</summary><p>候选版本 {draft.version}</p></details>
+    {pending && <span role="status">正在核对当前候选…</span>}{error && <p role="alert">{error}</p>}
+  </details>;
 }

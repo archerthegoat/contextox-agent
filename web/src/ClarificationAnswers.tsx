@@ -38,17 +38,16 @@ export function answerOmissions(items: AnswerItem[], count: number): string[] {
   return issues;
 }
 export function AnswerReadback({answer, request}: {answer: AnswerVersion; request?: ClarificationRequest}) {
-  return <div className="clarification-readback"><p>整份回答 v{answer.version} · {answer.created_at}</p>
-    <p>这是回答人的声明；批准回答不代表批准最终草案。</p>
+  return <div className="clarification-readback"><div className="answer-readback-heading"><strong>回答已保存</strong><span>{answer.items.length} 个问题</span></div>
+    <p>这些是回答人明确给出的业务信息；采用回答不等于批准最终成果。</p>
     {answer.items.map(item => <section className="path2-question" key={item.question_index}>
       <h4>{request?.questions[item.question_index]?.question ?? `第 ${item.question_index + 1} 题`} · {item.disposition === "unknown" ? "尚不能确认 · 未解决" : "已回答"}</h4>
       {item.answer && <p className="preserve-lines">{item.answer}</p>}
-      <dl><dt>回答来源人或角色</dt><dd>{item.respondent}</dd><dt>依据 / 原因</dt><dd>{item.basis}</dd>
-      {item.blocker && <><dt>解决方</dt><dd>{item.blocker.resolver}</dd><dt>所需证据</dt><dd>{item.blocker.evidence_needed}</dd><dt>下一动作</dt><dd>{item.blocker.next_action}</dd></>}</dl>
-      {!item.targets.length ? <p>尚未绑定具体定义维度；问题身份和卡点仍保留。</p> : <ul>{item.targets.map(target => <li key={targetKey(target)}>{target.key} · {dimensions[target.property]}</li>)}</ul>}
-      <details><summary>资料证据与精确身份</summary><pre>{JSON.stringify({evidence_refs:item.evidence_refs, question_index:item.question_index}, null, 2)}</pre></details>
+      {item.blocker && <dl className="blocker-plan"><dt>后续由谁确认</dt><dd>{item.blocker.resolver}</dd><dt>还需要什么证据</dt><dd>{item.blocker.evidence_needed}</dd><dt>下一步</dt><dd>{item.blocker.next_action}</dd></dl>}
+      <details><summary>查看回答来源与依据</summary><dl><dt>回答来源人或角色</dt><dd>{item.respondent}</dd><dt>依据 / 原因</dt><dd>{item.basis}</dd></dl></details>
+      <details className="technical-details"><summary>证据与技术关联</summary>{!item.targets.length ? <p>尚未绑定具体定义维度；问题身份和卡点仍保留。</p> : <ul>{item.targets.map(target => <li key={targetKey(target)}>{target.key} · {dimensions[target.property]}</li>)}</ul>}<pre>{JSON.stringify({evidence_refs:item.evidence_refs, question_index:item.question_index}, null, 2)}</pre></details>
     </section>)}
-    <details><summary>回答版本身份</summary><pre>{JSON.stringify({origin_run_id:answer.origin_run_id, clarification_id:answer.clarification_id, version:answer.version, sha256:answer.sha256, review_draft:answer.review_draft, source_refs:answer.source_refs}, null, 2)}</pre></details>
+    <details className="technical-details"><summary>回答版本与精确身份</summary><p>保存时间：{answer.created_at}</p><pre>{JSON.stringify({origin_run_id:answer.origin_run_id, clarification_id:answer.clarification_id, version:answer.version, sha256:answer.sha256, review_draft:answer.review_draft, source_refs:answer.source_refs}, null, 2)}</pre></details>
   </div>;
 }
 
@@ -76,22 +75,17 @@ export function AnswerForm({request, latest, draft, disabled, onSave, onDirty, i
   const update = (index: number, value: Partial<AnswerItem>) => {setDirty(true); setItems(old => old.map((item, i) => i === index ? {...item, ...value} : item));};
   const available = draftTargets(draft);
   return <form className="clarification-answer-form" onSubmit={event => {event.preventDefault(); const missing = answerOmissions(items, request.questions.length); setIssues(missing); if (!missing.length) void onSave(items).then(() => {setDirty(false);}).catch(() => { /* Parent retains input and the original request identifier. */ });}}>
-    {latest && <p role="status">{dirty ? "修改后保存为整份新版本，需要重新批准。旧版本保留供历史核对。" : `当前已保存 v${latest.version}。编辑后需要保存新版本并重新确认。`}</p>}
+    {latest && <div className="answer-save-state" role="status"><strong>{dirty ? "回答已修改，保存后需要重新确认" : "回答已经保存"}</strong><p>{dirty ? "旧内容仍保留在历史中。" : "继续编辑会形成一份需要重新确认的新回答。"}</p><details className="technical-details"><summary>版本详情</summary><p>当前保存版本 {latest.version}</p></details></div>}
     {request.questions.map((question, index) => {
       const item = items[index];
       return <fieldset disabled={disabled} key={index}><legend>{index + 1}. {question.question}</legend>
-        <p>{question.why_needed}</p><p>{question.blocking_impact === "blocking" ? "阻塞性问题" : "非阻塞问题"} · {question.expected_answer_type}</p>
-        {question.suggested_owner_role && <p>建议回答角色：{question.suggested_owner_role}</p>}
-        {question.related_definition_paths.length > 0 && <p>原关联路径：{question.related_definition_paths.join("、")}</p>}
-        {question.evidence_requested.length > 0 && <p>问题所需证据：{question.evidence_requested.join("；")}</p>}
-        {question.examples_or_options.length > 0 && <p>示例或选项：{question.examples_or_options.join("；")}</p>}
-        <details><summary>原问题资料证据 / 可选回答引用</summary><pre>{JSON.stringify(question.source_refs, null, 2)}</pre>{question.source_refs.map((ref, refIndex) => <label className="history-choice" key={refIndex}><input type="checkbox" checked={item.evidence_refs.some(old => JSON.stringify(old) === JSON.stringify(ref))} disabled={item.evidence_refs.length >= 8 && !item.evidence_refs.some(old => JSON.stringify(old) === JSON.stringify(ref))} onChange={event => update(index, {evidence_refs:event.target.checked ? [...item.evidence_refs, ref] : item.evidence_refs.filter(old => JSON.stringify(old) !== JSON.stringify(ref))})}/><span>将原证据 {refIndex + 1} 作为本回答依据</span></label>)}</details>
-        <label>回答状态<select value={item.disposition} onChange={event => update(index, event.target.value === "unknown" ? {disposition:"unknown", answer:null, blocker:{resolver:"", evidence_needed:"", next_action:""}} : {disposition:"answered", answer:"", blocker:null})}><option value="answered">可以回答</option><option value="unknown">尚不能确认</option></select></label>
+        <p className="question-impact">为什么需要确认：{question.why_needed}</p>
+        {question.examples_or_options.length > 0 && <div className="answer-quick-choices" role="group" aria-label={`第 ${index + 1} 题快捷选项`}><span>可以直接选择</span>{question.examples_or_options.map(option=><button type="button" key={option} onClick={()=>update(index,{disposition:"answered",answer:option,blocker:null})}>{option}</button>)}</div>}
+        <div className="answer-disposition"><span>你现在能确认吗？</span><div role="group" aria-label={`第 ${index + 1} 题回答状态`}><button type="button" aria-pressed={item.disposition==="answered"} onClick={()=>update(index,{disposition:"answered",answer:item.answer??"",blocker:null})}>我可以确认</button><button type="button" aria-pressed={item.disposition==="unknown"} onClick={()=>update(index,{disposition:"unknown",answer:null,blocker:item.blocker??{resolver:"",evidence_needed:"",next_action:""}})}>暂时不知道</button></div></div>
         {item.disposition === "answered" ? <label>回答<textarea required maxLength={2048} value={item.answer ?? ""} onChange={event => update(index, {answer:event.target.value})}/></label> : <p>批准后仍是未解决卡点。填写解决安排，不代表已向对方分派。</p>}
-        <label>回答来源人或角色<input required maxLength={128} value={item.respondent} onChange={event => update(index, {respondent:event.target.value})}/></label>
-        <label>{item.disposition === "unknown" ? "尚不能确认的原因" : "回答依据"}<textarea required maxLength={2048} value={item.basis} onChange={event => update(index, {basis:event.target.value})}/></label>
         {item.blocker && ([['resolver','解决方',128],['evidence_needed','所需证据',2048],['next_action','下一动作',2048]] as const).map(([key,label,maxLength]) => <label key={key}>{label}<textarea required maxLength={maxLength} value={item.blocker![key]} onChange={event => update(index, {blocker:{...item.blocker!, [key]:event.target.value}})}/></label>)}
-        <details><summary>可选：绑定影响的定义维度（{item.targets.length} / 20）</summary><p>没有合适的字段或关系时可以不选；原问题仍保留。程序只保护显式绑定的未知维度。</p>
+        <details className="answer-provenance" open={!item.respondent.trim()||!item.basis.trim()}><summary>回答来源与依据（保存必填）</summary><label>回答来源人或角色<input required maxLength={128} value={item.respondent} onChange={event => update(index, {respondent:event.target.value})}/></label><label>{item.disposition === "unknown" ? "尚不能确认的原因" : "回答依据"}<textarea required maxLength={2048} value={item.basis} onChange={event => update(index, {basis:event.target.value})}/></label></details>
+        <details className="technical-details"><summary>证据与技术关联</summary><p>{question.blocking_impact === "blocking" ? "这项会阻止当前工作继续" : "这项不会阻止当前工作继续"} · 回答类型 {question.expected_answer_type}</p>{question.suggested_owner_role && <p>建议回答角色：{question.suggested_owner_role}</p>}{question.related_definition_paths.length > 0 && <p>原关联路径：{question.related_definition_paths.join("、")}</p>}{question.evidence_requested.length > 0 && <p>问题所需证据：{question.evidence_requested.join("；")}</p>}<pre>{JSON.stringify(question.source_refs, null, 2)}</pre>{question.source_refs.map((ref, refIndex) => <label className="history-choice" key={refIndex}><input type="checkbox" checked={item.evidence_refs.some(old => JSON.stringify(old) === JSON.stringify(ref))} disabled={item.evidence_refs.length >= 8 && !item.evidence_refs.some(old => JSON.stringify(old) === JSON.stringify(ref))} onChange={event => update(index, {evidence_refs:event.target.checked ? [...item.evidence_refs, ref] : item.evidence_refs.filter(old => JSON.stringify(old) !== JSON.stringify(ref))})}/><span>将原证据 {refIndex + 1} 作为本回答依据</span></label>)}<p>可选：绑定影响的定义维度（{item.targets.length} / 20）。没有合适的字段或关系时可以不选，原问题仍会保留。</p>
           {[...available, ...item.targets.filter(target => !available.some(option => targetKey(option) === targetKey(target)))].map(target => {
             const selected = item.targets.some(old => targetKey(old) === targetKey(target));
             const stale = !available.some(option => targetKey(option) === targetKey(target));
@@ -101,11 +95,17 @@ export function AnswerForm({request, latest, draft, disabled, onSave, onDirty, i
       </fieldset>;
     })}
     {issues.length > 0 && <div role="alert"><ul>{issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
-    <button className="path2-primary-button" disabled={disabled || !draft} type="submit">{saveLabel ?? "保存整份回答"}</button><p>保存不会调用模型。所有问题完整后才能保存。</p>
+    <button className="path2-primary-button" disabled={disabled || !draft} type="submit">{saveLabel ?? "保存整份回答"}</button><p className="save-explanation">保存不会调用模型，也不会自动采用业务结论。所有问题填写完整后才能保存。</p>
   </form>;
 }
 
 type DefinitionValue = components["schemas"]["AnswerImpactChange"]["before"];
+type ImpactChange = components["schemas"]["AnswerImpactChange"];
+export function impactChangeTitle(change:ImpactChange) {
+  const value=change.after??change.before;
+  if(!value)return "已移除的候选内容";
+  return "field_key" in value?value.name:`${value.left.table_id||"左侧资料"} 与 ${value.right.table_id||"右侧资料"}`;
+}
 export function DefinitionBusinessSummary({value}: {value: DefinitionValue}) {
   if (!value) return <p>无此字段或关系</p>;
   const rows: [string, string | null][] = "field_key" in value
@@ -134,18 +134,17 @@ export function AnswerImpactView({workspaceId, missionId, runId}: {workspaceId:s
   if (error) return <p role="alert">{error}</p>;
   if (!impact) return <p role="status">正在读取本轮回答及草案变化…</p>;
   if (!impact.approved_answers.length) return <p>本轮未采用批准回答。</p>;
-  return <section className="answer-impact"><h3>本轮采用的回答与草案变化</h3>
-    <p>{({no_result:"本轮尚无新草案结果", partial:"本轮仅产生部分结果", available:"本轮已保存草案变化"})[impact.result_state]}。回答版本与本轮固定绑定，后来的修改不会替换此处。</p>
-    {impact.approved_answers.map(snapshot => <details key={`${snapshot.answer.origin_run_id}/${snapshot.answer.clarification_id}`}><summary>已批回答 v{snapshot.answer.version} · {snapshot.request.questions.length} 题</summary><AnswerReadback answer={snapshot.answer} request={snapshot.request}/></details>)}
-    {[true, false].map(related => <section key={String(related)}><h4>{related ? "与本次回答相关" : "其他分析变化"}</h4>
-      {impact.changes.filter(change => Boolean(change.question_refs.length) === related).map(change => <details key={`${change.kind}/${change.key}`}><summary>{change.key} · {({added:"新增",changed:"变化",removed:"移除"})[change.change]}</summary>
+  return <section className="answer-impact"><div className="answer-impact-heading"><span>本轮更新</span><h3>{({no_result:"还没有形成新的候选成果", partial:"已经形成部分候选成果", available:"候选成果已经更新"})[impact.result_state]}</h3><p>这里展示已采用的业务回答、它带来的变化和仍待确认的事项。</p></div>
+    {impact.approved_answers.map(snapshot => <details key={`${snapshot.answer.origin_run_id}/${snapshot.answer.clarification_id}`}><summary>查看本轮采用的回答 · {snapshot.request.questions.length} 个问题</summary><AnswerReadback answer={snapshot.answer} request={snapshot.request}/></details>)}
+    {[true, false].map(related => <section key={String(related)}><h4>{related ? "这次回答带来的变化" : "其他分析变化"}</h4>
+      {impact.changes.filter(change => Boolean(change.question_refs.length) === related).map(change => <details key={`${change.kind}/${change.key}`}><summary>{impactChangeTitle(change)} · {({added:"新增",changed:"已更新",removed:"已移除"})[change.change]}</summary>
         {change.question_refs.length > 0 && <p>相关已批回答：{change.question_refs.map(ref => impact.approved_answers.find(snapshot => snapshot.request.run_id===ref.origin_run_id && snapshot.request.clarification_id===ref.clarification_id)?.request.questions[ref.question_index]?.question ?? `第 ${ref.question_index + 1} 题（原问题待核对）`).join("；")}。关联不代表该候选已获批准。</p>}
         <div className="answer-diff"><div><h5>分析前</h5><DefinitionBusinessSummary value={change.before}/></div><div><h5>本轮结果</h5><DefinitionBusinessSummary value={change.after}/></div></div>
-        <details><summary>诊断：完整对象与证据身份</summary><pre>{JSON.stringify(change,null,2)}</pre></details>
+        <details className="technical-details"><summary>技术详情</summary><pre>{JSON.stringify(change,null,2)}</pre></details>
       </details>)}
     </section>)}
-    <h4>剩余卡点 · {impact.remaining_blockers.length}</h4>
-    {impact.remaining_blockers.map(item => <article key={`${item.origin_run_id}/${item.clarification_id}/${item.question_index}`}><strong>{item.question} · 未解决</strong><dl><dt>解决方</dt><dd>{item.blocker.resolver}</dd><dt>所需证据</dt><dd>{item.blocker.evidence_needed}</dd><dt>下一动作</dt><dd>{item.blocker.next_action}</dd></dl></article>)}
+    <h4>已采用回答中仍未解决 · {impact.remaining_blockers.length}</h4>
+    {impact.remaining_blockers.map(item => <article key={`${item.origin_run_id}/${item.clarification_id}/${item.question_index}`}><strong>{item.question}</strong><dl><dt>后续由谁确认</dt><dd>{item.blocker.resolver}</dd><dt>还需要什么证据</dt><dd>{item.blocker.evidence_needed}</dd><dt>下一步</dt><dd>{item.blocker.next_action}</dd></dl></article>)}
   </section>;
 }
 

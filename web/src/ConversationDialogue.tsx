@@ -6,6 +6,7 @@ import { referenceLabel, type MessageReference } from "./TaskDialogue";
 import { ModelSettings } from "./ModelSettings";
 import { ConversationAnswers, type ConversationReviewState } from "./ConversationAnswers";
 import { writeSelectedWorkspaceId } from "./WorkspaceSwitcher";
+import { DemoEntry } from "./DemoEntry";
 
 type CreateRequest = components["schemas"]["ConversationCreateRequest"];
 type Turn = components["schemas"]["DiscussionTurn"];
@@ -18,9 +19,18 @@ export function discussionStatusLabel(status: Turn["status"]) {
 }
 export function conversationSendGuidance(hasMission:boolean,sourceCount:number,active:boolean) {
   if(active)return "可以编辑下一条草稿；本轮结束后再发送，不自动排队。";
-  if(sourceCount===0)return "当前未选择资料。可以先聊天；如需基于资料工作，请先选择本轮资料。系统不会自动使用工作区全部资料。";
-  if(!hasMission)return `已选择 ${sourceCount} 份资料。发送明确的工作指令（例如“请分析订单表中的地区和金额字段”）后，会自动形成任务并开始分析；普通询问仍保持讨论。`;
-  return `本轮将使用 ${sourceCount} 份资料。发送后会根据你的话继续讨论或推进当前任务。`;
+  if(sourceCount===0)return "可以先聊天。需要基于资料工作时，请先加入本轮资料；系统不会自动使用工作区全部资料。";
+  if(!hasMission)return `已选择 ${sourceCount} 份资料。直接发送即可讨论资料或开始工作。`;
+  return `本轮使用 ${sourceCount} 份资料。直接发送即可继续讨论或推进当前工作。`;
+}
+export type ConversationNextStep = "add_sources" | "understand_sources" | "continue" | "answer" | "review" | "active";
+export function conversationNextStep(hasMission:boolean,sourceCount:number,active:boolean,questionCount:number,hasDraft:boolean,hasMessages=false):ConversationNextStep {
+  if(active)return "active";
+  if(questionCount>0)return "answer";
+  if(hasMission&&hasDraft)return "review";
+  if(hasMission)return "continue";
+  if(hasMessages)return "continue";
+  return sourceCount>0?"understand_sources":"add_sources";
 }
 export function conversationPreviewTarget(conversation: WorkspaceConversation | null, messages: ConversationMessage[], workspaceId: string | null): {reference: MessageReference | null; source: SourceIdentity | null} {
   const empty={reference:null,source:null};
@@ -235,12 +245,13 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
     if(!ws||mutex.current)return;mutex.current=true;setLoading(true);
     try{const existing=list.find(value=>value.mission_id===missionId);await stateRef.current.selectMission(missionId);await openConversation(existing??await create(ws,missionId));}catch(e){if(workspaceRef.current===ws)setError(conversationError(e));}finally{mutex.current=false;setLoading(false);}
   };
-  const submit=async()=>{
-    if(mutex.current||active||pendingId||!storageReady||!reviewReady||!text.trim())return;
-    const body=text;const selectedReferences=references;mutex.current=true;setSending(true);setError("");
+  const submit=async(overrideText?:string)=>{
+    const body=(overrideText??text).trim();
+    if(mutex.current||active||pendingId||!storageReady||!reviewReady||!body)return;
+    const selectedReferences=references;mutex.current=true;setSending(true);setError("");
     const originalWs=workspaceRef.current;let operationWorkspace=originalWs;let operationGeneration=generation.current;let submittedTo:{workspaceId:string;conversationId:string}|null=null;
     try{
-      const settings=await fetchDeepSeekSettings();if(workspaceRef.current!==originalWs||operationGeneration!==generation.current)return;if(!settings.configured){setNeedsConnection(true);return;}setNeedsConnection(false);
+      const settings=await fetchDeepSeekSettings();if(workspaceRef.current!==originalWs||operationGeneration!==generation.current)return;if(!settings.configured){if(overrideText)setText(body);setNeedsConnection(true);return;}setNeedsConnection(false);
       const workspaceId=await ensureWorkspace();operationWorkspace=workspaceId;
       if(originalWs===null)operationGeneration=generation.current;
       if(workspaceRef.current!==workspaceId||operationGeneration!==generation.current)return;
@@ -255,7 +266,7 @@ export function useConversationDialogue(state: Path2WorkbenchState, onWorkspace:
       sessionStorage.setItem(submissionKey(workspaceId,value.conversation_id),request.client_request_id);setPendingId(request.client_request_id);
       const receipt=await sendConversationMessage(workspaceId,value.conversation_id,request);
       await applyReceipt(receipt,workspaceId,value.conversation_id);
-      if(workspaceRef.current===workspaceId&&conversationRef.current?.conversation_id===value.conversation_id){setText(currentText=>currentText===body?'':currentText);setReferences([]);historyTouched.current=false;await readCurrent(workspaceId,value.conversation_id);}
+      if(workspaceRef.current===workspaceId&&conversationRef.current?.conversation_id===value.conversation_id){if(!overrideText)setText(currentText=>currentText===body?'':currentText);setReferences([]);historyTouched.current=false;await readCurrent(workspaceId,value.conversation_id);}
     }catch(e){
       if(operationWorkspace!==workspaceRef.current||operationGeneration!==generation.current)return;
       setError(conversationError(e));
@@ -276,27 +287,47 @@ export type ConversationDialogueState=ReturnType<typeof useConversationDialogue>
 
 export function taskAnalysisLabel(state: Pick<Path2WorkbenchState, "runSnapshot" | "latestDraft" | "clarifications">): string {
   if (!state.runSnapshot) return "";
-  if (state.latestDraft?.status === "in_review" && state.clarifications.length === 0) return "候选草案待审核";
+  if (state.latestDraft?.status === "in_review" && state.clarifications.length === 0) return "候选成果等待核对";
   return statusLabel(state.runSnapshot.status);
 }
 
-export function ConversationDialogue({state,d,onReference,onSources,onHistory}: {state:Path2WorkbenchState;d:ConversationDialogueState;onReference:(ref:MessageReference)=>void;onSources:()=>void;onHistory:()=>void}) {
+function runIssueCopy(code:string) {
+  return code === "context_budget_exceeded" ? "本轮达到分析预算，已有内容已经保留。" : "本轮分析没有完成，已有对话与资料已经保留。";
+}
+
+export function ConversationDialogue({state,d,onReference,onSources,onHistory,onResults,onClarifications,onDemoLoaded}: {
+  state:Path2WorkbenchState;d:ConversationDialogueState;onReference:(ref:MessageReference)=>void;onSources:()=>void;onHistory:()=>void;
+  onResults:()=>void;onClarifications:()=>void;onDemoLoaded:(workspace:Workspace,task:string,revisions:string[])=>void;
+}) {
   const scroll=useRef<HTMLDivElement>(null);const nearEnd=useRef(true);const scopePanel=useRef<HTMLDetailsElement>(null);
+  const input=useRef<HTMLTextAreaElement>(null);const answerCards=useRef<HTMLDivElement>(null);
   const [scopeOpen,setScopeOpen]=useState(false);
   useEffect(()=>{nearEnd.current=true;},[d.conversation?.conversation_id]);
   useEffect(()=>{setScopeOpen(false);},[d.conversation?.conversation_id,state.workspaceId]);
   useEffect(()=>{if(scopeOpen)scopePanel.current?.scrollIntoView({block:"nearest"});},[scopeOpen]);
   useEffect(()=>{if(scroll.current&&nearEnd.current)scroll.current.scrollTop=scroll.current.scrollHeight;},[d.messages.at(-1)?.message_id,d.turn?.status]);
   const blocked=Boolean(state.workspaceId)&&!["ready","empty"].includes(state.sourceState.status)||d.loading||d.sending||d.active||Boolean(d.pendingId)||Boolean(d.pendingCreate)||!d.ready||d.unavailableSources.length>0||d.unsupportedHistory.length>0;
+  const questionCount=state.clarifications.reduce((total,item)=>total+item.questions.length,0);
+  const nextStep=conversationNextStep(Boolean(d.conversation?.mission_id),d.sourceRefs.length,d.active,questionCount,Boolean(state.latestDraft),d.messages.length>0);
+  const focusComposer=(prompt?:string)=>{if(prompt)d.setText(prompt);requestAnimationFrame(()=>input.current?.focus());};
+  const nextActions = nextStep === "active" ? null : <section className="conversation-next-actions" aria-label="建议下一步">
+    <span>建议下一步</span>
+    {nextStep === "add_sources" && <><strong>先添加资料，或载入公开示例</strong><div><button className="path2-primary-button" type="button" onClick={onSources}>添加资料</button><DemoEntry idPrefix="conversation-empty-demo" buttonLabel="体验公开示例" buttonClassName="utility-button" onLoaded={onDemoLoaded}/><button type="button" onClick={()=>focusComposer()}>直接说问题</button></div></>}
+    {nextStep === "understand_sources" && <><strong>先让 Agent 了解这 {d.sourceRefs.length} 份资料</strong><div><button className="path2-primary-button" type="button" disabled={blocked} onClick={()=>void d.submit("请先帮我理解本轮选择的资料，说明它们分别记录什么、可以怎样关联，以及还有哪些业务口径需要确认。")}>了解本轮资料</button><DemoEntry idPrefix="conversation-ready-demo" buttonLabel="体验公开示例" buttonClassName="utility-button" onLoaded={onDemoLoaded}/><button type="button" onClick={()=>focusComposer()}>直接说业务问题</button></div></>}
+    {nextStep === "continue" && <><strong>继续说明你想得到的结果</strong><div><button className="path2-primary-button" type="button" onClick={()=>focusComposer()}>继续说目标</button><button type="button" onClick={onHistory}>查看已经做过什么</button></div></>}
+    {nextStep === "answer" && <><strong>回答 {questionCount} 个会改变结果的问题</strong><div><button className="path2-primary-button" type="button" onClick={()=>answerCards.current?.scrollIntoView({block:"start"})}>回答待确认事项</button><button type="button" disabled={blocked} onClick={()=>void d.submit(`请解释为什么需要确认这些业务问题，尤其是：${state.clarifications[0]?.questions[0]?.question ?? "当前问题"}`)}>为什么需要确认</button><button type="button" onClick={onClarifications}>查看问题影响</button></div></>}
+    {nextStep === "review" && <><strong>核对候选成果和仍未知的事项</strong><div><button className="path2-primary-button" type="button" onClick={onResults}>查看本轮变化</button><button type="button" onClick={()=>focusComposer()}>继续补充口径</button><button type="button" onClick={onHistory}>查看过程记录</button></div></>}
+  </section>;
   return <div className="task-conversation continuous-conversation">
     {d.conversation?.goal && <div className="conversation-goal"><span>当前已明确目标</span><p>{d.conversation.goal.text}</p></div>}
     <div className="conversation-messages" ref={scroll} onScroll={event=>{const el=event.currentTarget;nearEnd.current=el.scrollHeight-el.scrollTop-el.clientHeight<80;}} aria-label="连续对话" aria-busy={d.loading}>
       {d.cursor&&<button disabled={d.loading} onClick={()=>void d.more()}>加载更早消息</button>}
-      {!d.messages.length&&<div className="conversation-welcome"><p>你好，有什么想一起弄清楚的？</p><p>可以先聊业务问题，也可以从手头的资料开始。我会把相关资料和整理过程放在工作区，方便你随时核对。</p></div>}
+      {!d.messages.length&&<div className="conversation-welcome"><p>你好，我可以和你一起把资料里的业务口径弄清楚。</p><p>直接说你想完成什么；如果还没有具体目标，也可以先让我说明资料记录了什么。</p></div>}
       {d.messages.map(message=><article className={`conversation-message message-${message.role}`} key={message.message_id}><header><strong>{message.role==='user'?'你':'数契 Agent'}</strong><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time></header><p>{message.content}</p>{(message.references ?? []).map((ref,i)=><button className="reference-chip" key={i} onClick={()=>onReference(ref)}>{referenceLabel(ref,state.sourceState.items)}</button>)}</article>)}
-      {d.turn&&<div className="conversation-activity" role="status"><strong>{discussionStatusLabel(d.turn.status)}</strong>{d.turn.error_code&&<p>讨论未完成：{d.turn.error_code}</p>}{d.turn.handoff_error_code&&<p>讨论结束，但任务交接未完成：{d.turn.handoff_error_code}。请先核对当前状态。</p>}</div>}
-      {state.runSnapshot&&<div className="conversation-activity"><strong>任务分析：{taskAnalysisLabel(state)}</strong>{state.runSnapshot.error_code&&<p>{state.runSnapshot.error_code}</p>}<button onClick={onHistory}>查看执行过程</button></div>}
-      {d.conversation?.mission_id&&<ConversationAnswers key={`${d.conversation.workspace_id}/${d.conversation.conversation_id}`} state={state} conversation={d.conversation} suggestions={d.turn?.output?.answer_suggestions ?? []} onUpdated={d.refresh} onReviewState={d.updateReviewState}/>}
+      {d.turn&&<div className="conversation-activity" role="status"><strong>{discussionStatusLabel(d.turn.status)}</strong>{d.turn.error_code&&<><p>这轮讨论没有完成，消息草稿和资料范围已经保留。</p><details><summary>技术详情</summary><p>{d.turn.error_code}</p></details></>}{d.turn.handoff_error_code&&<><p>讨论已经结束，但工作衔接没有完成。请先核对当前状态。</p><details><summary>技术详情</summary><p>{d.turn.handoff_error_code}</p></details></>}</div>}
+      {state.runSnapshot&&<div className="conversation-activity"><strong>{taskAnalysisLabel(state)}</strong>{state.runSnapshot.error_code&&<><p>{runIssueCopy(state.runSnapshot.error_code)}</p><details><summary>技术详情</summary><p>{state.runSnapshot.error_code}</p></details></>}<button onClick={onHistory}>查看过程记录</button></div>}
+      {nextActions}
+      {d.conversation?.mission_id&&<div ref={answerCards}><ConversationAnswers key={`${d.conversation.workspace_id}/${d.conversation.conversation_id}`} state={state} conversation={d.conversation} suggestions={d.turn?.output?.answer_suggestions ?? []} onUpdated={d.refresh} onReviewState={d.updateReviewState}/></div>}
     </div>
     <form className="conversation-composer" onSubmit={event=>{event.preventDefault();nearEnd.current=true;void d.submit();}}>
       {d.error&&<div className="conversation-error" role="alert">{d.error}<button type="button" onClick={()=>void d.refresh()}>刷新并核对</button></div>}
@@ -307,8 +338,8 @@ export function ConversationDialogue({state,d,onReference,onSources,onHistory}: 
       {d.unsupportedHistory.length>0&&<p role="alert">已选的 {d.unsupportedHistory.length} 条历史属于任务前或澄清讨论，本轮任务分析不能携带。请展开历史选择取消这些项；系统未改动你的选择。</p>}
       <details ref={scopePanel} open={scopeOpen} onToggle={event=>setScopeOpen(event.currentTarget.open)} className="conversation-scope-picker"><summary>本轮资料 {d.sourceRefs.length} 份 · 历史 {d.historyIds.length} 条</summary><p>这里只使用你明确勾选的资料，系统不会自动带上工作区全部资料。</p>{state.sourceState.items.length===0?<p className="conversation-scope-empty">当前工作区还没有资料，请先从本机导入。</p>:<div role="group" aria-label="选择本轮资料">{state.sourceState.items.map(source=><label className="history-choice" key={source.revision_id}><input type="checkbox" checked={state.selectedSourceIds.includes(source.revision_id)} disabled={d.active||Boolean(d.pendingId)||(!state.selectedSourceIds.includes(source.revision_id)&&d.sourceRefs.length>=8)} onChange={()=>state.toggleSource(source.revision_id)}/><span>{source.original_name} · {state.selectedSourceIds.includes(source.revision_id)?"本轮已选":"未选择"}</span></label>)}</div>}{d.unavailableSources.map(ref=><p key={ref.revision_id}>来源版本已不可用：{ref.revision_id.slice(0,8)}<button type="button" onClick={()=>d.removeUnavailable(ref)}>从本轮范围移除</button></p>)}<button type="button" className="conversation-import-source" onClick={onSources}>从本机导入新资料</button><p className="conversation-history-heading">本轮携带的对话历史（最多 4 条）</p>{d.messages.map(message=><label className="history-choice" key={message.message_id}><input type="checkbox" checked={d.historyIds.includes(message.message_id)} disabled={Boolean(d.pendingId)||(!d.historyIds.includes(message.message_id)&&d.historyIds.length>=4)} onChange={event=>d.setHistoryIds(event.target.checked?[...d.historyIds,message.message_id]:d.historyIds.filter(id=>id!==message.message_id))}/><span>{message.role==='user'?'你':'Agent'}：{message.content.slice(0,90)}{d.taskHistoryOnly&&!message.task_message?"（本轮任务分析不可携带）":""}</span></label>)}</details>
       {d.references.map((ref,index)=><button type="button" className="reference-chip" key={index} disabled={Boolean(d.pendingId)} onClick={()=>d.setReferences(d.references.filter((_,i)=>i!==index))}>{referenceLabel(ref,state.sourceState.items)} ×</button>)}
-      <label className="sr-only" htmlFor="conversation-input">与 Agent 对话</label><textarea id="conversation-input" rows={3} maxLength={4096} value={d.text} placeholder="说说你想弄清什么，也可以先添加资料" onChange={event=>d.setText(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();if(!blocked&&d.text.trim()){nearEnd.current=true;void d.submit();}}}}/>
-      <div className="conversation-send-row"><button type="button" aria-expanded={scopeOpen} onClick={()=>setScopeOpen(value=>!value)}>＋ 资料 · {d.sourceRefs.length}</button>{d.active?<button type="button" disabled={d.sending} onClick={()=>void d.cancel()}>停止分析</button>:<button className="path2-primary-button" disabled={blocked||!d.text.trim()} type="submit">{d.sending?'正在发送…':'发送 ↑'}</button>}</div><p className="composer-scope">{conversationSendGuidance(Boolean(d.conversation?.mission_id),d.sourceRefs.length,d.active)}</p>
+      <label className="sr-only" htmlFor="conversation-input">与 Agent 对话</label><textarea ref={input} id="conversation-input" rows={3} maxLength={4096} value={d.text} placeholder="说说你想弄清什么，也可以先添加资料" onChange={event=>d.setText(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();if(!blocked&&d.text.trim()){nearEnd.current=true;void d.submit();}}}}/>
+      <div className="conversation-send-row"><button type="button" aria-expanded={scopeOpen} onClick={()=>setScopeOpen(value=>!value)}>资料 · {d.sourceRefs.length}</button>{d.active?<button type="button" disabled={d.sending} onClick={()=>void d.cancel()}>停止分析</button>:<button className="path2-primary-button" disabled={blocked||!d.text.trim()} type="submit">{d.sending?'正在发送…':'发送'}</button>}</div><p className="composer-scope">{conversationSendGuidance(Boolean(d.conversation?.mission_id),d.sourceRefs.length,d.active)}</p>
     </form>
   </div>;
 }

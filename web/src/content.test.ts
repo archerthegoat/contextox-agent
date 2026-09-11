@@ -13,6 +13,8 @@ import {
   navigationForAreas,
   relationshipGraphResolution,
   resolveWorkbenchProgress,
+  resolveWorkbenchSummary,
+  resolveFollowTarget,
 } from "./App";
 import App from "./App";
 import { sourceIdentityFromRevision, type DefinitionDraft, type SourceRevision } from "./Path2Workbench";
@@ -89,9 +91,9 @@ describe("ContextOx Workbench v3 content boundaries", () => {
 
   it("keeps the Mission relationship shell free of synthetic result data", () => {
     expect(OBJECT_TABS).toEqual([
-      { id: "mission", label: "任务工作区" },
+      { id: "mission", label: "当前进展" },
       { id: "relationship", label: "关系与字段" },
-      { id: "history", label: "执行历史" },
+      { id: "history", label: "过程记录" },
     ]);
   });
 
@@ -129,7 +131,7 @@ describe("ContextOx Workbench v3 content boundaries", () => {
     expect(markup).toContain('role="separator"');
     expect(markup).not.toContain('class="primary-rail"');
     expect(markup).not.toContain("graph-node-icon");
-    expect(markup).toContain("执行历史");
+    expect(markup).toContain("过程记录");
     expect(markup).toContain("aria-label=\"Agent 对话\"");
     expect(markup).toContain("展开对话");
     expect(markup).toContain("aria-controls=\"agent-panel-content\"");
@@ -199,7 +201,25 @@ describe("ContextOx Workbench v3 content boundaries", () => {
       latestDraft: {version:3, status:"in_review"} as never,
       clarifications: [],
     });
-    expect(review).toMatchObject({current:3, waitingForAnswers:false, description:"候选草案 v3 待审核"});
+    expect(review).toMatchObject({current:3, waitingForAnswers:false, description:"候选成果等待核对"});
+  });
+
+  it("summarizes the current work in business language without leaking versions", () => {
+    const empty = resolveWorkbenchSummary({missionSnapshot:null,selectedMission:null,runSnapshot:null,latestDraft:null,clarifications:[]}, 0);
+    expect(empty).toEqual({now:"还没有开始分析",next:"在右侧说目标，或先添加资料",result:"本次对话还没有选择资料"});
+
+    const waiting = resolveWorkbenchSummary({missionSnapshot:null,selectedMission:{mission_id:"mission"} as never,runSnapshot:{status:"waiting_for_human"} as never,latestDraft:{fields:[],relationships:[]} as never,clarifications:[{questions:[{},{}]}] as never}, 2);
+    expect(waiting).toMatchObject({now:"已找到需要业务判断的事项",next:"回答 2 个会改变结果的问题"});
+
+    const result = resolveWorkbenchSummary({missionSnapshot:null,selectedMission:{mission_id:"mission"} as never,runSnapshot:{status:"completed"} as never,latestDraft:{version:9,fields:[{unknowns:[{}]}],relationships:[{unknowns:[]}]} as never,clarifications:[]}, 2);
+    expect(result).toEqual({now:"候选成果已经更新",next:"核对变化，继续补充仍未知的口径",result:"1 个字段 · 1 条关系 · 1 项未知"});
+    expect(JSON.stringify(result)).not.toContain("9");
+  });
+
+  it("shows a newly updated result while keeping its next clarification visible", () => {
+    const target=resolveFollowTarget({runSnapshot:{status:"partial",approved_answers:[{}]} as never,latestDraft:{version:2} as never,clarifications:[{questions:[{question:"时间范围？"}]}] as never});
+    expect(target).toEqual({area:"mission",tab:"relationship"});
+    expect(resolveFollowTarget({runSnapshot:{status:"waiting_for_human"} as never,latestDraft:{version:1} as never,clarifications:[{questions:[{question:"退款规则？"}]}] as never})).toEqual({area:"clarifications",tab:"mission"});
   });
 });
 
@@ -222,7 +242,7 @@ describe("field semantic review", () => {
     const draft = {draft_id:"draft",version:1,sha256:"a".repeat(64),fields:[field],relationships:[]};
     const path2 = {latestDraft:draft,sourceState:{items:[]}} as unknown as import("./Path2Workbench").Path2WorkbenchState;
     const html = renderToStaticMarkup(createElement(RelationshipGraph, {path2,onReference:()=>{}}));
-    for (const text of ["含义","值类型","粒度","规则","时间基准","缺失值处理","金额（元）","缺失金额行排除","未知原因：","尚未提供统计窗口","业务语义待批准"]) expect(html).toContain(text);
+    for (const text of ["含义","值类型","粒度","规则","时间基准","缺失值处理","金额（元）","缺失金额行排除","未知原因：","尚未提供统计窗口","业务含义等待核对"]) expect(html).toContain(text);
     field.null_handling = null;
     field.unknowns.push({property_path:"null_handling",reason:"仅观察到样本无缺失，业务规则未提供"});
     const unknownHtml = renderToStaticMarkup(createElement(RelationshipGraph, {path2,onReference:()=>{}}));

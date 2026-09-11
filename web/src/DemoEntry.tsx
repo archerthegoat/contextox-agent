@@ -6,7 +6,12 @@ export function demoText(encoded: string): string {
   return new TextDecoder().decode(Uint8Array.from(atob(encoded), character => character.charCodeAt(0)));
 }
 
-export function DemoEntry({ onLoaded }: { onLoaded: (workspace: Workspace, task: string, revisions: string[]) => void }) {
+export function DemoEntry({ onLoaded, idPrefix = "demo", buttonLabel = "体验示例", buttonClassName = "utility-button" }: {
+  onLoaded: (workspace: Workspace, task: string, revisions: string[]) => void;
+  idPrefix?: string;
+  buttonLabel?: string;
+  buttonClassName?: string;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [example, setExample] = useState<DemoCase | null>(null);
   const [pending, setPending] = useState(false);
@@ -48,10 +53,11 @@ export function DemoEntry({ onLoaded }: { onLoaded: (workspace: Workspace, task:
     } finally { setPending(false); }
   };
   const selectedFile = example?.files.find(file => file.original_name === source);
+  const titleId = `${idPrefix}-title`;
   return <>
-    <button type="button" className="utility-button" onClick={() => void open()}>体验示例</button>
-    <dialog ref={dialog} className="workbench-dialog demo-dialog" aria-labelledby="demo-title" onCancel={e => { if (pending) e.preventDefault(); }}>
-      <header><h2 id="demo-title">从一个订单口径任务开始</h2><button type="button" className="utility-button" disabled={pending} aria-label="关闭示例" onClick={() => dialog.current?.close()}>关闭</button></header>
+    <button type="button" className={buttonClassName} onClick={() => void open()}>{buttonLabel}</button>
+    <dialog ref={dialog} className="workbench-dialog demo-dialog" aria-labelledby={titleId} onCancel={e => { if (pending) e.preventDefault(); }}>
+      <header><h2 id={titleId}>从一个订单口径任务开始</h2><button type="button" className="utility-button" disabled={pending} aria-label="关闭示例" onClick={() => dialog.current?.close()}>关闭</button></header>
       <p className="demo-disclosure">预制只读示例 · 人工编写的合成材料与候选，用于说明产品流程；不是本次模型生成或批准记录。</p>
       {loading && <p role="status">读取公开示例…</p>}
       {error && <p role="alert" className="settings-error">{error}</p>}

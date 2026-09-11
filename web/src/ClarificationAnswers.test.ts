@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import * as api from "./api/client";
-import { type PendingClarificationSubmission, decodePendingSubmission, performPendingSubmission, AnswerForm, AnswerReadback, DefinitionBusinessSummary, answerOmissions, blankAnswers, clarificationCaseMatches, approvedRefs, draftTargets } from "./ClarificationAnswers";
+import { type PendingClarificationSubmission, decodePendingSubmission, performPendingSubmission, AnswerForm, AnswerReadback, DefinitionBusinessSummary, answerOmissions, blankAnswers, clarificationCaseMatches, approvedRefs, draftTargets, impactChangeTitle } from "./ClarificationAnswers";
 import type { components } from "./generated/api";
 
 type Answer = components["schemas"]["ClarificationAnswerVersion"];
@@ -49,6 +49,13 @@ describe("whole clarification answer", () => {
 
 
 describe("business-facing answer impact", () => {
+  it("names changes with business objects instead of raw definition paths", () => {
+    const source={workspace_id:"ws",source_id:"source",revision_id:"revision",sha256:hash};
+    const field:components["schemas"]["DefinitionField"]={field_key:"amount",name:"净订单金额",meaning:null,value_type:null,grain:null,rule:null,time_basis:null,null_handling:null,source_columns:[],source_refs:[],evidence_status:"candidate",unknowns:[]};
+    const relationship:components["schemas"]["RelationshipCandidate"]={relationship_key:"orders_refunds",left:{source_ref:source,table_id:"orders",columns:["region"]},right:{source_ref:source,table_id:"refunds",columns:["region"]},observed_cardinality:"unknown",join_rule:null,grain_notes:null,evidence_status:"candidate",source_refs:[],unknowns:[],risks:[]};
+    expect(impactChangeTitle({kind:"field",key:"amount",change:"added",before:null,after:field,question_refs:[]})).toBe("净订单金额");
+    expect(impactChangeTitle({kind:"relationship",key:"orders_refunds",change:"added",before:null,after:relationship,question_refs:[]})).toBe("orders 与 refunds");
+  });
   it("shows six field dimensions and unknown reasons without engineering identities", () => {
     const value: components["schemas"]["DefinitionField"] = {field_key:"window",name:"统计窗口",meaning:"订单统计时间范围",value_type:"整数",grain:"每笔订单",rule:"30天",time_basis:"下单时间",null_handling:null,source_columns:[],source_refs:[],evidence_status:"candidate",unknowns:[{property_path:"fields.window.null_handling",reason:"业务负责人尚未确认空值规则"}]};
     const html=renderToStaticMarkup(createElement(DefinitionBusinessSummary,{value}));

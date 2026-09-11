@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationBelongsTo, conversationUsesTaskHistory, conversationReviewMatches, conversationPreviewTarget, conversationSendGuidance, discussionStatusLabel, recentConversationHistory, mergeConversationPage, selectedConversationHistory, taskAnalysisLabel } from "./ConversationDialogue";
+import { conversationBelongsTo, conversationUsesTaskHistory, conversationReviewMatches, conversationPreviewTarget, conversationSendGuidance, conversationNextStep, discussionStatusLabel, recentConversationHistory, mergeConversationPage, selectedConversationHistory, taskAnalysisLabel } from "./ConversationDialogue";
 import { reviewedAnswer, receiptMatchesReviewedAnswers, answersCanCollapse, suggestedAnswerItems, mergeReviewedSave } from "./ConversationAnswers";
 import { answerOmissions } from "./ClarificationAnswers";
 import type { MessageReference } from "./TaskDialogue";
@@ -31,13 +31,22 @@ describe("continuous conversation boundaries",()=>{
   });
   it("distinguishes a review-ready candidate from an unresolved business question",()=>{
     expect(taskAnalysisLabel({runSnapshot:{status:"waiting_for_human"} as never,latestDraft:{status:"draft"} as never,clarifications:[{questions:[question]}] as never})).toBe("待业务裁决");
-    expect(taskAnalysisLabel({runSnapshot:{status:"waiting_for_human"} as never,latestDraft:{status:"in_review"} as never,clarifications:[]})).toBe("候选草案待审核");
+    expect(taskAnalysisLabel({runSnapshot:{status:"waiting_for_human"} as never,latestDraft:{status:"in_review"} as never,clarifications:[]})).toBe("候选成果等待核对");
   });
-  it("explains source selection and automatic task start without implying workspace-wide search",()=>{
+  it("explains source selection and direct progress without implying workspace-wide search",()=>{
     expect(conversationSendGuidance(false,0,false)).toContain("不会自动使用工作区全部资料");
-    expect(conversationSendGuidance(false,2,false)).toContain("自动形成任务并开始分析");
-    expect(conversationSendGuidance(true,2,false)).toContain("推进当前任务");
+    expect(conversationSendGuidance(false,2,false)).toContain("直接发送即可讨论资料或开始工作");
+    expect(conversationSendGuidance(true,2,false)).toContain("推进当前工作");
     expect(conversationSendGuidance(true,2,true)).toContain("不自动排队");
+  });
+  it("derives one deterministic next action from actual product state",()=>{
+    expect(conversationNextStep(false,0,false,0,false)).toBe("add_sources");
+    expect(conversationNextStep(false,2,false,0,false)).toBe("understand_sources");
+    expect(conversationNextStep(false,2,false,0,false,true)).toBe("continue");
+    expect(conversationNextStep(true,2,false,0,false)).toBe("continue");
+    expect(conversationNextStep(true,2,false,2,true)).toBe("answer");
+    expect(conversationNextStep(true,2,false,0,true)).toBe("review");
+    expect(conversationNextStep(true,2,true,2,true)).toBe("active");
   });
   it("uses discussion history for a newly saved or stale answer even while mission remains blocked",()=>{
     const state={selectedMission:{mission_id:"mission",status:"blocked"},missionSnapshot:null,latestDraft:{status:"partial"}} as unknown as import("./Path2Workbench").Path2WorkbenchState;

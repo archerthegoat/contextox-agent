@@ -291,6 +291,19 @@ export function approvedRunContext(run: RunSnapshot): Partial<SendRequest> {
   return context;
 }
 
+type RunNarrativeInput = Pick<RunSummary, "status" | "has_final_output">;
+
+export function runNarrative(run: RunNarrativeInput) {
+  if(run.status==="queued")return "等待开始分析";
+  if(run.status==="running")return "正在分析资料和业务问题";
+  if(run.status==="waiting_for_human")return "发现需要业务确认的事项";
+  if(run.status==="completed")return run.has_final_output?"完成分析并保存了一轮答复":"完成分析，没有公开答复";
+  if(run.status==="partial")return run.has_final_output?"保存了部分结果，仍有事项待处理":"只完成部分分析";
+  if(run.status==="cancelled")return "这轮分析已停止";
+  if(run.status==="blocked")return "这轮分析遇到阻碍";
+  return "这轮分析没有完成";
+}
+
 export function TaskExecutionHistory({ state, dialogue: d }: {state: Path2WorkbenchState; dialogue: DialogueState}) {
   const [detail, setDetail] = useState<RunSnapshot | null>(null);
   const [error, setError] = useState("");
@@ -306,14 +319,14 @@ export function TaskExecutionHistory({ state, dialogue: d }: {state: Path2Workbe
       if (current.current === scope && generation === selection.current && next.workspace_id === state.workspaceId && next.mission_id === state.selectedMission.mission_id && next.run_id === id) setDetail(next);
     } catch (e) {if (current.current === scope && generation === selection.current) setError(dialogueError(e, "read"));}
   };
-  return <section className="task-history"><h2>执行历史</h2><p>每次明确发送对应一轮分析。任务对话保留在右侧。</p>
+  return <section className="task-history"><h2>过程记录</h2><p>这里按顺序说明每一轮做了什么。运行标识、时间和收据放在技术详情中。</p>
     {d.error && <p role="alert">{d.error}</p>}{d.loading && <p role="status">正在读取…</p>}
-    {d.runCursor && <button onClick={() => void d.more("runs")}>加载更早执行</button>}
-    {d.ready && !d.runs.length && <p>这个任务还没有执行记录。</p>}
-    {[...d.runs].reverse().map((run, index) => <button className="history-run" key={run.run_id} onClick={() => void show(run.run_id)}><strong>{new Date(run.created_at).toLocaleString()} · {statusLabel(run.status)}</strong><span>{run.has_final_output ? "已保存公开答复" : run.status === "waiting_for_human" ? "已产生待回应事项" : "未保存公开答复"}{run.error_code ? ` · ${run.error_code}` : ""}</span><small>执行 {d.runs.length - index} · {run.run_id.slice(0, 8)}</small></button>)}
+    {d.runCursor && <button onClick={() => void d.more("runs")}>加载更早记录</button>}
+    {d.ready && !d.runs.length && <p>这个任务还没有过程记录。</p>}
+    {[...d.runs].reverse().map((run, index) => <article className="history-run-card" key={run.run_id}><button className="history-run" onClick={() => void show(run.run_id)}><span>第 {d.runs.length - index} 轮</span><strong>{runNarrative(run)}</strong><small>{run.status==="waiting_for_human"?"下一步：回答待确认事项":run.has_final_output?"已有内容可以回看":"可以展开核对这轮状态"}</small></button><details className="technical-details"><summary>技术详情</summary><p>{new Date(run.created_at).toLocaleString()} · {statusLabel(run.status)}</p><p>Run {run.run_id}{run.error_code?` · ${run.error_code}`:""}</p></details></article>)}
     {error && <p role="alert">{error}</p>}
-    {detail && <article className="history-detail"><h3>本轮执行详情</h3><p>{statusLabel(detail.status)} · {detail.run_id}</p><p>{detail.final_output ?? (detail.status === "waiting_for_human" ? "本轮已产生待回应事项，可展开结构化结果核对。" : "本轮没有已保存的公开答复。")}</p><details><summary>终止收据与结构化结果</summary><pre>{JSON.stringify({receipt:detail.terminal_receipt, draft:detail.draft, clarifications:detail.clarifications}, null, 2)}</pre></details>
-      <AnswerImpactView key={detail.run_id} workspaceId={detail.workspace_id} missionId={detail.mission_id} runId={detail.run_id}/>{<details><summary>公开执行事件</summary><RunHistoryDetails key={detail.run_id} state={state} run={detail}/></details>}
+    {detail && <article className="history-detail"><span className="result-kicker">这一轮</span><h3>{runNarrative({status:detail.status,has_final_output:Boolean(detail.final_output)})}</h3><p>{detail.final_output ?? (detail.status === "waiting_for_human" ? "本轮发现了需要你回答的业务问题。" : "本轮没有保存可展示的答复。")}</p>
+      <AnswerImpactView key={detail.run_id} workspaceId={detail.workspace_id} missionId={detail.mission_id} runId={detail.run_id}/><details className="technical-details"><summary>运行标识、收据与结构化结果</summary><p>{statusLabel(detail.status)} · {detail.run_id}</p><pre>{JSON.stringify({receipt:detail.terminal_receipt, draft:detail.draft, clarifications:detail.clarifications}, null, 2)}</pre></details>{<details className="technical-details"><summary>查看执行事件</summary><RunHistoryDetails key={detail.run_id} state={state} run={detail}/></details>}
     </article>}
   </section>;
 }
