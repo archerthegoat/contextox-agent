@@ -51,7 +51,7 @@ Agent 负责阅读、整理和追问；业务事实仍由人决定。数契要�
 
 ## 快速启动
 
-1.0.0 目前仍是发布前 Demo 候选。现在可以从源码启动：
+**Demo 1.0.0 已经发布。** 当前 Release 提供源码和公开合成示例，可以按下面的命令启动：
 
 ~~~sh
 git clone https://github.com/archerthegoat/contextox-agent.git
@@ -64,7 +64,7 @@ uv run --locked contextox start --agent-profile demo-fast --open-browser
 
 开发环境需要 Python `3.14.7`、UV 和 Node.js `22.19.0` 以上版本。服务默认打开 <http://127.0.0.1:8787>；保持终端运行，按 `Ctrl+C` 停止。
 
-首个安装包计划支持 macOS Apple 芯片，并自带 Python、依赖和网页。`v1.0.0` Release 发布前，固定版本安装命令暂不可用。
+当前 [Demo 1.0.0 Release](https://github.com/archerthegoat/contextox-agent/releases/tag/v1.0.0) 还没有预构建安装包；首次体验请按上面的源码命令启动。后续安装包计划支持 macOS Apple 芯片，并自带 Python、依赖和网页。
 
 ## 连接模型
 
@@ -138,7 +138,7 @@ npm --prefix web test
 npm --prefix web run build
 ~~~
 
-- [1.0.0 Release 草案](docs/releases/v1.0.0.md)
+- [Demo 1.0.0 Release 说明](docs/releases/v1.0.0.md)
 - [开发路径图](开发路径图.md)
 - [架构与迁移报告](docs/架构与迁移报告.md)
 - [Agent 主导 Workbench 本地验收](docs/Agent主导Workbench本地验收.md)
