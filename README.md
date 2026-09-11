@@ -1,176 +1,180 @@
 <p align="center"><img src="web/src/assets/contextox-mark.png" width="76" alt="数契 Logo"></p>
 <h1 align="center">数契 ContextOx</h1>
-<p align="center">把资料中的字段、关系和业务口径，整理成有依据、能讨论、可继续完善的定义草案。</p>
-<p align="center">本地工作台 · DeepSeek Flash · 公开合成示例 · MIT</p>
+<p align="center"><strong>把散落在表格和说明里的业务口径，聊清楚、写清楚、留出处。</strong></p>
+<p align="center">本地优先 · Agent 对话驱动 · DeepSeek · 公开合成示例 · MIT</p>
 
-数契帮助你借助 Agent 理解和规范业务与数据知识。给它两张表和一份说明，它会整理字段与表关系、标出来源，并把缺少的业务规则变成具体问题。你回答并确认后，可以在同一任务中继续完善草案。
+数契是一个本地优先的业务定义 Agent。你把有权使用的表格和说明加入一次对话，说出想解决的问题；Agent 会理解字段和关系、定位依据，并把真正会改变结论的地方交给你确认。中间工作区持续展示进度、资料和候选成果。
 
-当前阶段是 **Demo 1.0**，运行包版本为 **0.2.0**。GitHub 仓库是产品介绍、安装和反馈的入口。
+首个对外推广版本定为 **1.0.0**。当前仓库中的 `v1.0.0` Release 仍是发布草案，尚未创建标签或上传安装包。
 
-## 先看它能做什么
+## 三分钟看懂怎么用
 
-例如，你想按地区汇总订单金额，但资料还没有说明是否纳入退款订单、按哪个时间字段归属日期。
+1. 打开工作台，从右侧直接说目标。还没想清楚时，也可以先让 Agent 了解资料。
+2. 点击 **添加资料**，或展开输入框旁的 **资料**，明确选择本次对话使用的版本。系统不会把整个工作区悄悄交给模型。
+3. 目标和资料足够明确后，发送消息就会开始分析，无需先创建 Mission、Provider 或 Run。
+4. 遇到退款、空值、时间范围等业务判断时，继续追问原因，或用自然语言回答。
+5. Agent 会把回答整理成可修改卡片。点击 **确认并继续** 后，回答才会被采用并进入下一轮分析。
+6. 中间区域会说明正在做什么、需要你做什么、已经得到什么；字段、关系、变化和未知事项都可以继续核对。
 
-1. 点击工作台顶部的 **体验示例**。不用 Key，也能查看明确标记的预制候选和三份合成来源。
-2. 点击 **载入示例，亲自运行**，创建全新的本地工作区，并预填任务描述。
-3. 配置 DeepSeek Key，确认发送任务描述，再确认任务与来源。
-4. 请 Agent 整理字段、关系和问题。点击简短的 `@notes.md` 等引用，可以回到准确来源。
-5. 在 **待澄清** 中回答并批准，再继续同一个任务，查看更新后的草案。
-6. 在 **关系与字段** 或 **业务契约** 中导出 Markdown / JSON，带走版本、引用、回答记录和未决项。
+第一次使用可以点击 **体验示例**。只读预览不需要 Key；“亲自运行”会创建一个新的本地工作区，并使用公开合成材料。
 
-公开示例包含 [6 笔订单](src/contextox/demo/orders.csv)、[3 个客户](src/contextox/demo/customers.csv)和[一份说明](src/contextox/demo/notes.md)，全部为合成数据。预制结果是人工编写的展示材料；亲自运行得到的内容取决于模型，仍需你核对。
+![数契工作台：对话驱动、当前进展与候选成果](docs/assets/demo-preview.jpg)
 
-![工作台中的预制只读示例：字段、引用、表关系和需要回答的问题](docs/assets/demo-preview.jpg)
-
-*工作台实际截图。图中是明确标记的预制候选，用于先了解流程，不代表模型生成结果。*
+*工作台截图使用公开合成数据。候选内容用于展示流程，不代表真实业务规则或人的批准。*
 
 <details>
-<summary>查看真实两轮交互后的工作台</summary>
+<summary>查看一条完整合成链路的候选成果</summary>
 
-![真实合成任务第二轮：关系草案 v2、来源引用与采用回答后的公开答复](docs/assets/demo-real.jpg)
+![数契完整合成链路：回答确认后展示字段、关系与仍未知事项](docs/assets/demo-real.jpg)
 
-这次固定合成案例完成了任务草拟、首轮生成、回答并批准、第二轮更新，以及 Markdown / JSON 导出，共 3 次 DeepSeek 请求，未发生格式纠正或重试。两轮生成分别约 12.1 秒和 4.7 秒；这是单个案例的结果，不代表稳定性或生产 high 的表现。草案仍保留未决项，人的产品验收另行记录。
+这条固定合成链路覆盖资料选择、任务前讨论、发送即分析、澄清、回答卡片、一次确认续接和候选成果更新。它属于工程与浏览器证据，不代表真实模型质量、正式 Contract 发布或人工验收。
 
 </details>
 
+## 它现在能做什么
+
+| 你要做的事 | 数契的处理方式 |
+| --- | --- |
+| 先弄懂几份资料 | 在同一对话解释字段、样例和可能关系，并定位来源 |
+| 整理一个业务指标 | 生成字段含义、粒度、规则、时间与空值口径的候选 |
+| 处理有争议的规则 | 把问题、影响、回答来源和仍未知事项整理成卡片 |
+| 继续完善结果 | 采用经确认的回答，生成可对比的新候选 |
+| 回看为什么这样写 | 从引用定位到精确资料版本和证据片段 |
+| 带走当前成果 | 导出 Markdown 或 JSON 候选，保留未知项和核对信息 |
+
+这些成果始终是**可核对的候选草案**。1.0.0 不会把 Agent 输出直接当成正式业务事实，也不包含正式 Contract 发布。
+
 ## 安装与启动
 
-首批运行包面向 **macOS Apple 芯片**，自带 Python、依赖和网页，无需预装 Python、Node.js 或 UV。只使用 DeepSeek，由使用者提供自己的 API Key。
+首个运行包面向 **macOS Apple 芯片**，自带 Python、依赖和网页，无需预装 Python、Node.js 或 UV。只使用 DeepSeek，由使用者提供自己的 API Key。
 
-**发布状态：0.2.0 仍在交付验证中，Release 尚未发布。以下固定版本安装命令将在 `v0.2.0` Release 发布后生效；当前可使用下方源码启动方式。**
+**发布状态：`v1.0.0` 尚未发布。** Release 创建后，下面的固定版本命令才会生效；现在请使用“从源码运行”。
 
-发布后，整段复制到终端即可安装并打开工作台：
-
-```sh
+~~~sh
 contextox_download=$(mktemp -d)
 curl --fail --location --proto '=https' --tlsv1.2 \
-  https://github.com/archerthegoat/contextox-agent/releases/download/v0.2.0/install.sh \
+  https://github.com/archerthegoat/contextox-agent/releases/download/v1.0.0/install.sh \
   --output "$contextox_download/install.sh" && sh "$contextox_download/install.sh"
-```
+~~~
 
-安装程序下载固定版本并校验 SHA256，安装到 `~/.local/share/contextox`，随后启动本地服务并打开浏览器。无需管理员权限，不修改 shell 配置。再次启动：
+安装程序会下载并校验固定版本，安装到 `~/.local/share/contextox`，随后启动本地服务并打开浏览器。无需管理员权限，也不会修改 shell 配置。再次启动：
 
-```sh
+~~~sh
 "$HOME/.local/share/contextox/contextox" start
-```
+~~~
 
-默认访问地址为 <http://127.0.0.1:8787>。保持终端运行；按 `Ctrl+C` 停止。重复启动同一资料目录会打开已有实例。端口被其他程序占用时，可以显式选择另一个端口：
+默认地址是 <http://127.0.0.1:8787>。保持终端运行，按 `Ctrl+C` 停止。端口被占用时可运行：
 
-```sh
+~~~sh
 "$HOME/.local/share/contextox/contextox" start --port 8788
-```
+~~~
 
-这轮提供终端安装与浏览器工作台；原生 `.app`、DMG、签名和公证不在当前交付范围。
+原生 `.app`、DMG、签名和公证暂不包含在 1.0.0 中。
 
-## 配置 DeepSeek
+## 配置模型
 
-在工作台顶部点击 **配置模型**，填入自己的 Key 并保存到 **macOS Keychain**。Key 不写入工作区数据库、普通配置文件或浏览器存储；网页也不会回显已保存的 Key。保存不调用模型，首次明确发送任务时才会产生 API 费用。
+在左下角打开 **模型设置**，填入 DeepSeek API Key。Key 默认保存到 **macOS Keychain**，不会写入工作区数据库、浏览器存储或普通配置文件，页面也不会回显已保存的 Key。
 
-- [获取 DeepSeek API Key](https://platform.deepseek.com/api_keys)。Key 是否有效、账户是否有余额，以真实请求为准。
-- 支持三种方式，优先级为 `DEEPSEEK_API_KEY` 环境变量 → `--env-file` 指定文件 → Keychain。页面显示当前配置来源。
-- 任务正在执行时不能替换或移除 Key；结束后可刷新状态再修改。
-- Keychain 无法访问时，请解锁 macOS 登录钥匙串。程序不会回退到明文文件保存。
+发送消息需要模型时，若尚未连接，原消息会保留。设置表单会明确区分 **仅保存设置** 与 **保存并发送这条消息**。只有实际发送给模型才可能产生费用。
 
-习惯本地配置文件的开发者，可以自行创建一个 UTF-8 文件，例如 `contextox.env`：
+- [获取 DeepSeek API Key](https://platform.deepseek.com/api_keys)
+- 配置优先级：`DEEPSEEK_API_KEY` 环境变量 → `--env-file` 指定文件 → Keychain
+- 程序不会自动寻找 `.env`；网页不会创建、修改或回显配置文件
+- 任务正在执行时不能替换或移除 Key
 
-```dotenv
+开发者如需显式文件，可创建一个权限受限的 UTF-8 文件：
+
+~~~dotenv
 DEEPSEEK_API_KEY=your-deepseek-api-key
-```
+~~~
 
-将示例值替换为自己的 Key，限制文件访问权限，再明确指定文件启动：
-
-```sh
+~~~sh
 chmod 600 contextox.env
 "$HOME/.local/share/contextox/contextox" start --env-file ./contextox.env
-```
+~~~
 
-也可以使用名称为 `.env` 的文件，但程序不会自动寻找它。文件在启动时只读一次；修改后重启服务。支持空行、`#` 注释、可选的 `export` 前缀及成对单/双引号，只读取 `DEEPSEEK_API_KEY`，不展开变量、不执行命令、不向进程环境导入其他变量。指定文件必须有效且不超过 16 KiB；缺项、重复或无效值会明确停止启动，不静默换用其他 Key。网页不会创建、修改或回显该文件；本地配置文件应保留在 Git 之外。使用源码启动时同样支持 `uv run --locked contextox start --env-file ./contextox.env`。
+## 数据与隐私
 
-新请求使用正式 API 名称 `deepseek-flash`，对应 [DeepSeek V4.1 Flash](https://api-docs.deepseek.com/zh-cn/updates/)。安装包默认显式启用 `demo-fast` 非思考模式；源码 CLI 的默认配置仍为生产 `high`。配置不会在运行中自动切换，历史回执保留当时记录的模型名称。
+工作区、资料、对话、草案、回答和执行记录保存在本机：
 
-## 数据留在哪里，什么时候发送
-
-工作区、资料、草案、回答与执行记录保存在本机：
-
-```text
+~~~text
 ~/Library/Application Support/ContextOx/
-```
+~~~
 
-升级运行包保留资料目录与旧版本。使用旧版资料目录的用户应继续显式传入 `--data-dir`；默认目录变更不会搬走旧数据。
+导入与预览在本机完成。你发送消息后，只有本轮明确选择的资料范围和必要上下文会交给 DeepSeek。表格先由本地 Python 生成有界画像，模型只收到受预算限制的样例、正文与引用。
 
-导入和查看资料发生在本机。你确认发送后，当前任务的必要上下文才发送给 DeepSeek：表格先由 Python 统计，模型获得有界画像与少量样例；选中的说明文档和引用片段按预算提供正文。画像解释是单独的可选发送动作，不会在导入示例时自动调用。
+单个来源上限为 **2 MiB**，表格准入上限为 **5,000 行**。服务只绑定 `127.0.0.1`，不提供远程访问、多用户协作、任意文件枚举、SQL 或 Shell 执行。请只导入和发送你有权使用的材料。
 
-当前单个来源上限为 **2 MiB**，表格准入上限为 **5,000 行**。服务只绑定 `127.0.0.1`，不提供远程访问、多用户协作或任意文件、SQL、Shell 执行。请只导入和发送你有权使用的材料。
+## 1.0.0 的边界
 
-## 当前能用到哪一步
-
-| 能力 | Demo 边界 |
+| 状态 | 说明 |
 | --- | --- |
-| 资料、表格画像和引用 | 来源版本可追溯；点击引用读取本地证据 |
-| 字段与关系草案 | 可以不完整，缺项与未知继续保留 |
-| 澄清与续接 | 回答、批准，再更新同一任务；普通聊天不能代替业务批准 |
-| 失败后继续 | 符合无领域写入条件的纯生成失败，可由用户明确重新生成；结果未知不自动重试 |
-| Markdown / JSON 导出 | 导出候选、当前版本、证据和澄清回答；不是正式 Contract |
-| 正式 Contract、批准 Context 的跨任务复用 | 后续开发 |
-| 大文件、Windows / Linux 运行包、其他模型供应商 | 当前不提供 |
+| 已包含 | 连续对话、精确资料范围、发送即推进、澄清卡片、批准续接、字段和关系候选、引用、导出、失败核对 |
+| 暂不包含 | 正式 Contract 发布、跨任务知识复用、云同步、多用户协作、其他模型供应商、Windows / Linux 运行包 |
+| 仍需单独验证 | 真实模型在更多案例中的稳定性、用户价值、正式人工验收 |
 
-Demo 每轮正常交互的目标是 60 秒内返回；单次 Provider 上限 70 秒，Run 上限 75 秒。完整返回但格式不合规时，Demo 至多纠正一次，两次请求共享原截止时间。少量成功案例不能证明 P95 或生产 high 的稳定性。分层测试、真实调用、代理浏览器检查和人工验收状态见 [实施与验收记录](docs/R1系统重规划与验收指标.md)。
+工程测试、合成 Provider、真实 Provider、浏览器检查和人工验收分别记录，低层检查不会自动提升为高层 PASS。当前证据见 [Agent 主导 Workbench 本地验收](docs/Agent主导Workbench本地验收.md)和 [R1 实施与验收记录](docs/R1系统重规划与验收指标.md)。
 
 ## 从源码运行
 
-开发需要 Python `3.14.7`、UV 和 Node.js `22.19.0` 以上版本。Python 与前端依赖均使用仓库锁定版本；安装不运行 npm 生命周期脚本。
+开发环境需要 Python `3.14.7`、UV 和 Node.js `22.19.0` 以上版本。依赖使用仓库锁定版本，npm 安装不运行生命周期脚本。
 
-```sh
+~~~sh
 git clone https://github.com/archerthegoat/contextox-agent.git
 cd contextox-agent
 uv sync --locked
 npm --prefix web ci --ignore-scripts
 npm --prefix web run build
 uv run --locked contextox start --agent-profile demo-fast --open-browser
-```
+~~~
 
-本地诊断使用 `uv run --locked contextox doctor`。`doctor` 意为环境检查：核对 Python、依赖、API 合同及网页资源，不读取凭据或调用模型，因此整体 `partial` 和 Provider `not_run` 可以是正常结果。
+本地诊断：
 
-开发检查：
+~~~sh
+uv run --locked contextox doctor
+~~~
 
-```sh
+`doctor` 只检查环境、依赖、API 合同和网页资源，不读取凭据或调用模型；总体 `partial`、Provider `not_run` 可以是正常结果。
+
+常用开发检查：
+
+~~~sh
 uv run --locked python -m compileall -q src tests
 uv run --locked python -m unittest discover -s tests
 npm --prefix web run check:api
 npm --prefix web run typecheck
 npm --prefix web test
 npm --prefix web run build
-```
+~~~
 
-新资料库使用 schema v6。已有资料需要迁移时，先停止旧服务、保留备份并按 [架构与迁移报告](docs/架构与迁移报告.md) 执行；不要通过恢复旧备份丢弃新记录。多个版本应使用各自匹配的静态资源目录。
+新资料库使用 schema v7。旧资料库迁移前请停止旧服务、保留备份，并按 [架构与迁移报告](docs/架构与迁移报告.md)执行。
 
-## 构建固定版本运行包
+<details>
+<summary>维护者：构建固定版本运行包</summary>
 
-维护者在 macOS arm64、干净的已提交源码上构建：
-
-```sh
+~~~sh
 uv sync --locked
 npm --prefix web ci --ignore-scripts
 uv run --locked python scripts/build_release.py --output-dir /absolute/path/outside-repository
-```
+~~~
 
-输出压缩包、`SHA256SUMS` 和 `install.sh`。包内 `BUILD.json` 记录源码 commit、内容指纹与依赖锁指纹；构建脚本校验官方 Python 归档并从锁定依赖组装，不复制开发虚拟环境或工作区。`--allow-dirty` 仅用于明确标记的开发验证，不能用作正式发布构建。脚本不会创建标签或上传 Release。
+构建必须来自干净、已提交的 macOS arm64 源码。脚本会输出压缩包、`SHA256SUMS` 和 `install.sh`，但不会创建标签或上传 GitHub Release。`--allow-dirty` 只用于明确标记的开发验证。
 
-发布前可通过 `sh scripts/install.sh --archive <压缩包路径> --sha256 <校验值> --install-dir <独立验证目录> --no-start` 验证离线安装。升级前停止服务；出现问题时保留资料目录与旧包，使用兼容的旧运行包或修正版本恢复，不降级数据库历史。
+</details>
 
-## 反馈与开发方向
+## 反馈与项目资料
 
-欢迎通过 [GitHub Issues](https://github.com/archerthegoat/contextox-agent/issues) 反馈：你想完成什么任务、在哪一步卡住、看到什么结果。请附运行包版本和脱敏的错误代码，不要上传 Key、私有资料库、客户数据或原始 Provider 内容。
+欢迎通过 [GitHub Issues](https://github.com/archerthegoat/contextox-agent/issues) 反馈你想完成什么、在哪一步卡住、看到什么结果。请附版本和脱敏错误信息；不要上传 Key、私有资料库、客户数据或原始 Provider 内容。
 
-数契的目标是把业务对象、证据、澄清、确认、版本和交付物组织成可直接使用的流程。与通用 Agent 配合 Skills、项目上下文和模板的效果差异，仍需要实际案例验证。
+- [1.0.0 Release 草案](docs/releases/v1.0.0.md)
+- [开发路径图](开发路径图.md)
+- [架构与迁移报告](docs/架构与迁移报告.md)
+- [Agent 主导 Workbench 本地验收](docs/Agent主导Workbench本地验收.md)
 
-- [开发路径图](开发路径图.md)：产品方向与后续开发顺序。
-- [架构与迁移报告](docs/架构与迁移报告.md)：已批准的状态、权限、失败和恢复语义。
-- [R1 实施与验收记录](docs/R1系统重规划与验收指标.md)：当前切片、历史试验和待验项。
-- [任务对话交付记录](docs/任务对话A-D交付与验收.md)：此前任务对话的实现与验证。
+建议的 GitHub About：
 
-完整品牌和独立官网在产品方向验证后再推进。当前统一沿用工作台 Logo，以这个 GitHub 仓库作为入口。
+> 本地优先的业务定义 Agent：把表格和说明里的字段、关系与业务口径整理清楚，Agent 找证据、提出问题，人来确认关键结论。
 
 ## 许可证
 
-项目采用 [MIT License](LICENSE)。运行包中保留 Python、后端依赖、React/Vite 及图标的第三方许可证与声明。公开示例为人工合成材料，不构成真实业务规则或批准。
+项目采用 [MIT License](LICENSE)。运行包保留 Python、后端依赖、React/Vite 和图标的第三方许可证与声明；公开示例全部为人工合成材料，不构成真实业务规则或批准。

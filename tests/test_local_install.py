@@ -38,7 +38,7 @@ class LocalInstallTests(unittest.TestCase):
             base = Path(directory)
             bundle, root = base / "bundle", base / "installed"
             bundle.mkdir()
-            metadata = {"version":"0.2.0", "commit":"a" * 40, "content_hash":"b" * 64}
+            metadata = {"version":"1.0.0", "commit":"a" * 40, "content_hash":"b" * 64}
             (bundle / "BUILD.json").write_text(json.dumps(metadata))
             (bundle / "application.txt").write_text("synthetic application")
             manifest = {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in bundle.iterdir()}

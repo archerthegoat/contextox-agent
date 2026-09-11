@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install a pinned ContextOx release; no Python, Node, UV, sudo, or shell-profile edits.
 set -eu
-version=0.2.0
+version=1.0.0
 release_url="https://github.com/archerthegoat/contextox-agent/releases/download/v${version}"
 archive_name="contextox-${version}-macos-arm64.tar.gz"
 archive_path=
