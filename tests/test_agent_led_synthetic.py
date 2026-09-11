@@ -334,6 +334,7 @@ class AgentLedSyntheticTests(unittest.TestCase):
                 ).items
                 if item.review_state == "approved"
             ]
+            approved.sort(key=lambda item: (item.answer.origin_run_id, item.answer.clarification_id))
             self.assertEqual(len(approved), 2)
             state = self.store.get_mission_snapshot(self.workspace_id, self.mission.mission_id)
             final_request = TaskMessageSendRequest(
