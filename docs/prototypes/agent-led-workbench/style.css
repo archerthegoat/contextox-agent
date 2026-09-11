@@ -157,6 +157,7 @@ code { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; co
 .message .citation { display: inline; min-height: auto; border: 0; color: #155fae; background: #edf5ff; border-radius: 4px; padding: 3px 6px; font-size: 12px; }
 
 .next-actions { border: 1px solid #d8e4f1; background: #f8fbff; border-radius: 10px; padding: 13px; margin-top: 15px; }
+.message:not(:last-child) .next-actions { display: none; }
 .next-actions-copy small { display: block; font-size: 11px; color: #4773a5; margin-bottom: 4px; }
 .next-actions-copy strong { display: block; font-size: 13px; line-height: 1.55; }
 .next-action-buttons, .card-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 12px; }

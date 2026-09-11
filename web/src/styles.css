@@ -2548,5 +2548,6 @@ a:focus-visible {
 .conversation-answer-cards input:not([type=checkbox]), .conversation-answer-cards textarea, .conversation-answer-cards select { width: 100%; min-width: 0; font-size: 12px; padding: 8px; }
 .conversation-answer-cards textarea { min-height: 68px; }
 .conversation-answer-cards pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; }
+.conversation-answer-cards .answer-confirm-reason { margin: 2px 0 8px; color: #6f8195; font-size: 11px; }
 .handoff-stages { margin-top: 15px; border-top: 1px solid #dfe7f1; padding-top: 10px; }
 .agent-led-shell .continuous-conversation .conversation-composer { max-height: 50%; }

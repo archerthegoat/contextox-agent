@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { conversationBelongsTo, conversationUsesTaskHistory, conversationReviewMatches, conversationPreviewTarget, conversationSendGuidance, conversationNextStep, discussionStatusLabel, recentConversationHistory, mergeConversationPage, selectedConversationHistory, taskAnalysisLabel } from "./ConversationDialogue";
-import { reviewedAnswer, receiptMatchesReviewedAnswers, answersCanCollapse, suggestedAnswerItems, mergeReviewedSave } from "./ConversationAnswers";
+import { reviewedAnswer, receiptMatchesReviewedAnswers, answersCanCollapse, confirmationAvailability, suggestedAnswerItems, mergeReviewedSave } from "./ConversationAnswers";
 import { answerOmissions } from "./ClarificationAnswers";
 import type { MessageReference } from "./TaskDialogue";
 import type { components } from "./generated/api";
@@ -47,6 +47,16 @@ describe("continuous conversation boundaries",()=>{
     expect(conversationNextStep(true,2,false,2,true)).toBe("answer");
     expect(conversationNextStep(true,2,false,0,true)).toBe("review");
     expect(conversationNextStep(true,2,true,2,true)).toBe("active");
+  });
+  it("explains why confirmation is unavailable instead of showing an unexplained disabled button",()=>{
+    const ready={busy:false,active:false,pending:false,alreadyConfirmed:false,answersComplete:true,hasDraft:true,selectedMatches:true};
+    expect(confirmationAvailability(ready)).toEqual({disabled:false,label:"确认并继续",reason:null});
+    expect(confirmationAvailability({...ready,active:true})).toMatchObject({disabled:true,label:"分析结束后可确认"});
+    expect(confirmationAvailability({...ready,hasDraft:false}).reason).toContain("候选草案");
+    expect(confirmationAvailability({...ready,selectedMatches:false}).label).toBe("先核对资料范围");
+    expect(confirmationAvailability({...ready,alreadyConfirmed:true}).label).toBe("本版回答已确认");
+    expect(confirmationAvailability({...ready,answersComplete:false}).label).toBe("先完成回答");
+    expect(confirmationAvailability({...ready,pending:true}).reason).toContain("不会重复提交");
   });
   it("uses discussion history for a newly saved or stale answer even while mission remains blocked",()=>{
     const state={selectedMission:{mission_id:"mission",status:"blocked"},missionSnapshot:null,latestDraft:{status:"partial"}} as unknown as import("./Path2Workbench").Path2WorkbenchState;

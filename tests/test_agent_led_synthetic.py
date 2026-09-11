@@ -141,6 +141,35 @@ class AgentLedSyntheticTests(unittest.TestCase):
         self.assertEqual(suggestion.basis, "本条合成验收回答")
         self.assertEqual(suggestion.targets[0].property, "time_basis")
 
+    def test_pretask_discussion_guides_the_next_step_without_repeating_the_same_reply(self):
+        provider = SyntheticProvider()
+
+        def reply(content):
+            context = {
+                "input": {
+                    "message_id": str(uuid4()),
+                    "sha256": "a" * 64,
+                    "content": content,
+                },
+                "source_refs": [{"revision_id": "orders"}, {"revision_id": "refunds"}],
+                "mission": None,
+            }
+            completion = provider.complete(
+                [{"role": "system", "content": ""}, {"role": "user", "content": json.dumps(context)}],
+                cancel_event=_ImmediateEvent(),
+            )
+            return DiscussionOutput.model_validate_json(completion.content)
+
+        overview = reply("请先帮我理解本轮选择的资料，说明可以怎样关联。")
+        vague_goal = reply("我想规范一下业务口径")
+        help_reply = reply("那我要怎么做")
+
+        self.assertIn("已读取本轮 2 份资料", overview.public_reply)
+        self.assertIn("region", overview.public_reply)
+        self.assertIn("请再明确要整理的结果", vague_goal.public_reply)
+        self.assertIn("不需要创建 Mission", help_reply.public_reply)
+        self.assertEqual(len({overview.public_reply, vague_goal.public_reply, help_reply.public_reply}), 3)
+
     def test_approved_continuations_create_v2_then_review_ready_v3_and_survive_restart(self):
         with self.subTest(stage="approved continuation"):
             first = self.store.start_run(

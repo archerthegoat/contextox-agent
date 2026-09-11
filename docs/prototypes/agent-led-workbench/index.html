@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>数契 Demo 1.0 · 对话驱动工作台原型</title>
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=1.0.0-confirm-flow">
 </head>
 <body>
   <header class="prototype">
@@ -64,6 +64,6 @@
   </div>
   <dialog id="settings"><form method="dialog"><div class="dialog-heading"><h2>连接模型</h2><button aria-label="关闭连接设置">关闭</button></div><p>连接后可以回到这条对话继续，刚才的消息不会丢失。</p><div class="notice">合成设置演示：不接收真实密钥，不连接任何服务。</div><label class="field">连接状态<select id="mock-connected"><option value="yes">模拟：已配置并可用</option><option value="no">模拟：尚未配置</option></select></label><div class="dialog-actions"><button id="save-settings" type="button">仅保存设置</button><button id="save-send" class="primary" type="button">保存并发送这条消息</button></div></form></dialog>
   <div id="toast" role="status" hidden></div>
-  <script src="./prototype.js"></script>
+  <script src="./prototype.js?v=1.0.0-confirm-flow"></script>
 </body>
 </html>

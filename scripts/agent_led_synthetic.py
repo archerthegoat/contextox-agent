@@ -144,6 +144,21 @@ class SyntheticProvider:
                     "message_refs": [{"message_id": item["message_id"], "sha256": item["sha256"]}],
                 },
             )
+        elif any(phrase in content for phrase in ("怎么做", "如何开始", "下一步", "怎么开始")):
+            output["public_reply"] = (
+                "【合成验收】下一步只要说出一个具体结果，不需要创建 Mission、Provider 或另点 Run。"
+                "例如：按地区统计订单金额，并把退款和缺失金额的处理规则写清楚。"
+            )
+        elif any(phrase in content for phrase in ("规范一下", "整理业务口径", "规范业务口径")):
+            output["public_reply"] = (
+                "【合成验收】可以。请再明确要整理的结果；当前案例可以直接选择“按地区统计订单金额”，"
+                "之后我会把退款和缺失金额规则整理成确认卡片。"
+            )
+        elif any(phrase in content for phrase in ("理解本轮", "看看", "了解", "资料", "关联")):
+            output["public_reply"] = (
+                f"【合成验收】已读取本轮 {len(context['source_refs'])} 份资料：可以看到地区、订单金额和退款金额，"
+                "两张表可先按 region 精确关联。退款、缺失金额和时间范围仍需要业务确认。"
+            )
         return ProviderCompletion(
             "synthetic",
             json.dumps(output, ensure_ascii=False),

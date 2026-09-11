@@ -44,6 +44,16 @@ export function answersCanCollapse(cases:Case[],edits:Record<string,Answer[]>,pe
     return item.review_state==='approved'&&answer&&approval&&approval.answer_version===answer.version&&approval.answer_sha256===answer.sha256&&JSON.stringify(edits[caseKey(item)])===JSON.stringify(answer.items);
   });
 }
+export function confirmationAvailability({busy,active,pending,alreadyConfirmed,answersComplete,hasDraft,selectedMatches}:{busy:boolean;active:boolean;pending:boolean;alreadyConfirmed:boolean;answersComplete:boolean;hasDraft:boolean;selectedMatches:boolean}) {
+  if(pending)return {disabled:true,label:"正在核对确认结果…",reason:"上一次确认结果仍在核对，本轮不会重复提交。"};
+  if(busy)return {disabled:true,label:"正在处理…",reason:"正在保存或核对回答，请稍候。"};
+  if(active)return {disabled:true,label:"分析结束后可确认",reason:"当前分析仍在运行，结束后会自动开放确认。"};
+  if(!hasDraft)return {disabled:true,label:"尚不能确认",reason:"还没有形成可绑定的候选草案，请先等待本轮分析结果。"};
+  if(!selectedMatches)return {disabled:true,label:"先核对资料范围",reason:"本轮资料范围与任务不一致，确认前请先通过对话提交并核对新范围。"};
+  if(alreadyConfirmed)return {disabled:true,label:"本版回答已确认",reason:"这版回答已经确认，无需重复提交；修改内容后会形成需要重新确认的新版本。"};
+  if(!answersComplete)return {disabled:true,label:"先完成回答",reason:"请先回答每个问题并填写回答来源与依据；暂时不知道时，请补齐解决人、所需证据和下一步。"};
+  return {disabled:false,label:"确认并继续",reason:null};
+}
 export function ConversationAnswers({state,conversation,suggestions,onUpdated,onReviewState}: {state:Path2WorkbenchState;conversation:WorkspaceConversation;suggestions:Suggestion[];onUpdated:()=>Promise<void>;onReviewState?:(value:ConversationReviewState)=>void}) {
   const ws=conversation.workspace_id,mid=conversation.mission_id;
   const [page,setPage]=useState<Page|null>(null);
@@ -132,13 +142,15 @@ export function ConversationAnswers({state,conversation,suggestions,onUpdated,on
   const selectedMatches=sourceIdentityListEquals(state.selectedSourceRefs,conversation.source_refs ?? []);
   const currentReceipt=receiptMatchesReviewedAnswers(receipt,cases)?receipt:null;
   const collapsed=answersCanCollapse(cases,edits,Boolean(pending)||busy,Boolean(error),currentReceipt);
+  const answersComplete=cases.every(item=>answerOmissions(edits[caseKey(item)]??[],item.request.questions.length).length===0);
+  const confirmation=confirmationAvailability({busy,active,pending:Boolean(pending),alreadyConfirmed:Boolean(currentReceipt)&&!hasChanges,answersComplete,hasDraft:Boolean(state.latestDraft),selectedMatches});
   return <details className="conversation-answer-cards" aria-label="核对业务回答" open={!collapsed}><summary>{collapsed?"业务回答已确认 · 展开查看":"需要你确认的业务口径"}</summary><p>Agent 已把对话整理成卡片。请检查回答、来源和仍未知的事项；只有点击“确认并继续”才会采用。</p>
     {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
     {pending&&<div role="status"><p>操作结果待核对，不自动重新发送。</p><button disabled={busy} onClick={()=>void reconcile()}>核对交接结果</button></div>}
     <div className="answer-card-tools"><button disabled={busy||active||Boolean(pending)} onClick={()=>{if(!dirty.current||window.confirm("重新读取会丢弃卡片中尚未保存的修改，继续？"))void load().catch(failure);}}>重新读取最新内容</button>{suggestions.length>0&&dirty.current&&<button disabled={busy||active||Boolean(pending)} onClick={()=>{if(!dirty.current||window.confirm('使用新的整理建议替换尚未保存的卡片输入？'))void load(true).catch(failure);}}>采用新的整理建议</button>}</div>
     {cases.map(item=><details className="conversation-answer-group" key={`${caseKey(item)}/${item.review_state}`} open={item.review_state!=="approved" ? true : undefined}><summary>{item.request.questions.length} 个问题 · {item.latest_answer?'回答已保存':'等待填写'}</summary><AnswerForm key={`${caseKey(item)}/${revision}`} request={item.request} latest={item.latest_answer} initialItems={initials[caseKey(item)]} draft={state.latestDraft} disabled={busy||active||Boolean(pending)} onDirty={value=>{if(value){dirty.current=true;receiptGeneration.current++;setReceipt(null);setNotice("回答内容已修改 · 保存后需要重新确认");}}} onItemsChange={items=>{editGeneration.current++;setEdits(old=>({...old,[caseKey(item)]:items}));}} onSave={items=>save(item,items)} saveLabel="仅保存，稍后继续"/>{item.latest_answer&&<details><summary>查看已经保存的回答</summary><AnswerReadback answer={item.latest_answer} request={item.request}/></details>}<details className="technical-details"><summary>问题组技术详情</summary><p>原始问题版本 {item.request.draft_version} · 回答版本 {item.latest_answer?.version ?? "尚未保存"}</p></details></details>)}
     {!selectedMatches&&<p role="alert">会话资料范围已修改。请先通过对话明确提交并核对新范围，再确认回答。</p>}
-    {cases.length>0&&<button className="path2-primary-button" disabled={busy||active||Boolean(pending)||(Boolean(currentReceipt)&&!hasChanges)||!state.latestDraft||!selectedMatches} onClick={()=>void handoff()}>确认并继续</button>}
+    {cases.length>0&&<><button className="path2-primary-button" disabled={confirmation.disabled} onClick={()=>void handoff()}>{confirmation.label}</button>{confirmation.reason&&<p className="answer-confirm-reason" role="status">{confirmation.reason}</p>}</>}
     {receipt&&!currentReceipt&&<p>此前回答已经交接；历史回执不代表当前修改已经确认。</p>}
     {currentReceipt&&<div className="handoff-stages" role="status"><p><strong>业务回答</strong>{currentReceipt.answers_approved?'已确认':'等待核对'}</p><p><strong>后续分析</strong>{currentReceipt.analysis_started?'已经开始':currentReceipt.analysis_state==='unknown'?'结果未知':currentReceipt.analysis_state==='claimed'?'正在核对启动结果':'尚未启动'}</p>{currentReceipt.error_code&&<details className="technical-details"><summary>技术详情</summary><p>{currentReceipt.error_code}</p></details>}{['ready','failed'].includes(currentReceipt.analysis_state)&&!currentReceipt.run_id&&<button disabled={busy} onClick={()=>void reconcile(true)}>核对并重试后续分析</button>}{['claimed','unknown'].includes(currentReceipt.analysis_state)&&<button disabled={busy} onClick={()=>void reconcile()}>核对启动结果</button>}</div>}
   </details>;

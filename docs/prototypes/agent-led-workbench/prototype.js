@@ -50,7 +50,7 @@ function welcome() {
 }
 
 function discussion() {
-  return `<p>这两张表可以通过 <button class="citation" data-view="relations">customer_id</button> 关联：一张记录订单，一张补充客户所在地区。</p>
+  return `<p>这 3 份资料分别是订单表、客户表和口径说明。两张表可以通过 <button class="citation" data-view="relations">customer_id</button> 关联：订单表记录交易，客户表补充所在地区。</p>
     <p>订单里有已支付、已退款和待支付三种样例。金额单位是人民币元，但税费、折扣口径尚未确定。<button class="citation" data-view="notes">查看资料说明</button></p>
     ${nextActions('选择你接下来想完成的事', [
       `<button class="primary" data-prompt="${initialRequest}">按地区整理订单金额</button>`,
@@ -77,8 +77,8 @@ function answerCard() {
     <label class="field">日期如何归属<input id="answer-time" value="${escapeHtml(state.answers.time)}"></label>
     <div class="notice">仍未知：金额是否包含税费及折扣。这里会继续保留未知，不替你决定。</div>
     <details class="technical-details"><summary>查看回答来源与版本</summary><p>这份回答来自本次对话，目前是第 ${state.version} 版。修改任何内容都会形成需要重新确认的新版本。</p><label class="field">回答依据<textarea id="answer-basis" rows="2">${escapeHtml(state.answers.basis)}</textarea></label></details>
-    <div class="card-actions"><button class="primary" data-action="confirm">确认并继续</button><button data-action="save-answer">仅保存，稍后继续</button></div>
-    <div class="footnote" id="save-note">这次自然语言回答尚未采用。</div>
+    <div class="card-actions"><button class="primary" data-action="confirm">确认这 3 条并继续</button><button data-action="save-answer">仅保存，稍后继续</button></div>
+    <div class="footnote" id="save-note">3 条回答已经填写；点击确认后才会采用并继续分析。</div>
   </div>`;
 }
 
@@ -179,6 +179,12 @@ function render() {
     ? {...message, body: '<p>请核对或修改这份业务回答。</p>' + answerCard()}
     : message);
   $('#messages').innerHTML = state.messages.map(message => `<div class="message ${message.role}">${message.role === 'agent' ? '<div class="sender">数契</div>' : ''}${message.body}</div>`).join('');
+  const renderedMessages = $$('#messages .message');
+  renderedMessages.slice(0, -1).forEach(message => message.querySelectorAll('.next-actions').forEach(actions => {
+    actions.hidden = true;
+    actions.setAttribute('aria-hidden', 'true');
+    actions.querySelectorAll('button').forEach(button => { button.disabled = true; button.tabIndex = -1; });
+  }));
   const currentStep = stage();
   $('#progress').innerHTML = labels.map((label, index) => `<li class="${index === currentStep ? 'current' : index < currentStep ? 'past' : ''}"${index === currentStep ? ' aria-current="step"' : ''}><span class="step-index">${index < currentStep ? '✓' : index + 1}</span>${label}</li>`).join('');
   const noTask = ['entry', 'discussion', 'connect'].includes(state.scene);
@@ -284,6 +290,10 @@ function sendMessage() {
     } else {
       agent(`<p>收到。这个固定原型不会猜测你没有说清的内容。你可以使用公开示例回答体验完整核对流程。</p>${nextActions('继续体验回答与确认', [`<button class="primary" data-prompt="${initialAnswer}">使用完整示例回答</button>`])}`);
     }
+  } else if (state.scene === 'discussion' && /怎么做|如何开始|下一步/.test(text)) {
+    agent(`<p>下一步只要选择一个具体结果，不需要创建任务或另点运行。你可以直接按下面的示例开始。</p>${nextActions('选择这次要整理的业务结果', [`<button class="primary" data-prompt="${initialRequest}">按地区整理订单金额</button>`, '<button data-prompt="先解释一下两张表的关系。">继续解释表关系</button>'])}`);
+  } else if (state.scene === 'discussion' && /看看|了解|关系|字段|资料|表/.test(text)) {
+    agent(`<p>这 3 份资料已经说明过：订单表记录交易，客户表补充地区，说明文件记录已知口径。现在还需要你选一个想得到的结果。</p>${nextActions('继续选择业务目标', [`<button class="primary" data-prompt="${initialRequest}">按地区整理订单金额</button>`, '<button data-prompt="先解释一下两张表的关系。">继续解释表关系</button>'])}`);
   } else if (/按地区|统计|整理订单金额/.test(text)) {
     startAnalysis();
     return;
@@ -292,7 +302,7 @@ function sendMessage() {
     followView('relations');
     agent(discussion());
   } else {
-    agent(`<p>这条消息已留在当前对话。固定原型只覆盖公开订单示例，不调用真实 AI。</p>${nextActions('选择一个可体验的下一步', ['<button class="primary" data-action="understand-sources">先了解资料</button>', `<button data-prompt="${initialRequest}">整理地区订单金额</button>`])}`);
+    agent(`<p>这条消息已留在当前对话。为了继续这个固定示例，请选择一个具体结果；原型不会把“规范一下”之类的模糊目标直接当成业务任务。</p>${nextActions('选择一个可体验的下一步', [`<button class="primary" data-prompt="${initialRequest}">按地区整理订单金额</button>`, '<button data-action="understand-sources">重新说明资料</button>'])}`);
   }
   render();
 }
