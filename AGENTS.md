@@ -5,9 +5,13 @@
 - `开发路径图.md` is the human-controlled product and development authority.
 - `docs/架构与迁移报告.md` is the approved architecture, migration,
   failure-state, and acceptance authority.
-- Before non-trivial work, restate the objective, scope, planned changes,
-  deliverables, assumptions, risks, and external effects, then wait for explicit
-  human confirmation.
+- Locate the applicable approved phase and contract in that report and its linked
+  implementation contracts. Later explicitly approved amendments govern their
+  scope; N1-specific rules below apply only to N1. Historical checkpoint status
+  is not current execution evidence.
+- For non-trivial work, briefly state the objective, scope, deliverables, and
+  material risks. Proceed within the user's existing execution authorization;
+  ask only for missing authority or an unresolved material decision.
 - Never create, edit, move, replace, or delete `开发路径图.md` without first
   showing the exact content or diff and receiving approval for that exact
   change. Do not edit `docs/架构与迁移报告.md` unless its exact change is also
@@ -15,9 +19,9 @@
 - Architecture discovery, trade-off selection, interfaces, data contracts, and
   hard-to-reverse decisions remain interactive with the human. Do not freeze
   them from implementation inference.
-- Approval covers only the aligned scope. Stop and reconfirm when scope,
-  assumptions, risks, deliverables, architecture, or external effects change
-  materially.
+- Approval remains valid within the aligned scope and conditions. Reconfirm when
+  scope, assumptions, risks, deliverables, architecture, or external effects
+  change materially.
 
 ## Product and runtime boundaries
 
@@ -27,9 +31,9 @@
 - Bind the local server to `127.0.0.1` only. Do not add cloud hosting, SSO,
   multi-user collaboration, remote sync, deployment, or release behavior.
 - ContextOx owns Workspace Context, Mission state, approvals, permissions,
-  evidence, persistence, audit, and completion semantics. The first Agent Loop
-  is a thin Python implementation with one configured provider boundary,
-  serial domain tools, explicit budgets, cancellation, and structured events.
+  evidence, persistence, audit, and completion semantics. Use the provider
+  boundary and Agent control flow in the applicable approved contract, with
+  explicit budgets, cancellation, and structured events.
 - Do not add a provider SDK, real model call, customer data, arbitrary file or
   SQL execution, shell/code execution, general `read/write/edit` tools, MCP,
   vector search, knowledge graph, memory service, queue, workflow engine, ORM,
@@ -86,12 +90,17 @@
   public-seam checks that can falsify the current checkpoint, including
   boundaries, state transitions, crashes, partial failure, and downstream
   effects where relevant.
+- Intermediate commits use the necessary checks for their changed behavior.
+  At integration or delivery, run applicable combined checks and required project
+  gates. Reuse still-applicable evidence; expand or repeat checks only for new
+  changes, failures, or concrete unresolved risks.
 - Keep static checks, automated tests, builds, runtime readback, external
   effects, real-model runs, browser inspection, human acceptance, and user
   value evidence as separate lanes. Tests and builds do not prove product
   behavior; browser inspection does not prove real-model behavior.
-- N1 must verify, at minimum: locked UV sync; Python compile and nonzero
-  standard-library tests; `contextox doctor`; OpenAPI-to-TypeScript generation
+- N1 initialization delivery must verify, at minimum: locked UV sync; Python
+  compile and nonzero standard-library tests; `contextox doctor`;
+  OpenAPI-to-TypeScript generation
   and drift; npm clean install with `--ignore-scripts`; TypeScript typecheck;
   nonzero frontend tests; Vite build; an outside-repository temporary-data
   runtime smoke for health, OpenAPI, SSE, and root assets; diff checks; a
@@ -116,18 +125,24 @@
   rewrite shared history, or delete branches. Stage explicit owned paths only.
 - Code and higher-risk changes use a short-lived `codex/<short-purpose>` branch.
   Keep checkpoints small, coherent, independently verifiable, and reversible.
-- The approved N1 lifecycle is: start from verified `main`; create the change
-  branch; commit rules, scaffold, legacy replacement, and README as separate
+- For N1 initialization only, the approved lifecycle is: start from verified
+  `main`; create the change branch; commit rules, scaffold, legacy replacement,
+  and README as separate
   checkpoints; push the branch; reverify latest remote `main`; merge safely to
   local `main`; push `main`; and read back that delivered commits are ancestors
   of local and remote `main`.
-- Commit, branch push, merge, and main push require explicit scope approval.
-  They do not authorize release, deployment, tagging, destructive migration,
-  GitHub metadata edits, or human acceptance unless those actions are separately
+- Local checkpoint commits for approved changes follow the global slice cadence
+  and need no separate approval. Branch push, merge, and main push require scope
+  approval, which remains valid while its scope and conditions are unchanged.
+  These actions do not authorize release, deployment, tagging, destructive
+  migration, GitHub metadata edits, or human acceptance unless separately
   included in the approved plan.
 - Before merging, verify source and target commits, required checks, review
   findings, migrations, rollback, conflicts, latest remote state, and unrelated
-  changes. Stop and reconfirm on unexpected divergence, conflicts, or failed
-  checks.
-- At every checkpoint report exact files, checks, runtime evidence, unresolved
-  risks, rollback boundary, branch/commit/remote state, and acceptance status.
+  changes. Resolve mechanical conflicts within approved behavior and rerun affected
+  checks; failed required checks keep the merge pending. Reconfirm when resolution
+  changes intended behavior, scope, target, or history.
+- Intermediate checkpoints report the completed slice, relevant checks, commit,
+  and new blockers. At closeout, report exact files, runtime evidence, unresolved
+  risks, rollback boundary, branch/remote state, and acceptance status, scaled to
+  the task.
