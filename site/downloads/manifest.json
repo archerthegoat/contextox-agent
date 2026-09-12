@@ -1,0 +1,76 @@
+{
+  "version": "Demo 1.0.0",
+  "generated_by": "scripts/build_showcase_assets.py",
+  "files": [
+    {
+      "path": "site/downloads/contextox-social-1200x630.png",
+      "bytes": 49629,
+      "sha256": "5cf0a802cf4ca1ecdbe31d6c3421b36510117dfdc45edf2f48004c3948dcfe4d"
+    },
+    {
+      "path": "site/downloads/contextox-stage-1920x1080.png",
+      "bytes": 91399,
+      "sha256": "bc7a5627ae6f925ef9ffda3597096aa65c5aeb7ee2bb8a6364737092b10d66c0"
+    },
+    {
+      "path": "site/downloads/contextox-portrait-1080x1440.png",
+      "bytes": 83289,
+      "sha256": "a877b4436d540bc4558a15c664133966a0362b6e9625956faaef9b234c3ddaed"
+    },
+    {
+      "path": "site/downloads/contextox-square-1080x1080.png",
+      "bytes": 79953,
+      "sha256": "71f9e06e743162cb52d2232444a767e1d5465b4c7160378d249ffb41b36a460a"
+    },
+    {
+      "path": "site/downloads/contextox-mark-32.png",
+      "bytes": 1301,
+      "sha256": "22ac51361568137025c9107ff91ea9b488381acc3f427a99a886d9330f51b6b4"
+    },
+    {
+      "path": "site/downloads/contextox-mark-64.png",
+      "bytes": 3197,
+      "sha256": "7c16db1280725e8362a7c97dc11888b8764ca0ce0f7532fd00f61403664a8797"
+    },
+    {
+      "path": "site/downloads/contextox-mark-128.png",
+      "bytes": 8065,
+      "sha256": "5db623bd054f30966f60937eb0a846eca14bce7aa89464c939410d3fd7eb0ac4"
+    },
+    {
+      "path": "site/downloads/contextox-mark-256.png",
+      "bytes": 19717,
+      "sha256": "a718f0754bcd1c8401aee7ba1398026bee008b01fe7b5a89e9001c6a09f27bfe"
+    },
+    {
+      "path": "site/downloads/contextox-mark-512.png",
+      "bytes": 63564,
+      "sha256": "d97f739ff60bfc5a01fa7ece07ab57ba4d561a78857ef5899217802ce12ec7f9"
+    },
+    {
+      "path": "site/downloads/contextox-wordmark.png",
+      "bytes": 29382,
+      "sha256": "e1801c960b9a1adb93ae089277939828ab62855524b00fb621bbfbdc2ec03261"
+    },
+    {
+      "path": "output/pdf/contextox-demo-1.0.0-presentation.pdf",
+      "bytes": 225742,
+      "sha256": "4dae66a45d99b2570f41648e7fa02b2f92dced0b3611177edd0789a07899047d"
+    },
+    {
+      "path": "output/pdf/contextox-demo-1.0.0-one-pager.pdf",
+      "bytes": 198826,
+      "sha256": "cdc09fb3f531f59c207437027a40b2f7cf8fd368201253efa170090b420bccb0"
+    },
+    {
+      "path": "site/downloads/contextox-brand-kit.zip",
+      "bytes": 126266,
+      "sha256": "73629a1f9626f23faed11f38a7d31be97df17afd709f8ced83f86a3cd4fd7a5d"
+    },
+    {
+      "path": "output/video/contextox-demo-1.0.0-silent-launch.mp4",
+      "bytes": 6487264,
+      "sha256": "8980f2f8d1fdb73c23000606e46e34ad09de190793ea08c1e040f9d252660694"
+    }
+  ]
+}

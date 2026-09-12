@@ -1,0 +1,23 @@
+{
+  "name": "contextox-product-film",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "studio": "remotion studio src/index.ts --no-open",
+    "typecheck": "tsc --noEmit",
+    "still": "remotion still src/index.ts ContextOxSilentLaunch",
+    "render": "remotion render src/index.ts ContextOxSilentLaunch ../output/video/contextox-demo-1.0.0-silent-launch.mp4 --codec=h264 --crf=18 --muted"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.506",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "remotion": "4.0.506"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3"
+  }
+}

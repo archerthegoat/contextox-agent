@@ -1,0 +1,40 @@
+assets:
+  - asset_id: contextox_mark
+    type: image/png
+    local_path_or_approved_url: public/contextox-mark.png
+    source: repository-owned product mark
+    source_version_or_date: d3f14ac62aebba699f1f5d8b1b7731b6cc8c98c269a6252e86bf2b74f0bdde3e
+    license: project-owned
+    license_evidence: docs/brand/品牌与展示规范.md
+    intended_use: opening and closing brand mark
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    dimensions: 256x256
+    status: ready
+  - asset_id: demo_preview
+    type: image/jpeg
+    local_path_or_approved_url: public/demo-preview.jpg
+    source: repository-owned public synthetic demo
+    source_version_or_date: a5bd19e83d25620d7b93c534cde1d70b7412dee3160d1511bcb23bdeb3377f59
+    license: project-owned synthetic asset
+    license_evidence: docs/brand/品牌与展示规范.md
+    intended_use: evidence scene
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_required
+    dimensions: 1280x720
+    status: ready
+  - asset_id: demo_real
+    type: image/jpeg
+    local_path_or_approved_url: public/demo-real.jpg
+    source: repository-owned public synthetic demo
+    source_version_or_date: 44312abb99938f488eaab1499121686cd5f848a84d481333533c9ecf3c90abe6
+    license: project-owned synthetic asset
+    license_evidence: docs/brand/品牌与展示规范.md
+    intended_use: definition-change scene
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_required
+    dimensions: 1280x720
+    status: ready

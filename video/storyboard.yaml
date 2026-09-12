@@ -1,0 +1,11 @@
+composition_id: ContextOxSilentLaunch
+duration_frames: 1350
+fps: 30
+scenes:
+  - {scene_id: hook, from: 0, duration: 150}
+  - {scene_id: problem, from: 150, duration: 180}
+  - {scene_id: method, from: 330, duration: 210}
+  - {scene_id: evidence, from: 540, duration: 270}
+  - {scene_id: definition_change, from: 810, duration: 240}
+  - {scene_id: boundary, from: 1050, duration: 180}
+  - {scene_id: cta, from: 1230, duration: 120}

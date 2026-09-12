@@ -1,0 +1,18 @@
+spec_version: 1
+production_id: contextox-demo-1.0.0-silent-film
+mode: silent_product_launch
+voice_origin: none
+main_voice_asset: null
+music_asset: null
+captions: not_applicable
+cta: github.com/archerthegoat/contextox-agent
+claims:
+  required:
+    - Demo 1.0.0
+    - 公开合成演示
+    - 候选业务定义
+  forbidden:
+    - 完全离线
+    - 生产级
+    - 客户案例
+    - 未验证提效数字

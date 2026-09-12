@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="数契 ContextOx：把表格、说明和人的判断，整理成有证据、可确认的业务定义。">
+  <meta property="og:title" content="数契 ContextOx · 让每一张表都说清自己代表什么">
+  <meta property="og:description" content="本地优先的业务定义 Agent。查看 Demo 1.0.0 的公开合成演示。">
+  <meta property="og:image" content="downloads/contextox-social-1200x630.png">
+  <title>数契 ContextOx · 业务定义 Agent</title>
+  <link rel="icon" href="assets/favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="#top" aria-label="数契首页">
+        <img src="assets/contextox-mark.svg" alt="">
+        <span>数契<small>ContextOx</small></span>
+      </a>
+      <nav class="site-nav" aria-label="主要导航">
+        <a href="#problem">问题</a>
+        <a href="#method">怎么工作</a>
+        <a href="#demo">演示</a>
+        <a href="#downloads">物料</a>
+        <a href="presentation.html">动态介绍</a>
+        <a class="button button--primary" href="https://github.com/archerthegoat/contextox-agent">查看 GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero__inner">
+        <div>
+          <p class="eyebrow">Demo 1.0.0 · 本地优先</p>
+          <h1>让每一张表，<br>都说清自己代表什么。</h1>
+          <p class="hero__lead">数契把表格、说明和人的判断，整理成有证据、可确认的业务定义。</p>
+          <div class="hero__actions">
+            <a class="button button--primary" href="#demo">观看完整流程</a>
+            <a class="button" href="presentation.html">打开动态介绍</a>
+          </div>
+          <p class="version-line">源码 Demo · 公开合成资料 · 当前成果为可核对的候选定义</p>
+        </div>
+        <figure class="product-frame">
+          <img src="assets/demo-real.jpg" width="1280" height="720" alt="数契 Workbench 显示按地区统计订单金额的候选字段、关系和 Agent 对话">
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="problem">
+      <div class="section-heading">
+        <div class="section-index">01 / 问题</div>
+        <div>
+          <h2>困难往往不在计算，而在定义。</h2>
+          <p>同一个业务目标，资料里可能只有字段名；真正决定结果的口径，留在说明文档、会议和人的经验里。</p>
+        </div>
+      </div>
+      <div class="problem-ledger">
+        <div class="problem-ledger__question">
+          <strong>“按地区统计订单金额。”</strong>
+          <p>一句看似清楚的需求，至少还缺三项会改变结果的决定。</p>
+        </div>
+        <ol class="problem-list">
+          <li><code>Q-01</code><span>退款金额是扣除、单列，还是仍算入订单额？</span></li>
+          <li><code>Q-02</code><span>订单金额缺失时，是排除、归零，还是标记异常？</span></li>
+          <li><code>Q-03</code><span>统计按下单、支付还是退款时间归属？</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section section--rule" id="method">
+      <div class="section-heading">
+        <div class="section-index">02 / 方法</div>
+        <div>
+          <h2>Agent 找证据，人确认业务事实。</h2>
+          <p>数契把一次对话组织成四个可回读的阶段，让资料、候选结论、人的回答和未知事项各自保持身份。</p>
+        </div>
+      </div>
+      <div class="flow">
+        <article><span class="flow__number">01</span><h3>选择资料</h3><p>本轮明确使用哪些资料及其精确版本。</p></article>
+        <article><span class="flow__number">02</span><h3>说出目标</h3><p>在右侧直接对话，资料和目标足够时开始分析。</p></article>
+        <article><span class="flow__number">03</span><h3>确认口径</h3><p>Agent 把会改变结果的问题整理成可修改回答卡片。</p></article>
+        <article><span class="flow__number">04</span><h3>核对成果</h3><p>中间查看字段、关系、出处、变化与仍未知事项。</p></article>
+      </div>
+    </section>
+
+    <section class="section section--rule" id="demo">
+      <div class="section-heading">
+        <div class="section-index">03 / 演示</div>
+        <div>
+          <h2>从一句目标，到可核对的候选定义。</h2>
+          <p>以下流程来自正式 React／Python Workbench 的公开合成实例。它展示产品操作，不代表真实企业结论。</p>
+        </div>
+      </div>
+      <div class="demo-grid">
+        <figure class="product-frame">
+          <img src="assets/demo-flow.webp" width="1280" height="720" loading="lazy" alt="选择订单和退款资料、发送目标、回答并确认、查看候选成果的动态演示">
+        </figure>
+        <div>
+          <p class="eyebrow">回答确认以后</p>
+          <ul class="change-list">
+            <li><span>字段规则</span><strong>订单合计扣除同地区已退款金额</strong></li>
+            <li><span>缺失处理</span><strong>不计入净额，并单独列出</strong></li>
+            <li><span>候选关系</span><strong>订单与退款按地区关联</strong></li>
+            <li><span>仍需确认</span><strong>本次统计采用什么时间范围</strong></li>
+          </ul>
+          <p><a class="button" href="presentation.html#5">查看回答前后变化</a></p>
+        </div>
+      </div>
+      <div class="video-feature">
+        <div>
+          <p class="eyebrow">45 秒无声产品短片</p>
+          <h3>为分享会开场和项目展示而做。</h3>
+          <p>画面使用同一套公开合成案例，依次说明业务歧义、证据、人确认以及候选定义的变化。默认无声，不自动播放。</p>
+        </div>
+        <video controls preload="metadata" poster="downloads/contextox-stage-1920x1080.png" aria-label="数契 Demo 1.0.0 无声产品介绍短片">
+          <source src="downloads/contextox-demo-1.0.0-silent-launch.mp4" type="video/mp4">
+          你的浏览器不支持视频播放，可以下载 MP4 候选文件。
+        </video>
+      </div>
+    </section>
+
+    <section class="section section--rule" id="boundary">
+      <div class="section-heading">
+        <div class="section-index">04 / 当前边界</div>
+        <div>
+          <h2>先把候选说清楚，再让它进入交付。</h2>
+          <p>Demo 1.0.0 已经走通候选整理与确认续接；正式定义发布和跨任务批准知识复用属于下一阶段。</p>
+        </div>
+      </div>
+      <div class="boundary">
+        <h3>本地优先，范围明确</h3>
+        <p>导入、预览和产品状态保存在本机。调用模型时，只发送本轮明确选择的资料范围和必要上下文。</p>
+        <div class="boundary-grid">
+          <article><small>已经包含</small><p>连续对话、澄清卡片、确认续接、候选成果与引用。</p></article>
+          <article><small>当前交付</small><p>源码 Demo 和公开合成示例，没有预构建安装包。</p></article>
+          <article><small>后续推进</small><p>正式定义交付、批准知识复用、实际案例比较与试点。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--rule" id="downloads">
+      <div class="section-heading">
+        <div class="section-index">05 / 展示物料</div>
+        <div>
+          <h2>一套内容，多种展示场景。</h2>
+          <p>动态介绍适合现场讲解；PDF、单页、分享卡和 Logo 包可直接下载。全部使用同一套事实边界与公开合成案例。</p>
+        </div>
+      </div>
+      <div class="download-grid">
+        <a href="downloads/contextox-demo-1.0.0-silent-launch.mp4"><small>开场短片</small><strong>45 秒无声 MP4</strong><span>1920 × 1080 · H.264 · 无音轨</span></a>
+        <a href="presentation.html"><small>现场讲解</small><strong>8 页动态 HTML</strong><span>键盘翻页 · 目录 · 全屏 · 减弱动效</span></a>
+        <a href="downloads/contextox-demo-1.0.0-presentation.pdf"><small>离线演示</small><strong>8 页演示 PDF</strong><span>16:9 · 可投屏 · 可打印</span></a>
+        <a href="downloads/contextox-demo-1.0.0-one-pager.pdf"><small>会后分发</small><strong>A4 产品单页</strong><span>问题 · 方法 · 边界 · 参与入口</span></a>
+        <a href="downloads/contextox-brand-kit.zip"><small>品牌资产</small><strong>Logo 下载包</strong><span>SVG · PNG · 横版 · 反白 · 使用规范</span></a>
+        <a href="downloads/contextox-social-1200x630.png"><small>社交分享</small><strong>1200 × 630 分享卡</strong><span>适合链接预览与横版封面</span></a>
+        <a href="downloads/manifest.json"><small>可核验</small><strong>物料清单与哈希</strong><span>版本 · 大小 · SHA-256</span></a>
+      </div>
+    </section>
+
+    <section class="section section--rule">
+      <div class="cta">
+        <div>
+          <p class="eyebrow">ContextOx · Demo 1.0.0</p>
+          <h2>带一个真实的数据定义问题，和数契一起把它说清楚。</h2>
+          <p>欢迎数据分析、数据产品、数据工程、数据治理、BI、FDE 和企业数据项目参与者提供脱敏案例或交互建议。</p>
+        </div>
+        <a class="button" href="https://github.com/archerthegoat/contextox-agent">查看项目与参与方式</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>数契 ContextOx · Demo 1.0.0</span>
+    <span>MIT · 公开示例为人工合成材料</span>
+  </footer>
+</body>
+</html>

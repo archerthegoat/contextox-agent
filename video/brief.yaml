@@ -1,0 +1,15 @@
+production_id: contextox-demo-1.0.0-silent-film
+mode: silent_product_launch
+purpose: 分享会开场、项目展示与落地页内嵌候选
+audience:
+  - 数据分析与数据产品从业者
+  - 数据工程、数据治理、BI 与 FDE 从业者
+primary_message: 让每一张表，都说清自己代表什么。
+supporting_message: 数契把表格、说明和人的判断，整理成有证据、可确认的业务定义。
+duration_seconds: 45
+aspect: 16:9
+dimensions: 1920x1080
+fps: 30
+audio: none
+publication: not_authorized
+human_acceptance: pending

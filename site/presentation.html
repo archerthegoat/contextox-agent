@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="数契 ContextOx Demo 1.0.0 动态项目介绍">
+  <title>数契动态介绍</title>
+  <link rel="icon" href="assets/favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <style>.motion-reduced *, .motion-reduced *::before, .motion-reduced *::after { animation: none !important; transition: none !important; } .motion-reduced .reveal { opacity: 1; transform: none; }</style>
+</head>
+<body class="deck-body">
+  <main class="deck" aria-label="数契项目动态介绍">
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="数契 ContextOx">
+      <div class="slide__inner">
+        <img class="reveal" style="width:170px;--order:0" src="assets/contextox-wordmark.svg" alt="数契 ContextOx">
+        <h1 class="reveal" style="--order:1">让每一张表，<br>都说清自己代表什么。</h1>
+        <p class="lead reveal" style="--order:2">把表格、说明和人的判断，整理成有证据、可确认的业务定义。</p>
+        <p class="slide__kicker reveal" style="--order:3">DEMO 1.0.0 · 公开合成演示</p>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="业务问题">
+      <div class="slide__inner">
+        <p class="slide__kicker">01 / 一个看似简单的需求</p>
+        <p class="quote-problem reveal" style="--order:1">“我想按地区统计订单金额。”</p>
+        <div class="slide-grid slide-grid--three">
+          <article class="slide-card reveal" style="--order:2"><small>退款</small><h3>应该扣除吗？</h3><p>按发生地区、订单地区，还是单独列出？</p></article>
+          <article class="slide-card reveal" style="--order:3"><small>缺失</small><h3>应该归零吗？</h3><p>排除、归零与标记异常，会产生不同结果。</p></article>
+          <article class="slide-card reveal" style="--order:4"><small>时间</small><h3>按什么时间？</h3><p>下单、支付与退款日期，对归属并不相同。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="带入资料">
+      <div class="slide__inner">
+        <p class="slide__kicker">02 / 数契的方法</p>
+        <h2>Agent 找证据，<br>人确认业务事实。</h2>
+        <p class="lead">对话是入口。先明确这轮依据什么，再把人的决定和仍未知事项留在可回读的候选定义里。</p>
+        <div class="evidence-map">
+          <div class="evidence-node reveal" style="--order:1"><small>SOURCE 01</small><strong>订单.csv</strong><span>地区 · 金额 · 客户</span></div>
+          <div class="evidence-arrow reveal" style="--order:2">→</div>
+          <div class="evidence-node reveal" style="--order:3"><small>SOURCE 02</small><strong>退款.csv</strong><span>订单 · 地区 · 退款额</span></div>
+          <div class="evidence-arrow reveal" style="--order:4">→</div>
+          <div class="evidence-node reveal" style="--order:5"><small>GOAL</small><strong>地区净订单金额</strong><span>需要确认规则</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="Agent 理解资料">
+      <div class="slide__inner">
+        <p class="slide__kicker">03 / 资料与证据</p>
+        <div class="slide-grid">
+          <div>
+            <h2>结论可以回到出处。</h2>
+            <p class="lead">技术观察、关系候选和业务决定分别呈现。证据不足时保持未知。</p>
+          </div>
+          <figure class="product-frame reveal" style="--order:2"><img src="assets/demo-preview.jpg" alt="数契公开合成资料预览和 Agent 对话界面"></figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="人参与确认">
+      <div class="slide__inner">
+        <p class="slide__kicker">04 / 人参与确认</p>
+        <h2>真正会改变结果的问题，<br>交给人决定。</h2>
+        <div class="slide-grid slide-grid--three">
+          <article class="slide-card reveal" style="--order:1"><small>问题</small><h3>为什么要问</h3><p>说明当前缺口，以及它对结果的影响。</p></article>
+          <article class="slide-card reveal" style="--order:2"><small>候选回答</small><h3>先核对再采用</h3><p>自然语言回答被整理成可修改的卡片。</p></article>
+          <article class="slide-card reveal" style="--order:3"><small>确认</small><h3>绑定精确版本</h3><p>一次确认记录回答，并续接下一轮分析。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="候选变化">
+      <div class="slide__inner">
+        <p class="slide__kicker">05 / 确认后的变化 · 讲解模拟</p>
+        <h2>不是多一段回复，<br>而是定义真的发生变化。</h2>
+        <div class="before-after">
+          <div class="definition-sheet reveal" style="--order:1">
+            <div class="definition-row"><span>退款规则</span><strong>未知</strong></div>
+            <div class="definition-row"><span>缺失金额</span><strong>未知</strong></div>
+            <div class="definition-row"><span>表间关系</span><strong>候选待补充</strong></div>
+          </div>
+          <div class="before-after__arrow reveal" style="--order:2">→</div>
+          <div class="definition-sheet definition-sheet--after reveal" style="--order:3">
+            <div class="definition-row"><span>退款规则</span><strong>扣除同地区已退款金额</strong></div>
+            <div class="definition-row"><span>缺失金额</span><strong>不计入净额，单独列出</strong></div>
+            <div class="definition-row"><span>仍需确认</span><strong>本次统计时间范围</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="当前与下一步">
+      <div class="slide__inner">
+        <p class="slide__kicker">06 / 当前与下一步</p>
+        <h2>先把候选说清楚，<br>再让它进入交付。</h2>
+        <div class="roadmap-lane">
+          <article><span class="state">CURRENT</span><h3>Demo 1.0.0</h3><p>连续对话、精确资料、澄清确认、候选成果与引用。</p></article>
+          <article><span class="state">NEXT</span><h3>正式定义交付</h3><p>完整定义、版本比较、验收条件、审批与交付回执。</p></article>
+          <article><span class="state">THEN</span><h3>批准知识复用</h3><p>在第二个任务中建议并选用仍然有效的批准定义。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="参与数契">
+      <div class="slide__inner">
+        <div class="slide-grid">
+          <div>
+            <p class="slide__kicker">07 / CONTEXTOX</p>
+            <h2>带一个真实的问题，<br>和数契一起把它说清楚。</h2>
+            <p class="lead">公开源码与合成 Demo 已发布。欢迎带脱敏案例、交互建议和数据定义经验参与。</p>
+            <p><a class="button button--primary" href="https://github.com/archerthegoat/contextox-agent">github.com/archerthegoat/contextox-agent</a></p>
+          </div>
+          <img style="width:min(340px,80%);justify-self:center" src="assets/contextox-mark.svg" alt="数契标志">
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="deck-top-actions">
+    <a href="index.html">落地页</a>
+    <button type="button" data-motion aria-pressed="false">减弱动效</button>
+    <button type="button" data-fullscreen>全屏</button>
+    <button type="button" data-menu-toggle aria-expanded="false" aria-controls="slide-menu">目录</button>
+  </div>
+
+  <nav class="slide-menu" id="slide-menu" data-menu hidden aria-label="页面目录">
+    <button type="button" data-slide-index>01 · 数契 ContextOx</button>
+    <button type="button" data-slide-index>02 · 业务问题</button>
+    <button type="button" data-slide-index>03 · 带入资料</button>
+    <button type="button" data-slide-index>04 · Agent 理解资料</button>
+    <button type="button" data-slide-index>05 · 人参与确认</button>
+    <button type="button" data-slide-index>06 · 候选变化</button>
+    <button type="button" data-slide-index>07 · 当前与下一步</button>
+    <button type="button" data-slide-index>08 · 参与数契</button>
+  </nav>
+
+  <div class="deck-chrome" aria-label="演示控制">
+    <div class="deck-brand"><img src="assets/contextox-mark.svg" alt=""><span>数契 ContextOx</span></div>
+    <div class="deck-progress" data-progress aria-live="polite"></div>
+    <div class="deck-actions">
+      <button class="deck-control" type="button" data-previous aria-label="上一页">←</button>
+      <button class="deck-control" type="button" data-next aria-label="下一页">→</button>
+    </div>
+  </div>
+  <script src="presentation.js"></script>
+</body>
+</html>

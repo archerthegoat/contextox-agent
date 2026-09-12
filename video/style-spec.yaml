@@ -1,0 +1,23 @@
+style_id: contextox-definition-workbench-v1
+visual_theme: definition_workbench
+palette:
+  paper: "#F5F7FA"
+  surface: "#FFFFFF"
+  ink: "#13243A"
+  muted: "#607086"
+  line: "#DCE3EB"
+  blue: "#1674F3"
+typography: system_sans
+motion:
+  density: restrained
+  language:
+    - evidence_lines
+    - state_reveal
+    - focus_shift
+  forbidden:
+    - generic_ai_orb
+    - persistent_floating
+    - neon_glass
+safe_area_px:
+  horizontal: 120
+  vertical: 80
