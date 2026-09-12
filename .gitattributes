@@ -4,3 +4,4 @@
 *.png binary
 *.webp binary
 *.zip binary
+*.diff -whitespace

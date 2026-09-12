@@ -35,7 +35,7 @@
 ## 验收记录
 
 ```text
-Build ID: 待本地提交
+Build ID: beceb4d
 Composition: ContextOxSilentLaunch
 Viewport: 1920x1080 / 100%
 Test data: 公开合成订单与退款案例
