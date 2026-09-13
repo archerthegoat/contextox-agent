@@ -180,7 +180,7 @@ def page_base(
         c.line(0, y, width, y)
     draw_pdf_text(
         c,
-        f"{number:02d} / 11",
+        f"{number:02d} / 12",
         width - 76,
         26,
         9,
@@ -208,7 +208,7 @@ def build_deck_pdf(path: Path) -> None:
     page_base(c, width, height, 1, stage=True)
     draw_pdf_text(c, "一个真实数字问题 · 公开合成数据", 64, 472, 11, "#81B5FF", True)
     draw_pdf_text(c, "同一份订单数据，", 64, 407, 42, WHITE, True)
-    draw_pdf_text(c, "华东金额到底是多少？", 64, 355, 42, WHITE, True)
+    draw_pdf_text(c, "为什么会有三个答案？", 64, 355, 42, WHITE, True)
     answers = [("689", "所有记录都相加"), ("440", "只统计已支付"), ("390", "已支付再扣退款")]
     for offset, (value, label) in enumerate(answers):
         x = 64 + offset * 278
@@ -468,9 +468,46 @@ def build_deck_pdf(path: Path) -> None:
     draw_pdf_text(c, "出处、回答和变化都能沿着同一条记录往回看", 576, 104, 9, "#CBD5E1")
     c.showPage()
 
-    # 10 · Capabilities and boundaries
+    # 10 · Which tool fits which stage
     page_base(c, width, height, 10)
-    draw_pdf_text(c, "08 / Demo 1.0.0", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "08 / 适用场景", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "不同工具解决不同阶段的问题", 54, 443, 28, INK, True)
+    draw_pdf_text(c, "数契聚焦业务定义还没说清的阶段，不替代通用 Agent、企业数据平台或问数工具。", 54, 414, 11, MUTED)
+    compare_x = (54, 374, 570)
+    compare_w = (320, 196, 336)
+    headers = ("当你想做什么", "更适合的工具", "数契的位置")
+    c.setFillColor(HexColor("#E9EEF5"))
+    c.rect(54, 365, 852, 28, stroke=0, fill=1)
+    for x, header in zip(compare_x, headers, strict=True):
+        draw_pdf_text(c, header, x + 14, 375, 8, MUTED, True)
+    tool_rows = [
+        ("完成代码、研究或制作任务", "通用 Agent，如 Codex", "业务定义明确以后，可以继续交给它执行"),
+        ("建设目录、血缘、权限和企业上下文", "Atlan、DataHub", "未来可以对接，不重复建设企业数据底座"),
+        ("在既有语义模型上直接问数", "BI 与问数工具", "数契处理规则还没有确定的前一步"),
+        ("一句业务需求有多种理解", "数契当前聚焦", "找出缺口，请人确认，留下可复核的候选定义"),
+    ]
+    for index, row in enumerate(tool_rows):
+        y = 307 - index * 59
+        focus = index == len(tool_rows) - 1
+        c.setFillColor(HexColor("#EEF5FF" if focus else WHITE))
+        c.setStrokeColor(HexColor("#A8C9F7" if focus else LINE))
+        c.rect(54, y, 852, 59, stroke=1, fill=1)
+        if focus:
+            c.setFillColor(HexColor(BLUE))
+            c.rect(54, y, 5, 59, stroke=0, fill=1)
+        draw_pdf_text(c, row[0], compare_x[0] + 14, y + 24, 10, "#155DA8" if focus else INK, True)
+        draw_pdf_text(c, row[1], compare_x[1] + 14, y + 24, 9, "#155DA8" if focus else INK, True)
+        draw_wrapped(c, row[2], compare_x[2] + 14, y + 31, compare_w[2] - 28, 8.5, 13, MUTED)
+    c.setFillColor(HexColor(INK))
+    c.rect(54, 78, 852, 42, stroke=0, fill=1)
+    draw_pdf_text(c, "数契当前注重点", 70, 94, 9, "#81B5FF", True)
+    draw_pdf_text(c, "从一组资料和一个争议开始，把人的决定、出处和未知事项留在同一份候选定义里。", 174, 94, 9, WHITE)
+    draw_pdf_text(c, "公开定位参考（2026-09-13）：OpenAI Codex · Atlan CES · DataHub Context Platform · Microsoft Power BI", 54, 52, 7, MUTED)
+    c.showPage()
+
+    # 11 · Capabilities and boundaries
+    page_base(c, width, height, 11)
+    draw_pdf_text(c, "09 / Demo 1.0.0", 54, 485, 10, BLUE, True)
     draw_pdf_text(c, "现在能做什么，也明确不能做什么", 54, 443, 28, INK, True)
     columns = [
         (54, "当前可以体验", "#E9F7F2", "#147D64", [
@@ -501,18 +538,23 @@ def build_deck_pdf(path: Path) -> None:
             c.line(x + 24, y - 31, x + 388, y - 31)
     c.showPage()
 
-    # 11 · CTA
-    page_base(c, width, height, 11, stage=True)
+    # 12 · CTA and contact
+    page_base(c, width, height, 12, stage=True)
     c.drawImage(ImageReader(str(MARK_SOURCE)), 64, 385, width=86, height=86, mask="auto")
     draw_pdf_text(c, "数契 ContextOx · Demo 1.0.0", 64, 348, 11, "#81B5FF", True)
     draw_pdf_text(c, "带一个总对不上的业务口径，", 64, 286, 36, WHITE, True)
     draw_pdf_text(c, "和数契一起把它说清楚", 64, 240, 36, WHITE, True)
     draw_wrapped(c, "可以先用公开合成示例体验，也可以带一组脱敏资料试一轮。", 64, 192, 760, 14, 21, "#C7D4E5")
     c.setFillColor(white)
-    c.rect(64, 105, 210, 42, stroke=0, fill=1)
-    draw_pdf_text(c, "查看 45 秒产品演示", 88, 121, 10, INK, True)
-    draw_pdf_text(c, "github.com/archerthegoat/contextox-agent", 310, 120, 10, "#81B5FF", True)
-    draw_pdf_text(c, "公开源码 · 公开合成 Demo · 候选结果由人核对", 64, 62, 9, "#A9B8CA")
+    c.rect(64, 105, 236, 42, stroke=0, fill=1)
+    draw_pdf_text(c, "交流问题或申请体验", 88, 121, 10, INK, True)
+    c.linkURL("https://github.com/archerthegoat/contextox-agent/issues", (64, 105, 300, 147), relative=0)
+    draw_pdf_text(c, "GitHub 联系方式", 330, 135, 8, "#A9B8CA", True)
+    draw_pdf_text(c, "@archerthegoat", 330, 111, 13, "#81B5FF", True)
+    c.linkURL("https://github.com/archerthegoat", (330, 104, 466, 142), relative=0)
+    draw_pdf_text(c, "项目与公开源码：github.com/archerthegoat/contextox-agent", 64, 78, 9, "#81B5FF")
+    c.linkURL("https://github.com/archerthegoat/contextox-agent", (64, 70, 410, 90), relative=0)
+    draw_pdf_text(c, "公开源码 · 公开合成 Demo · 候选结果由人核对", 64, 48, 9, "#A9B8CA")
     c.showPage()
     c.save()
 

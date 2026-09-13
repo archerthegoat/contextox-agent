@@ -130,25 +130,21 @@ def main() -> int:
 
     deck = parsed.get("presentation.html")
     if deck:
-        if deck.slides != 11:
-            errors.append(f"presentation must contain 11 slides, found {deck.slides}")
+        if deck.slides != 12:
+            errors.append(f"presentation must contain 12 slides, found {deck.slides}")
         if deck.menu_items != deck.slides:
             errors.append(
                 f"presentation menu/slide mismatch: {deck.menu_items}/{deck.slides}"
             )
 
-    landing = parsed.get("index.html")
-    if landing:
-        if len(landing.videos) != 1:
-            errors.append(f"landing page must contain one product video, found {len(landing.videos)}")
-        else:
-            video = landing.videos[0]
-            if "controls" not in video:
-                errors.append("landing product video must expose controls")
-            if "autoplay" in video:
-                errors.append("landing product video must not autoplay")
-            if video.get("poster") != "assets/contextox-product-film-poster.png":
-                errors.append("landing product video poster is not the V2 Workbench frame")
+    entry_text = (SITE / "index.html").read_text(encoding="utf-8")
+    if "presentation.html#1" not in entry_text:
+        errors.append("root entry must open presentation.html#1")
+    if "下载物料" in entry_text or "download-grid" in entry_text:
+        errors.append("root entry still exposes the retired material download center")
+    entry = parsed.get("index.html")
+    if entry and entry.slides:
+        errors.append("root entry must stay a technical handoff, not a second presentation")
 
     all_copy = "\n".join(
         path.read_text(encoding="utf-8")
@@ -161,16 +157,19 @@ def main() -> int:
     for required_copy in ("Demo 1.0.0", "公开合成", "候选"):
         if required_copy not in all_copy:
             errors.append(f"required disclosure missing: {required_copy}")
-    for required_landing_copy in (
-        "同一份订单数据，为什么会有三个答案？",
-        "看 45 秒产品演示",
-        "打开动态介绍",
-        "45 秒无旁白产品片",
-        "11 页动态 HTML",
-        "11 页演示 PDF",
+    for required_presentation_copy in (
+        "同一份订单数据，",
+        "为什么会有",
+        "三个答案？",
+        "不同工具解决不同阶段的问题",
+        "通用 Agent，如 Codex",
+        "Atlan、DataHub",
+        "数契当前聚焦",
+        "联系 @archerthegoat",
+        "离线阅读 12 页 PDF",
     ):
-        if required_landing_copy not in (SITE / "index.html").read_text(encoding="utf-8"):
-            errors.append(f"landing V2 copy missing: {required_landing_copy}")
+        if required_presentation_copy not in (SITE / "presentation.html").read_text(encoding="utf-8"):
+            errors.append(f"presentation V2.1 copy missing: {required_presentation_copy}")
 
     legacy_video = SITE / "downloads" / "contextox-demo-1.0.0-silent-launch.mp4"
     if legacy_video.exists():
@@ -224,10 +223,11 @@ def main() -> int:
             print(f"- {error}")
         return 1
     print("showcase validation: PASS")
-    print("- landing page: references and disclosures valid")
-    print("- presentation: 11 slides and 11 menu entries")
+    print("- root entry: opens the dynamic presentation without a material download center")
+    print("- presentation: 12 slides and 12 menu entries")
+    print("- positioning: Codex, Atlan/DataHub, BI and ContextOx roles are explicit")
     print("- public demo arithmetic: 华东 689 / 440 / 390")
-    print("- product film: controls, no autoplay, V2 poster and no legacy file")
+    print("- product film: playable artifact link and no legacy file")
     print("- manifest: byte counts and SHA-256 values verified")
     print("- asset policy: no missing local dependencies")
     return 0

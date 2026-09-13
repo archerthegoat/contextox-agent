@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="数契 ContextOx Demo 1.0.0：从三个不同答案开始，讲清业务定义如何形成">
+  <meta name="description" content="数契 ContextOx Demo 1.0.0：从三个不同答案开始，讲清业务定义如何形成、数契与同类工具的区别，以及如何联系体验">
   <title>数契动态介绍</title>
   <link rel="icon" href="assets/favicon.svg">
-  <link rel="stylesheet" href="styles.css?v=3">
+  <link rel="stylesheet" href="styles.css?v=4">
   <style>.motion-reduced *, .motion-reduced *::before, .motion-reduced *::after { animation: none !important; transition: none !important; } .motion-reduced .reveal { opacity: 1; transform: none; }</style>
 </head>
 <body class="deck-body">
@@ -14,7 +14,7 @@
     <section class="slide slide--stage slide--opening" tabindex="-1" aria-hidden="true" data-title="三个答案">
       <div class="slide__inner">
         <p class="slide__kicker reveal" style="--order:0">一个真实数字问题 · 公开合成数据</p>
-        <h1 class="reveal" style="--order:1">同一份订单数据，<br>华东金额到底是多少？</h1>
+        <h1 class="reveal" style="--order:1">同一份订单数据，<br>为什么会有<br class="mobile-only-break">三个答案？</h1>
         <div class="answer-numbers" aria-label="三个可能的答案">
           <div class="answer-number reveal" style="--order:2"><strong>689</strong><span>元</span><small>所有记录都相加</small></div>
           <div class="answer-number reveal" style="--order:3"><strong>440</strong><span>元</span><small>只统计已支付</small></div>
@@ -218,9 +218,50 @@
       </div>
     </section>
 
+    <section class="slide slide--comparison" tabindex="-1" aria-hidden="true" data-title="不同工具解决什么问题">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">08 / 适用场景</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div>
+            <h2>不同工具解决不同阶段的问题</h2>
+            <p class="lead">数契聚焦业务定义还没说清的阶段。它不替代通用 Agent、企业数据平台或问数工具。</p>
+          </div>
+          <span class="data-badge">按任务选择</span>
+        </div>
+        <div class="tool-fit" aria-label="数契与通用 Agent、企业数据平台和问数工具的适用场景对比">
+          <div class="tool-fit__head"><span>当你想做什么</span><span>更适合的工具</span><span>数契的位置</span></div>
+          <article class="tool-fit__row reveal" style="--order:1">
+            <strong>完成代码、研究或制作任务</strong>
+            <span>通用 Agent，如 Codex</span>
+            <p>业务定义明确以后，可以继续交给它执行</p>
+          </article>
+          <article class="tool-fit__row reveal" style="--order:2">
+            <strong>建设目录、血缘、权限和企业上下文</strong>
+            <span>Atlan、DataHub</span>
+            <p>未来可以对接，不重复建设企业数据底座</p>
+          </article>
+          <article class="tool-fit__row reveal" style="--order:3">
+            <strong>在既有语义模型上直接问数</strong>
+            <span>BI 与问数工具</span>
+            <p>数契处理规则还没有确定的前一步</p>
+          </article>
+          <article class="tool-fit__row tool-fit__row--focus reveal" style="--order:4">
+            <strong>一句业务需求有多种理解</strong>
+            <span>数契当前聚焦</span>
+            <p>找出缺口，请人确认，留下可复核的候选定义</p>
+          </article>
+        </div>
+        <div class="comparison-summary reveal" style="--order:5">
+          <p><strong>数契当前注重点</strong>从一组资料和一个具体争议开始，把会改变结果的问题问给人，再把决定、出处和仍未知的内容留在同一份候选定义里。</p>
+          <p><strong>怎么理解“优势”</strong>这是产品选择，不是已经被真实业务验证的绝对优势。后续还要和配置合理的通用 Agent 做同题比较。</p>
+        </div>
+        <p class="comparison-sources">公开产品定位参考（2026-09-13）：<a href="https://openai.com/index/introducing-the-codex-app/" target="_blank" rel="noopener">Codex</a> · <a href="https://atlan.com/context-engineering-studio/" target="_blank" rel="noopener">Atlan</a> · <a href="https://datahub.com/products/context-platform/" target="_blank" rel="noopener">DataHub</a> · <a href="https://learn.microsoft.com/en-us/power-bi/create-reports/copilot-ask-data-question" target="_blank" rel="noopener">Power BI</a></p>
+      </div>
+    </section>
+
     <section class="slide" tabindex="-1" aria-hidden="true" data-title="当前能力与边界">
       <div class="slide__inner">
-        <p class="slide__kicker">08 / Demo 1.0.0</p>
+        <p class="slide__kicker">09 / Demo 1.0.0</p>
         <h2>现在能做什么，也明确不能做什么</h2>
         <div class="boundary-compare">
           <section class="boundary-column boundary-column--can reveal" style="--order:1">
@@ -252,8 +293,13 @@
         <h1 class="reveal" style="--order:2">带一个总对不上的业务口径，<br>和数契一起把它说清楚</h1>
         <p class="stage-answer reveal" style="--order:3">可以先用公开合成示例体验，也可以带一组脱敏资料试一轮。</p>
         <div class="stage-actions reveal" style="--order:4">
-          <a class="button button--inverse" href="index.html#demo">查看 45 秒产品演示</a>
-          <a class="button button--ghost" href="https://github.com/archerthegoat/contextox-agent">github.com/archerthegoat/contextox-agent</a>
+          <a class="button button--inverse" href="https://github.com/archerthegoat/contextox-agent/issues" target="_blank" rel="noopener">交流问题或申请体验</a>
+          <a class="button button--ghost" href="https://github.com/archerthegoat" target="_blank" rel="noopener">联系 @archerthegoat</a>
+        </div>
+        <div class="stage-contact reveal" style="--order:5">
+          <a href="downloads/contextox-demo-1.0.0-product-film.mp4" target="_blank">播放 45 秒产品演示</a>
+          <a href="downloads/contextox-demo-1.0.0-presentation.pdf" target="_blank">离线阅读 12 页 PDF</a>
+          <a href="https://github.com/archerthegoat/contextox-agent" target="_blank" rel="noopener">查看公开源码</a>
         </div>
         <p class="slide__disclosure">公开源码 · 公开合成 Demo · 候选结果由人核对</p>
       </div>
@@ -261,7 +307,7 @@
   </main>
 
   <div class="deck-top-actions">
-    <a href="index.html">落地页</a>
+    <a href="downloads/contextox-demo-1.0.0-product-film.mp4" target="_blank">45 秒演示</a>
     <button type="button" data-motion aria-pressed="false">减弱动效</button>
     <button type="button" data-fullscreen>全屏</button>
     <button type="button" data-menu-toggle aria-expanded="false" aria-controls="slide-menu">目录</button>
@@ -277,8 +323,9 @@
     <button type="button" data-slide-index>07 · 人确认规则</button>
     <button type="button" data-slide-index>08 · 候选定义更新</button>
     <button type="button" data-slide-index>09 · 可以回看和交接</button>
-    <button type="button" data-slide-index>10 · 当前能力与边界</button>
-    <button type="button" data-slide-index>11 · 体验数契</button>
+    <button type="button" data-slide-index>10 · 不同工具的分工</button>
+    <button type="button" data-slide-index>11 · 当前能力与边界</button>
+    <button type="button" data-slide-index>12 · 联系与体验</button>
   </nav>
 
   <div class="deck-chrome" aria-label="演示控制">
