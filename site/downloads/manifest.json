@@ -54,8 +54,8 @@
     },
     {
       "path": "output/pdf/contextox-demo-1.0.0-presentation.pdf",
-      "bytes": 225742,
-      "sha256": "4dae66a45d99b2570f41648e7fa02b2f92dced0b3611177edd0789a07899047d"
+      "bytes": 264192,
+      "sha256": "c8cd760be00c51e5babcd49660c41c7139a28852b42dd930bfb9d8455652965e"
     },
     {
       "path": "output/pdf/contextox-demo-1.0.0-one-pager.pdf",

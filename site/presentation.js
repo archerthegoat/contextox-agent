@@ -16,6 +16,7 @@ function render(index, push = true) {
   previous.disabled = current === 0;
   next.disabled = current === slides.length - 1;
   document.title = `${slides[current].dataset.title} · 数契动态介绍`;
+  document.body.classList.toggle("deck-stage-active", slides[current].classList.contains("slide--stage"));
   if (push) history.replaceState(null, "", `#${current + 1}`);
   slides[current].focus({preventScroll: true});
 }

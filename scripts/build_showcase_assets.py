@@ -160,16 +160,33 @@ def draw_wrapped(c: canvas.Canvas, text: str, x: float, y: float, max_width: flo
     return y
 
 
-def page_base(c: canvas.Canvas, width: float, height: float, number: int) -> None:
-    c.setFillColor(HexColor(PAPER))
+def page_base(
+    c: canvas.Canvas,
+    width: float,
+    height: float,
+    number: int,
+    *,
+    stage: bool = False,
+) -> None:
+    background = INK if stage else PAPER
+    grid = "#2A3C52" if stage else LINE
+    c.setFillColor(HexColor(background))
     c.rect(0, 0, width, height, stroke=0, fill=1)
-    c.setStrokeColor(HexColor(LINE))
+    c.setStrokeColor(HexColor(grid))
     c.setLineWidth(.55)
     for x in range(0, int(width), 40):
         c.line(x, 0, x, height)
     for y in range(0, int(height), 40):
         c.line(0, y, width, y)
-    draw_pdf_text(c, f"{number:02d} / 08", width - 76, 26, 9, MUTED, True)
+    draw_pdf_text(
+        c,
+        f"{number:02d} / 11",
+        width - 76,
+        26,
+        9,
+        "#A9B8CA" if stage else MUTED,
+        True,
+    )
 
 
 def pdf_card(c: canvas.Canvas, x: float, y: float, width: float, height: float, label: str, title: str, body: str) -> None:
@@ -186,43 +203,317 @@ def pdf_card(c: canvas.Canvas, x: float, y: float, width: float, height: float, 
 def build_deck_pdf(path: Path) -> None:
     width, height = (960, 540)
     c = canvas.Canvas(str(path), pagesize=(width, height), pageCompression=1, invariant=1)
-    slides = [
-        ("CONTEXTOX · DEMO 1.0.0", "让每一张表，\n都说清自己代表什么。", "把表格、说明和人的判断，整理成有证据、可确认的业务定义。"),
-        ("01 / 一个看似简单的需求", "“我想按地区统计订单金额。”", "退款、缺失和时间，都会改变答案。"),
-        ("02 / 数契的方法", "Agent 找证据，\n人确认业务事实。", "对话是入口；资料、人的决定和仍未知事项各自保持身份。"),
-        ("03 / 资料与证据", "结论可以回到出处。", "技术观察、关系候选和业务决定分别呈现；证据不足时保持未知。"),
-        ("04 / 人参与确认", "真正会改变结果的问题，\n交给人决定。", "说明为什么要问，整理候选回答，并把确认绑定精确版本。"),
-        ("05 / 确认后的变化", "不是多一段回复，\n而是定义真的发生变化。", "退款规则、缺失处理与仍未知事项，都可在候选定义中回读。"),
-        ("06 / 当前与下一步", "先把候选说清楚，\n再让它进入交付。", "当前是 Demo 1.0.0；下一步是正式定义交付和批准知识复用。"),
-        ("07 / CONTEXTOX", "带一个真实的问题，\n和数契一起把它说清楚。", "公开源码与合成 Demo 已发布。欢迎提供脱敏案例或交互建议。"),
-    ]
-    for index, (kicker, title, body) in enumerate(slides, start=1):
-        page_base(c, width, height, index)
-        draw_pdf_text(c, kicker, 64, 468, 11, BLUE, True)
-        y = 405
-        for line in title.split("\n"):
-            draw_pdf_text(c, line, 64, y, 48 if index != 1 else 52, INK, True)
-            y -= 62
-        draw_wrapped(c, body, 64, y - 8, 760, 18, 27, MUTED)
 
-        if index == 2:
-            labels = [("退款", "应该扣除吗？"), ("缺失", "应该归零吗？"), ("时间", "按什么时间？")]
-            for offset, (label, card_title) in enumerate(labels):
-                pdf_card(c, 64 + offset * 286, 66, 260, 145, label, card_title, "不同选择会产生不同业务结果。")
-        elif index == 4:
-            c.drawImage(ImageReader(str(ASSETS / "demo-preview.jpg")), 500, 68, width=390, height=219, preserveAspectRatio=True, anchor="c")
-            c.setFillColor(HexColor(INK))
-            c.rect(500, 274, 118, 23, stroke=0, fill=1)
-            draw_pdf_text(c, "公开合成演示", 510, 280, 8, WHITE, True)
-        elif index == 6:
-            pdf_card(c, 64, 64, 370, 160, "确认前", "退款规则：未知", "缺失金额：未知\n表间关系：候选待补充")
-            pdf_card(c, 526, 64, 370, 160, "确认后", "扣除同地区退款", "缺失不计入净额\n仍需确认时间范围")
-            draw_pdf_text(c, "→", 468, 125, 34, BLUE, True)
-        elif index == 7:
-            states = [("CURRENT", "Demo 1.0.0"), ("NEXT", "正式定义交付"), ("THEN", "批准知识复用")]
-            for offset, (state, card_title) in enumerate(states):
-                pdf_card(c, 64 + offset * 286, 70, 260, 140, state, card_title, "每一步都有独立合同和验收证据。")
-        c.showPage()
+    # 01 · Three answers
+    page_base(c, width, height, 1, stage=True)
+    draw_pdf_text(c, "一个真实数字问题 · 公开合成数据", 64, 472, 11, "#81B5FF", True)
+    draw_pdf_text(c, "同一份订单数据，", 64, 407, 42, WHITE, True)
+    draw_pdf_text(c, "华东金额到底是多少？", 64, 355, 42, WHITE, True)
+    answers = [("689", "所有记录都相加"), ("440", "只统计已支付"), ("390", "已支付再扣退款")]
+    for offset, (value, label) in enumerate(answers):
+        x = 64 + offset * 278
+        c.setFillColor(HexColor("#142840" if value != "390" else "#173F73"))
+        c.setStrokeColor(HexColor("#4C6077" if value != "390" else "#4D9AFF"))
+        c.rect(x, 150, 252, 132, stroke=1, fill=1)
+        c.setFillColor(HexColor("#81B5FF"))
+        c.rect(x, 150, 4 if value != "390" else 7, 132, stroke=0, fill=1)
+        draw_pdf_text(c, value, x + 22, 213, 43, WHITE, True)
+        draw_pdf_text(c, "元", x + 112, 218, 14, "#B8C8DD")
+        draw_pdf_text(c, label, x + 22, 174, 11, "#B8C8DD")
+    draw_wrapped(c, "三个数都能算出来。真正没说清的是，哪些算进去、怎么处理、按什么时间。", 64, 112, 810, 15, 22, "#C7D4E5")
+    c.showPage()
+
+    # 02 · The data and calculations
+    page_base(c, width, height, 2)
+    draw_pdf_text(c, "01 / 三个答案怎么算", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "同一份数据，三种算法", 54, 443, 30, INK, True)
+    draw_pdf_text(c, "6 行公开合成订单，地区由客户表连接得到。", 54, 416, 12, MUTED)
+    table_x, table_y, table_w, row_h = 54, 104, 520, 38
+    headers = ["订单", "地区", "金额", "状态"]
+    col_x = [table_x, table_x + 105, table_x + 205, table_x + 330]
+    c.setFillColor(HexColor("#E9EEF5"))
+    c.rect(table_x, table_y + row_h * 6, table_w, row_h, stroke=0, fill=1)
+    for x, header in zip(col_x, headers, strict=True):
+        draw_pdf_text(c, header, x + 12, table_y + row_h * 6 + 13, 9, MUTED, True)
+    rows = [
+        ("O001", "华东", "120.00", "paid"),
+        ("O002", "华南", "80.50", "paid"),
+        ("O003", "华东", "50.00", "refunded"),
+        ("O004", "华东", "199.00", "pending"),
+        ("O005", "华南", "60.00", "paid"),
+        ("O006", "华东", "320.00", "paid"),
+    ]
+    for index, row in enumerate(rows):
+        y = table_y + row_h * (5 - index)
+        if row[3] == "refunded":
+            c.setFillColor(HexColor("#FFF5F4"))
+            c.rect(table_x, y, table_w, row_h, stroke=0, fill=1)
+        elif row[3] == "pending":
+            c.setFillColor(HexColor("#FFF8EA"))
+            c.rect(table_x, y, table_w, row_h, stroke=0, fill=1)
+        c.setStrokeColor(HexColor(LINE))
+        c.line(table_x, y, table_x + table_w, y)
+        for x, value in zip(col_x, row, strict=True):
+            color = "#B8493E" if value == "refunded" else "#A76A08" if value == "pending" else INK
+            draw_pdf_text(c, value, x + 12, y + 13, 10, color, value in {"paid", "refunded", "pending"})
+    calculations = [
+        ("算法 A · 全部相加", "120 + 50 + 199 + 320", "689 元", False),
+        ("算法 B · 只算 paid", "120 + 320", "440 元", False),
+        ("算法 C · paid 再扣 refunded", "120 + 320 − 50", "390 元", True),
+    ]
+    for index, (label, formula, value, focus) in enumerate(calculations):
+        y = 296 - index * 96
+        c.setFillColor(HexColor("#EEF5FF" if focus else WHITE))
+        c.setStrokeColor(HexColor(BLUE if focus else LINE))
+        c.rect(610, y, 296, 78, stroke=1, fill=1)
+        draw_pdf_text(c, label, 628, y + 55, 8, BLUE if focus else MUTED, True)
+        draw_pdf_text(c, formula, 628, y + 26, 10, INK, True)
+        draw_pdf_text(c, value, 818, y + 24, 18, BLUE if focus else INK, True)
+    c.showPage()
+
+    # 03 · Hidden rules create rework
+    page_base(c, width, height, 3)
+    draw_pdf_text(c, "02 / 为什么总在返工", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "公式会写，规则还在每个人脑子里", 54, 436, 30, INK, True)
+    draw_wrapped(c, "同一句需求，三个人可能各自补上一套没有写下来的业务规则。", 54, 406, 820, 12, 18, MUTED)
+    pdf_card(c, 54, 126, 210, 210, "一句需求", "按地区统计订单金额", "听起来已经很清楚")
+    branch_rows = [("业务", "把待支付也算进去", "689"), ("分析师", "只看已支付订单", "440"), ("财务", "已支付还要扣退款", "390")]
+    for index, (owner, rule, value) in enumerate(branch_rows):
+        y = 280 - index * 70
+        c.setFillColor(white)
+        c.setStrokeColor(HexColor(LINE))
+        c.rect(298, y, 330, 56, stroke=1, fill=1)
+        draw_pdf_text(c, owner, 314, y + 21, 9, MUTED)
+        draw_pdf_text(c, rule, 378, y + 20, 12, INK, True)
+        draw_pdf_text(c, value, 577, y + 18, 17, BLUE, True)
+    c.setFillColor(HexColor("#FFF9ED"))
+    c.setStrokeColor(HexColor("#D6B46D"))
+    c.rect(662, 126, 244, 210, stroke=1, fill=1)
+    draw_pdf_text(c, "最后的问题", 682, 300, 9, "#A76A08", True)
+    draw_wrapped(c, "谁算错了？依据在哪里？下次还用哪套？", 682, 254, 202, 16, 25, INK, True)
+    c.showPage()
+
+    # 04 · Product introduction
+    page_base(c, width, height, 4, stage=True)
+    c.drawImage(ImageReader(str(MARK_SOURCE)), 64, 402, width=68, height=68, mask="auto")
+    draw_pdf_text(c, "数契 ContextOx", 64, 368, 11, "#81B5FF", True)
+    draw_pdf_text(c, "先把业务意思说清楚，", 64, 308, 38, WHITE, True)
+    draw_pdf_text(c, "再开始交付", 64, 260, 38, WHITE, True)
+    promises = [
+        "把资料放进来，说出你想弄清楚的问题",
+        "Agent 找出处，把会改变结果的问题问出来",
+        "人确认关键规则，留下可以回看的候选定义",
+    ]
+    for index, text in enumerate(promises, start=1):
+        y = 184 - (index - 1) * 42
+        draw_pdf_text(c, f"0{index}", 66, y, 10, "#63A4FF", True)
+        draw_pdf_text(c, text, 112, y, 15, "#CFDAEA")
+        c.setStrokeColor(HexColor("#34475E"))
+        c.line(64, y - 14, 868, y - 14)
+    c.showPage()
+
+    # 05 · Select sources and state the goal
+    page_base(c, width, height, 5)
+    draw_pdf_text(c, "03 / 第一步", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "告诉它，这次看哪些资料", 54, 443, 28, INK, True)
+    draw_pdf_text(c, "讲解模拟 · 对应当前 Workbench", 714, 454, 8, MUTED, True)
+    frame_x, frame_y, frame_w, frame_h = 54, 72, 852, 330
+    c.setFillColor(white)
+    c.setStrokeColor(HexColor("#B9C5D2"))
+    c.rect(frame_x, frame_y, frame_w, frame_h, stroke=1, fill=1)
+    c.setFillColor(HexColor("#F7F9FC"))
+    c.rect(frame_x, frame_y, 154, frame_h, stroke=0, fill=1)
+    c.rect(frame_x + 154, frame_y, 420, frame_h, stroke=0, fill=1)
+    c.setStrokeColor(HexColor(LINE))
+    c.line(frame_x + 154, frame_y, frame_x + 154, frame_y + frame_h)
+    c.line(frame_x + 574, frame_y, frame_x + 574, frame_y + frame_h)
+    draw_pdf_text(c, "数契", frame_x + 22, frame_y + 294, 15, INK, True)
+    draw_pdf_text(c, "资料库", frame_x + 18, frame_y + 248, 8, MUTED, True)
+    for index, name in enumerate(("✓ orders.csv", "✓ customers.csv", "✓ notes.md")):
+        y = frame_y + 210 - index * 38
+        c.setFillColor(HexColor("#EDF4FE"))
+        c.rect(frame_x + 14, y, 126, 27, stroke=0, fill=1)
+        draw_pdf_text(c, name, frame_x + 23, y + 9, 8, "#205FA8", True)
+    draw_pdf_text(c, "当前进度", frame_x + 176, frame_y + 296, 8, BLUE, True)
+    draw_pdf_text(c, "从一个问题开始", frame_x + 176, frame_y + 266, 20, INK, True)
+    steps = ["1 明确目标", "2 理解资料", "3 澄清规则", "4 整理成果"]
+    for index, step in enumerate(steps):
+        draw_pdf_text(c, step, frame_x + 176 + index * 96, frame_y + 231, 7, BLUE if index == 0 else MUTED, index == 0)
+    draw_pdf_text(c, "3 份资料进入本轮", frame_x + 176, frame_y + 174, 12, INK, True)
+    draw_wrapped(c, "订单、客户和说明文档会一起进入这一轮分析。", frame_x + 176, frame_y + 148, 360, 9, 14, MUTED)
+    draw_pdf_text(c, "数契 Agent", frame_x + 592, frame_y + 296, 11, INK, True)
+    draw_pdf_text(c, "你想从这三份资料里弄清什么？", frame_x + 592, frame_y + 244, 10, MUTED)
+    c.setStrokeColor(HexColor("#BFCBD7"))
+    c.rect(frame_x + 592, frame_y + 34, 236, 104, stroke=1, fill=0)
+    draw_pdf_text(c, "我想按地区统计订单金额。", frame_x + 606, frame_y + 103, 10, INK)
+    c.setFillColor(HexColor(BLUE))
+    c.rect(frame_x + 766, frame_y + 48, 48, 25, stroke=0, fill=1)
+    draw_pdf_text(c, "发送", frame_x + 779, frame_y + 57, 8, WHITE, True)
+    c.showPage()
+
+    # 06 · Questions that change the answer
+    page_base(c, width, height, 6)
+    draw_pdf_text(c, "04 / 第二步", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "Agent 把会改变结果的问题问出来", 54, 443, 28, INK, True)
+    draw_pdf_text(c, "每个问题都说明为什么现在需要确认。", 54, 414, 11, MUTED)
+    c.setFillColor(white)
+    c.setStrokeColor(HexColor(LINE))
+    c.rect(54, 90, 298, 280, stroke=1, fill=1)
+    draw_pdf_text(c, "资料里已经找到", 76, 339, 9, BLUE, True)
+    findings = ["订单状态：paid、refunded、pending", "连接字段：customer_id", "时间字段：paid_at"]
+    for index, finding in enumerate(findings):
+        draw_wrapped(c, finding, 76, 290 - index * 58, 250, 11, 16, INK, index == 1)
+    questions = [
+        ("01", "待支付订单要算进去吗？", "影响华东的 199 元", "统计范围"),
+        ("02", "退款订单怎么处理？", "排除和扣减会得到不同答案", "金额规则"),
+        ("03", "按哪个时间归属？", "支付时间会改变统计范围", "时间范围"),
+    ]
+    for index, (number, title, body, effect) in enumerate(questions):
+        y = 292 - index * 94
+        c.setFillColor(white)
+        c.rect(382, y, 524, 78, stroke=1, fill=1)
+        draw_pdf_text(c, number, 400, y + 29, 11, BLUE, True)
+        draw_pdf_text(c, title, 446, y + 45, 13, INK, True)
+        draw_pdf_text(c, body, 446, y + 23, 9, MUTED)
+        c.setFillColor(HexColor("#FFF0CF"))
+        c.rect(818, y + 24, 70, 24, stroke=0, fill=1)
+        draw_pdf_text(c, effect, 829, y + 32, 7, "#A76A08", True)
+    c.showPage()
+
+    # 07 · Human review
+    page_base(c, width, height, 7)
+    draw_pdf_text(c, "05 / 第三步", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "人用大白话做决定", 54, 443, 28, INK, True)
+    c.setFillColor(HexColor("#F5F7FA"))
+    c.setStrokeColor(HexColor(LINE))
+    c.rect(54, 86, 292, 316, stroke=1, fill=1)
+    draw_pdf_text(c, "等待确认", 76, 365, 9, "#A76A08", True)
+    draw_wrapped(c, "我把你的回答整理成了 3 条规则", 76, 322, 240, 18, 25, INK, True)
+    draw_pdf_text(c, "确认后会更新", 76, 204, 8, MUTED)
+    draw_pdf_text(c, "地区净订单金额", 76, 174, 12, INK, True)
+    draw_pdf_text(c, "订单与客户关系", 76, 148, 12, INK, True)
+    rules = [
+        ("纳入哪些订单", "只统计已支付订单", "pending 不进入金额"),
+        ("退款怎么处理", "从原订单地区的已支付金额中扣除", "refunded 作为扣减项"),
+        ("按哪个时间", "按支付时间归属", "未支付订单没有支付时间"),
+    ]
+    for index, (label, answer, note) in enumerate(rules):
+        y = 298 - index * 82
+        c.setFillColor(white)
+        c.rect(372, y, 534, 68, stroke=1, fill=1)
+        draw_pdf_text(c, label, 390, y + 39, 8, MUTED)
+        draw_pdf_text(c, answer, 498, y + 38, 11, INK, True)
+        draw_pdf_text(c, note, 498, y + 17, 8, MUTED)
+    c.setFillColor(HexColor(BLUE))
+    c.rect(792, 102, 114, 34, stroke=0, fill=1)
+    draw_pdf_text(c, "确认并继续", 813, 114, 9, WHITE, True)
+    c.showPage()
+
+    # 08 · Candidate definition update
+    page_base(c, width, height, 8)
+    draw_pdf_text(c, "06 / 回答带来的变化", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "回答之后，定义真的变了", 54, 443, 28, INK, True)
+    draw_pdf_text(c, "390 元只解释规则差异；产品画面停在候选定义。", 54, 414, 11, MUTED)
+    c.setFillColor(HexColor("#F0F6FF"))
+    c.setStrokeColor(HexColor(LINE))
+    c.rect(54, 84, 340, 304, stroke=1, fill=1)
+    draw_pdf_text(c, "本轮更新", 76, 352, 9, BLUE, True)
+    draw_pdf_text(c, "地区净订单金额", 76, 300, 24, INK, True)
+    draw_wrapped(c, "按客户地区汇总已支付金额，再扣除同一地区的退款金额。", 76, 264, 286, 11, 17, MUTED)
+    draw_pdf_text(c, "1 个字段候选", 76, 158, 10, BLUE, True)
+    draw_pdf_text(c, "1 条关系候选", 190, 158, 10, BLUE, True)
+    draw_pdf_text(c, "3 条已确认规则", 76, 124, 10, BLUE, True)
+    result_rows = [
+        ("纳入范围", "status = paid", "已确认"),
+        ("退款处理", "从原订单地区金额中扣除", "已确认"),
+        ("时间归属", "paid_at · 北京时间", "已确认"),
+        ("资料关系", "orders.customer_id = customers.customer_id", "有出处"),
+    ]
+    for index, (label, value, status) in enumerate(result_rows):
+        y = 319 - index * 58
+        c.setStrokeColor(HexColor(LINE))
+        c.line(426, y - 12, 906, y - 12)
+        draw_pdf_text(c, label, 426, y + 10, 8, MUTED)
+        draw_pdf_text(c, value, 516, y + 9, 10, INK, True)
+        draw_pdf_text(c, status, 852, y + 9, 8, "#147D64", True)
+    c.setFillColor(HexColor(PAPER))
+    c.rect(426, 100, 480, 44, stroke=0, fill=1)
+    draw_pdf_text(c, "notes.md · 第 7 行：纳入状态、退款和时间需要业务确认", 442, 116, 8, MUTED)
+    c.showPage()
+
+    # 09 · Readback chain
+    page_base(c, width, height, 9)
+    draw_pdf_text(c, "07 / 留下来的工作记录", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "留下的不只是一段 AI 回复", 54, 443, 28, INK, True)
+    draw_pdf_text(c, "换个人接手，也能知道结论从哪里来，还有什么没解决。", 54, 414, 11, MUTED)
+    chain = [
+        ("01", "本轮资料", "3 份公开合成文件"),
+        ("02", "为什么追问", "哪些选择会改变结果"),
+        ("03", "谁做了决定", "人的回答与确认"),
+        ("04", "这一轮改了什么", "字段、关系和规则"),
+        ("05", "还不知道什么", "未知事项继续保留"),
+    ]
+    for index, (number, label, text) in enumerate(chain):
+        x = 54 + index * 170
+        c.setFillColor(white)
+        c.setStrokeColor(HexColor(LINE))
+        c.rect(x, 154, 154, 196, stroke=1, fill=1)
+        c.circle(x + 28, 318, 14, stroke=1, fill=0)
+        draw_pdf_text(c, number, x + 20, 315, 8, BLUE, True)
+        draw_pdf_text(c, label, x + 18, 254, 8, MUTED)
+        draw_wrapped(c, text, x + 18, 224, 118, 12, 18, INK, True)
+    c.setFillColor(HexColor(INK))
+    c.rect(54, 88, 834, 44, stroke=0, fill=1)
+    draw_pdf_text(c, "复核时不用重猜", 74, 104, 11, WHITE, True)
+    draw_pdf_text(c, "出处、回答和变化都能沿着同一条记录往回看", 576, 104, 9, "#CBD5E1")
+    c.showPage()
+
+    # 10 · Capabilities and boundaries
+    page_base(c, width, height, 10)
+    draw_pdf_text(c, "08 / Demo 1.0.0", 54, 485, 10, BLUE, True)
+    draw_pdf_text(c, "现在能做什么，也明确不能做什么", 54, 443, 28, INK, True)
+    columns = [
+        (54, "当前可以体验", "#E9F7F2", "#147D64", [
+            ("和 Agent 连续对话", "不用先理解复杂运行概念"),
+            ("明确本轮资料范围", "只依据选中的公开或本地资料"),
+            ("追问并确认关键规则", "人的决定不会被悄悄代替"),
+            ("查看候选结果和出处", "变化与未知事项可以回看"),
+        ]),
+        (494, "当前不能这样理解", "#FFF0CF", "#A76A08", [
+            ("候选不等于正式批准", "关键业务定义仍需要人的审核"),
+            ("不会写入生产数据库", "Demo 不执行 SQL 或外部业务写入"),
+            ("没有云端多人协作", "当前工作区和状态保存在本机"),
+            ("客户价值仍需真实验证", "工程检查不代替业务效果"),
+        ]),
+    ]
+    for x, label, tag_bg, tag_color, items in columns:
+        c.setFillColor(white)
+        c.setStrokeColor(HexColor(LINE))
+        c.rect(x, 80, 412, 318, stroke=1, fill=1)
+        c.setFillColor(HexColor(tag_bg))
+        c.rect(x + 22, 350, 122, 25, stroke=0, fill=1)
+        draw_pdf_text(c, label, x + 34, 359, 8, tag_color, True)
+        for index, (title, body) in enumerate(items):
+            y = 306 - index * 62
+            draw_pdf_text(c, title, x + 24, y, 11, INK, True)
+            draw_pdf_text(c, body, x + 24, y - 20, 8, MUTED)
+            c.setStrokeColor(HexColor(LINE))
+            c.line(x + 24, y - 31, x + 388, y - 31)
+    c.showPage()
+
+    # 11 · CTA
+    page_base(c, width, height, 11, stage=True)
+    c.drawImage(ImageReader(str(MARK_SOURCE)), 64, 385, width=86, height=86, mask="auto")
+    draw_pdf_text(c, "数契 ContextOx · Demo 1.0.0", 64, 348, 11, "#81B5FF", True)
+    draw_pdf_text(c, "带一个总对不上的业务口径，", 64, 286, 36, WHITE, True)
+    draw_pdf_text(c, "和数契一起把它说清楚", 64, 240, 36, WHITE, True)
+    draw_wrapped(c, "可以先用公开合成示例体验，也可以带一组脱敏资料试一轮。", 64, 192, 760, 14, 21, "#C7D4E5")
+    c.setFillColor(white)
+    c.rect(64, 105, 210, 42, stroke=0, fill=1)
+    draw_pdf_text(c, "查看 45 秒产品演示", 88, 121, 10, INK, True)
+    draw_pdf_text(c, "github.com/archerthegoat/contextox-agent", 310, 120, 10, "#81B5FF", True)
+    draw_pdf_text(c, "公开源码 · 公开合成 Demo · 候选结果由人核对", 64, 62, 9, "#A9B8CA")
+    c.showPage()
     c.save()
 
 

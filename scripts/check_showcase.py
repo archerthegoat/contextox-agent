@@ -3,13 +3,17 @@
 
 from __future__ import annotations
 
+import csv
+from decimal import Decimal
 from html.parser import HTMLParser
 from pathlib import Path
 import sys
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "site"
+DEMO = ROOT / "src" / "contextox" / "demo"
 
 
 class ShowcaseParser(HTMLParser):
@@ -34,6 +38,35 @@ class ShowcaseParser(HTMLParser):
             self.slides += 1
         if tag == "button" and "data-slide-index" in values:
             self.menu_items += 1
+
+
+def compute_east_china_totals() -> tuple[Decimal, Decimal, Decimal]:
+    with (DEMO / "customers.csv").open(encoding="utf-8", newline="") as handle:
+        regions = {
+            row["customer_id"]: row["region"]
+            for row in csv.DictReader(handle)
+        }
+    with (DEMO / "orders.csv").open(encoding="utf-8", newline="") as handle:
+        east_orders = [
+            row
+            for row in csv.DictReader(handle)
+            if regions.get(row["customer_id"]) == "华东"
+        ]
+
+    all_records = sum((Decimal(row["amount"]) for row in east_orders), Decimal("0"))
+    paid_only = sum(
+        (Decimal(row["amount"]) for row in east_orders if row["status"] == "paid"),
+        Decimal("0"),
+    )
+    refunded = sum(
+        (
+            Decimal(row["amount"])
+            for row in east_orders
+            if row["status"] == "refunded"
+        ),
+        Decimal("0"),
+    )
+    return all_records, paid_only, paid_only - refunded
 
 
 def main() -> int:
@@ -65,9 +98,11 @@ def main() -> int:
         parser.feed(text)
         parsed[name] = parser
         for reference in parser.references:
-            if reference.startswith(("https://", "http://", "mailto:", "#")):
+            if reference.startswith(("https://", "http://", "mailto:", "tel:", "data:", "#")):
                 continue
-            file_part, _, fragment = reference.partition("#")
+            reference_parts = urlsplit(reference)
+            file_part = reference_parts.path
+            fragment = reference_parts.fragment
             target = (path.parent / file_part).resolve() if file_part else path
             if not target.is_file():
                 errors.append(f"broken reference in {name}: {reference}")
@@ -86,8 +121,8 @@ def main() -> int:
 
     deck = parsed.get("presentation.html")
     if deck:
-        if deck.slides != 8:
-            errors.append(f"presentation must contain 8 slides, found {deck.slides}")
+        if deck.slides != 11:
+            errors.append(f"presentation must contain 11 slides, found {deck.slides}")
         if deck.menu_items != deck.slides:
             errors.append(
                 f"presentation menu/slide mismatch: {deck.menu_items}/{deck.slides}"
@@ -105,6 +140,18 @@ def main() -> int:
         if required_copy not in all_copy:
             errors.append(f"required disclosure missing: {required_copy}")
 
+    totals = compute_east_china_totals()
+    expected_totals = (Decimal("689.00"), Decimal("440.00"), Decimal("390.00"))
+    if totals != expected_totals:
+        errors.append(
+            "public demo arithmetic drift: "
+            f"expected {expected_totals}, calculated {totals}"
+        )
+    for value in expected_totals:
+        visible_value = f"{value:.0f}"
+        if visible_value not in all_copy:
+            errors.append(f"public demo total missing from showcase copy: {visible_value}")
+
     if errors:
         print("showcase validation: FAIL")
         for error in errors:
@@ -112,7 +159,8 @@ def main() -> int:
         return 1
     print("showcase validation: PASS")
     print("- landing page: references and disclosures valid")
-    print("- presentation: 8 slides and 8 menu entries")
+    print("- presentation: 11 slides and 11 menu entries")
+    print("- public demo arithmetic: 华东 689 / 440 / 390")
     print("- asset policy: no missing local dependencies")
     return 0
 
