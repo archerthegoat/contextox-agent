@@ -1,15 +1,27 @@
-production_id: contextox-demo-1.0.0-silent-film
-mode: silent_product_launch
-purpose: 分享会开场、项目展示与落地页内嵌候选
+production_id: contextox-demo-1.0.0-product-film
+mode: silent_product_demo
+purpose: 落地页首屏产品演示与线下介绍开场
 audience:
-  - 数据分析与数据产品从业者
-  - 数据工程、数据治理、BI 与 FDE 从业者
-primary_message: 让每一张表，都说清自己代表什么。
-supporting_message: 数契把表格、说明和人的判断，整理成有证据、可确认的业务定义。
+  - 业务负责人
+  - 产品负责人
+  - 数据负责人
+  - 交付负责人
+primary_message: 同一份订单数据，为什么会有三个答案？
+supporting_message: 不是大家不会算，而是没有先说清哪些算进去、退款怎么处理、按哪个时间。数契让 Agent 找出处、提出问题，人确认关键规则，再留下可以回看的候选定义。
 duration_seconds: 45
 aspect: 16:9
 dimensions: 1920x1080
 fps: 30
-audio: none
+composition_id: ContextOxProductFilm
+audio:
+  voice: none
+  music: project_original_96_bpm_electronic
+  ui_sound_effects: project_original
+  target_lufs: -16
+  true_peak_dbtp_max: -1
+product_boundary:
+  numeric_case: 689、440、390 只解释规则不同会得到不同答案
+  product_endpoint: 候选定义
+  disclosure: 公开合成 Demo；候选而非正式批准结果
 publication: not_authorized
 human_acceptance: pending

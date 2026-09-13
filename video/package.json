@@ -6,8 +6,9 @@
   "scripts": {
     "studio": "remotion studio src/index.ts --no-open",
     "typecheck": "tsc --noEmit",
-    "still": "remotion still src/index.ts ContextOxSilentLaunch",
-    "render": "remotion render src/index.ts ContextOxSilentLaunch ../output/video/contextox-demo-1.0.0-silent-launch.mp4 --codec=h264 --crf=18 --muted"
+    "audio": "/usr/bin/python3 scripts/generate_audio.py",
+    "still": "remotion still src/index.ts ContextOxProductFilm",
+    "render": "remotion render src/index.ts ContextOxProductFilm ../output/video/contextox-demo-1.0.0-product-film.mp4 --codec=h264 --crf=18 --audio-codec=aac"
   },
   "dependencies": {
     "@remotion/cli": "4.0.506",

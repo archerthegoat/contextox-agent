@@ -1,18 +1,32 @@
-spec_version: 1
-production_id: contextox-demo-1.0.0-silent-film
-mode: silent_product_launch
+spec_version: 2
+production_id: contextox-demo-1.0.0-product-film
+composition_id: ContextOxProductFilm
+mode: silent_product_demo
 voice_origin: none
 main_voice_asset: null
-music_asset: null
-captions: not_applicable
+music_asset: public/audio/contextox-v2-mix.wav
+captions: burned_in_chinese
 cta: github.com/archerthegoat/contextox-agent
+timeline:
+  - {scene_id: hook, from: 0, duration: 120}
+  - {scene_id: rule_focus, from: 120, duration: 150}
+  - {scene_id: select_sources, from: 270, duration: 180}
+  - {scene_id: clarify_rules, from: 450, duration: 210}
+  - {scene_id: confirm_answers, from: 660, duration: 210}
+  - {scene_id: candidate_result, from: 870, duration: 210}
+  - {scene_id: inspect_changes, from: 1080, duration: 150}
+  - {scene_id: cta, from: 1230, duration: 120}
+total_frames: 1350
 claims:
   required:
     - Demo 1.0.0
-    - 公开合成演示
-    - 候选业务定义
+    - 公开合成资料
+    - 候选定义
+    - 关键规则由人确认
   forbidden:
-    - 完全离线
-    - 生产级
+    - 689、440、390 是产品运行结果
+    - 正式批准结果
+    - 生产数据库写入
     - 客户案例
     - 未验证提效数字
+    - 自动执行
