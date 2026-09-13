@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" role="img" aria-labelledby="title desc">
+  <title id="title">数契 ContextOx 横版标志</title>
+  <desc id="desc">数契图标、中文名与英文名的横向组合。</desc>
+  <g transform="translate(8 8) scale(.5625)">
+    <path d="M168 61a77 77 0 1 0 25 105" fill="none" stroke="#1674f3" stroke-width="29" stroke-linecap="square"/>
+    <path d="M113 138 181 70l22 22-68 68z" fill="#1674f3"/>
+  </g>
+  <text x="180" y="78" fill="#13243a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif" font-size="58" font-weight="740">数契</text>
+  <text x="181" y="122" fill="#607086" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="28" font-weight="650" letter-spacing="1.4">ContextOx</text>
+</svg>

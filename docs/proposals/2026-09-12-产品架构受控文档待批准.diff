@@ -1,0 +1,38 @@
+diff --git a/开发路径图.md b/开发路径图.md
+--- a/开发路径图.md
++++ b/开发路径图.md
+@@ -153,5 +153,15 @@
+ 保留对话主导、精确资料范围、业务批准、未知结果核对、手动浏览优先和真实状态语义；界面简化不得暗中发送、自动批准、自动扩大资料范围或把候选写成事实。
+ 
+ 通过门：新使用者不阅读 README 也能从空对话完成选择资料、表达目标、处理澄清、确认回答和查看候选变化；主要动作在默认视图可见并支持键盘操作，内部标识不占据默认业务界面，失败与结果未知仍提供准确的核对和恢复入口。
++
++### 路径 3/4 的正式交付与批准复用增量（2026-09-12）
++
++采用 `docs/proposals/路径3-5产品与架构实施合同.md` 的精确内容。ContextOx 继续使用自有薄 Python Loop；只借鉴成熟 Agent Runtime 的按调用上下文编译、运行事件分层与追加式会话历史，不迁移到 Pi Agent Core，不增加通用工具、Agent subdelegation、框架内存或以 `agent_end` 代表业务完成。
++
++路径 3 先把现有候选定义推进为不可变 `ContractVersion`：候选提交、要求修改、精确版本批准、发布回执与 Mission 完成分别记录。正式 Contract 至少包含业务目的、实体、粒度、身份、时间语义、来源映射、字段与指标定义、计算规则、例外、未知、正反例、责任人、验收条件和变更记录；缺少必需维度、引用陈旧、回答版本不符或仍有阻塞未知时不得发布。只有已发布 Contract、所需证据、验收项和显式终止收据全部匹配时，Mission 才能 completed。
++
++路径 4 将已发布 Contract 编译为 `WorkspaceContextVersion` 候选，并再次绑定精确版本批准。新 Mission 只获得确定性的相关建议；用户查看来源、适用范围、时效和冲突后逐项选择是否用于本任务，默认不选。只有明确选中的 approved、有效、权限匹配且无冲突版本可进入本轮 ContextPacketManifest；未批准、失效、撤销、冲突或跨 Workspace 内容不得发送给 Provider。`MEMORY.md` 仍只是可重建投影，不是权威来源。
++
++实施按 C0 合同冻结、P2 完整质量门、P3 正式交付、P4 批准复用、P5 同材料比较推进。真实 Provider 调用使用独立预算卡；规划或合同批准不授权调用。自动验证、真实模型、浏览器检查、人的精确构建验收、Pages 发布和用户价值继续分栏。
+ 
+ ### 路径 3：跑通高潜客户定义的完整闭环
+diff --git a/docs/架构与迁移报告.md b/docs/架构与迁移报告.md
+--- a/docs/架构与迁移报告.md
++++ b/docs/架构与迁移报告.md
+@@ -805,5 +805,15 @@
+ - 本地设置保留 Keychain、显式环境/文件配置及不回显秘密的边界；仅保存设置不调用模型。“保存并发送”必须绑定已展示的原消息与资料范围，不能在刷新、浏览或连接恢复时暗中发送。
+ 
+ 该增量的原型、合成测试、真实模型和人的验收分别记录；正式 Contract、Mission 完成、跨任务知识复用、外部系统和发布权限不扩大。真实调用需独立案例与预算，本次 Git 交付限本地分支及逐片提交。
++
++### 17.4 路径 3/4 正式 Contract 与批准 Context 复用合同（2026-09-12）
++
++采用 `docs/proposals/路径3-5产品与架构实施合同.md` 的精确内容。ContextOx 保留现有 Python 确定性控制器和唯一 Provider 边界；借鉴 Pi 的每次调用上下文变换、运行事件与追加式 session 模式，但不采用其 Coding Agent 工具面、框架内存、Agent subdelegation 或完成语义。用户在正在执行的 Provider/事务期间发送的新消息只作为下一安全消息边界的输入，不热注入当前调用；ContextOx 持久状态始终优先于派生 transcript/summary。
++
++v7→v8 只新增 Workspace scoped 的 Contract 候选/版本、审阅决定、发布回执和 Mission 完成回执。`ContractVersionV1`、`ContractReviewDecisionV1` 与 `MissionCompletionReceiptV1` 的字段、状态、CAS、幂等、失败和发布条件以采用合同第 4 节为准。发布事务必须校验精确 draft version/hash、来源 revision、批准回答、内容 hash、必需维度和阻塞未知；模型、导出或 submit_for_review 均不能批准或发布。Mission completed 只由已发布 Contract、所需验收/证据和显式 terminal receipt 的领域校验产生。
++
++v8→v9 只新增 `WorkspaceContextVersionV1`、`ContextReuseSuggestionV1`、`ContextReuseDecisionV1` 和投影状态。建议由 workspace、权限、subject、scope、时效、版本和冲突的确定性过滤/排序产生，不先发送给 Provider；默认未选，只有用户明确接受的精确 approved 版本进入新的 ContextPacketManifest。stale、revoked、conflict、未知权限、跨 Workspace 或 manifest/hash 失配一律拒绝。`MEMORY.md` 可从权威对象重建，不能反向批准或覆盖数据库状态。
++
++两次迁移分别停服、检查无活动 Run/attempt、备份并在单事务内执行，完成 exact schema、外键、内容 hash 和重启回读；失败保留旧库和备份，不开放新写入，也不删除新历史降级。精确 Pydantic/API、表结构、迁移命令、错误码和 Workbench 交互在各自执行卡中冻结；本节不授权 Provider 调用、客户数据、发布、部署或外部写入。
+ 
+ ## 18. 来源证据

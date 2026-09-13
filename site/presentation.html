@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="数契 ContextOx Demo 1.0.0：从三个不同答案开始，讲清业务定义如何形成、数契与同类工具的区别，以及如何联系体验">
+  <title>数契动态介绍</title>
+  <link rel="icon" href="assets/favicon.svg">
+  <link rel="stylesheet" href="styles.css?v=4">
+  <style>.motion-reduced *, .motion-reduced *::before, .motion-reduced *::after { animation: none !important; transition: none !important; } .motion-reduced .reveal { opacity: 1; transform: none; }</style>
+</head>
+<body class="deck-body">
+  <main class="deck" aria-label="数契项目动态介绍">
+    <section class="slide slide--stage slide--opening" tabindex="-1" aria-hidden="true" data-title="三个答案">
+      <div class="slide__inner">
+        <p class="slide__kicker reveal" style="--order:0">一个真实数字问题 · 公开合成数据</p>
+        <h1 class="reveal" style="--order:1">同一份订单数据，<br>为什么会有<br class="mobile-only-break">三个答案？</h1>
+        <div class="answer-numbers" aria-label="三个可能的答案">
+          <div class="answer-number reveal" style="--order:2"><strong>689</strong><span>元</span><small>所有记录都相加</small></div>
+          <div class="answer-number reveal" style="--order:3"><strong>440</strong><span>元</span><small>只统计已支付</small></div>
+          <div class="answer-number answer-number--focus reveal" style="--order:4"><strong>390</strong><span>元</span><small>已支付再扣退款</small></div>
+        </div>
+        <p class="stage-answer reveal" style="--order:5">三个数都能算出来。真正没说清的是，哪些算进去、怎么处理、按什么时间。</p>
+        <p class="slide__disclosure">数契 ContextOx · Demo 1.0.0</p>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="三个答案怎么算">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">01 / 三个答案怎么算</p>
+        <div class="slide-title-row">
+          <div>
+            <h2>同一份数据，三种算法</h2>
+            <p class="lead">下面 6 行订单全部来自公开合成示例。先看数据，再看每种规则怎样改变华东金额。</p>
+          </div>
+          <span class="data-badge">公开合成数据</span>
+        </div>
+        <div class="data-story">
+          <div class="data-table-wrap reveal" style="--order:1">
+            <table class="data-table">
+              <thead><tr><th>订单</th><th>地区</th><th>金额</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr class="row-paid"><td>O001</td><td>华东</td><td>120.00</td><td><span>paid</span></td></tr>
+                <tr class="row-paid"><td>O002</td><td>华南</td><td>80.50</td><td><span>paid</span></td></tr>
+                <tr class="row-refunded"><td>O003</td><td>华东</td><td>50.00</td><td><span>refunded</span></td></tr>
+                <tr class="row-pending"><td>O004</td><td>华东</td><td>199.00</td><td><span>pending</span></td></tr>
+                <tr class="row-paid"><td>O005</td><td>华南</td><td>60.00</td><td><span>paid</span></td></tr>
+                <tr class="row-paid"><td>O006</td><td>华东</td><td>320.00</td><td><span>paid</span></td></tr>
+              </tbody>
+            </table>
+            <p class="table-note">地区由 <code>customer_id</code> 连接客户表得到</p>
+          </div>
+          <div class="calculation-stack">
+            <div class="calculation reveal" style="--order:2"><small>算法 A · 全部相加</small><strong>120 + 50 + 199 + 320</strong><b>689 元</b></div>
+            <div class="calculation reveal" style="--order:3"><small>算法 B · 只算 paid</small><strong>120 + 320</strong><b>440 元</b></div>
+            <div class="calculation calculation--focus reveal" style="--order:4"><small>算法 C · paid 再扣 refunded</small><strong>120 + 320 − 50</strong><b>390 元</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="规则没有说清">
+      <div class="slide__inner">
+        <p class="slide__kicker">02 / 为什么总在返工</p>
+        <h2>公式会写，规则还在每个人脑子里</h2>
+        <p class="lead">“按地区统计订单金额”听起来已经很清楚。真正开始做时，三个人可能各自补上一套没有写下来的规则。</p>
+        <div class="friction-flow" aria-label="同一句需求形成三份不同结果">
+          <div class="friction-request reveal" style="--order:1"><small>一句需求</small><strong>按地区统计订单金额</strong></div>
+          <div class="friction-branches">
+            <div class="friction-branch reveal" style="--order:2"><span>业务</span><strong>把待支付也算进去</strong><b>689</b></div>
+            <div class="friction-branch reveal" style="--order:3"><span>分析师</span><strong>只看已支付订单</strong><b>440</b></div>
+            <div class="friction-branch reveal" style="--order:4"><span>财务</span><strong>已支付还要扣退款</strong><b>390</b></div>
+          </div>
+          <div class="friction-result reveal" style="--order:5"><small>最后的问题</small><strong>谁算错了？依据在哪里？下次还用哪套？</strong></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide slide--stage slide--product-intro" tabindex="-1" aria-hidden="true" data-title="数契做什么">
+      <div class="slide__inner">
+        <img class="stage-mark reveal" style="--order:0" src="assets/contextox-mark-white.svg" alt="">
+        <p class="slide__kicker reveal" style="--order:1">数契 ContextOx</p>
+        <h1 class="reveal" style="--order:2">先把业务意思说清楚，<br>再开始交付</h1>
+        <div class="product-promise reveal" style="--order:3">
+          <span>把资料放进来，说出你想弄清楚的问题</span>
+          <span>Agent 找出处，把会改变结果的问题问出来</span>
+          <span>人确认关键规则，留下可以回看的候选定义</span>
+        </div>
+        <p class="slide__disclosure">Agent 找证据 · 人确认业务事实</p>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="选择资料">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">03 / 第一步</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div><h2>告诉它，这次看哪些资料</h2><p class="lead">资料范围先说清，Agent 才知道这一轮可以依据什么。</p></div>
+          <span class="simulation-badge">讲解模拟 · 对应当前 Workbench</span>
+        </div>
+        <div class="workbench reveal" style="--order:1" aria-label="选择资料并输入目标的讲解模拟">
+          <aside class="workbench__nav">
+            <div class="wb-brand"><img src="assets/contextox-mark.svg" alt=""><strong>数契</strong></div>
+            <button class="wb-new">新对话</button>
+            <small>资料库</small>
+            <ul class="wb-sources">
+              <li class="is-selected">✓ orders.csv</li>
+              <li class="is-selected">✓ customers.csv</li>
+              <li class="is-selected">✓ notes.md</li>
+            </ul>
+            <p>本轮已选 3 份资料</p>
+          </aside>
+          <div class="workbench__center">
+            <small class="wb-label">当前进度</small>
+            <h3>从一个问题开始</h3>
+            <div class="wb-progress"><b class="is-active">1 明确目标</b><span>2 理解资料</span><span>3 澄清规则</span><span>4 整理成果</span></div>
+            <div class="wb-summary"><span>正在做什么<strong>等待你的目标</strong></span><span>需要你做什么<strong>说出想弄清楚的问题</strong></span><span>已经得到什么<strong>3 份资料进入本轮</strong></span></div>
+            <div class="wb-canvas"><small>任务工作区</small><strong>资料已经选好</strong><p>订单、客户和说明文档会一起进入这一轮分析。</p></div>
+          </div>
+          <aside class="workbench__agent">
+            <div class="wb-agent-title"><strong>数契 Agent</strong><span>一起把问题弄清楚</span></div>
+            <div class="wb-message">你想从这三份资料里弄清什么？</div>
+            <div class="wb-compose"><p>我想按地区统计订单金额。</p><div><span>资料 · 3</span><button>发送</button></div></div>
+          </aside>
+          <div class="cursor cursor--send" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="Agent 提出问题">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">04 / 第二步</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div><h2>Agent 把会改变结果的问题问出来</h2><p class="lead">它不替你猜业务事实。每个问题都会说明，为什么现在需要确认。</p></div>
+          <span class="simulation-badge">讲解模拟 · 公开合成资料</span>
+        </div>
+        <div class="question-workbench">
+          <div class="question-context reveal" style="--order:1">
+            <div class="wb-progress wb-progress--large"><b>1 明确目标</b><b>2 理解资料</b><b class="is-active">3 澄清规则</b><span>4 整理成果</span></div>
+            <div class="source-findings">
+              <small>资料里已经找到</small>
+              <p><strong>订单状态：</strong>paid、refunded、pending</p>
+              <p><strong>连接字段：</strong>orders.customer_id 和 customers.customer_id</p>
+              <p><strong>时间字段：</strong>paid_at，未支付订单为空</p>
+            </div>
+          </div>
+          <div class="question-list">
+            <article class="question-item reveal" style="--order:2"><span>01</span><div><strong>待支付订单要算进去吗？</strong><p>它会决定华东的 199 元是否进入结果。</p></div><b>影响统计范围</b></article>
+            <article class="question-item reveal" style="--order:3"><span>02</span><div><strong>退款订单怎么处理？</strong><p>排除退款和从已支付金额中扣除，会得到不同答案。</p></div><b>影响金额规则</b></article>
+            <article class="question-item reveal" style="--order:4"><span>03</span><div><strong>按哪个时间归属？</strong><p>资料里有支付时间，退款和待支付记录需要另行说明。</p></div><b>影响时间范围</b></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="人确认规则">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">05 / 第三步</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div><h2>人用大白话做决定</h2><p class="lead">Agent 把回答整理成规则，人先核对，再让它进入下一轮。</p></div>
+          <span class="simulation-badge">讲解模拟 · 人确认以后才采用</span>
+        </div>
+        <div class="answer-review reveal" style="--order:1">
+          <div class="answer-review__intro">
+            <span class="status-pill">等待确认</span>
+            <h3>我把你的回答整理成了 3 条规则</h3>
+            <p>请确认下面的文字准确表达了你的意思。</p>
+            <div class="answer-impact"><small>确认后会更新</small><strong>地区净订单金额</strong><strong>订单与客户关系</strong></div>
+          </div>
+          <div class="answer-review__rules">
+            <label class="rule-answer"><span>纳入哪些订单</span><strong>只统计已支付订单</strong><small>pending 不进入金额</small></label>
+            <label class="rule-answer"><span>退款怎么处理</span><strong>从原订单地区的已支付金额中扣除</strong><small>refunded 作为扣减项</small></label>
+            <label class="rule-answer"><span>按哪个时间</span><strong>按支付时间归属</strong><small>未支付订单没有支付时间</small></label>
+            <div class="review-actions"><button>修改回答</button><button class="is-primary">确认并继续</button></div>
+          </div>
+          <div class="cursor cursor--confirm" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="候选定义更新">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">06 / 回答带来的变化</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div><h2>回答之后，定义真的变了</h2><p class="lead">数契没有把 390 元冒充计算结果。它先把以后该怎样计算写成可以核对的候选定义。</p></div>
+          <span class="simulation-badge">讲解模拟 · 候选成果</span>
+        </div>
+        <div class="result-workbench reveal" style="--order:1">
+          <div class="result-summary">
+            <small>本轮更新</small>
+            <h3>地区净订单金额</h3>
+            <p>按客户地区汇总已支付金额，再扣除同一地区的退款金额。</p>
+            <div class="result-counts"><span><b>1</b> 个字段候选</span><span><b>1</b> 条关系候选</span><span><b>3</b> 条已确认规则</span></div>
+          </div>
+          <div class="result-detail">
+            <div class="result-line"><span>纳入范围</span><strong>status = paid</strong><em>已确认</em></div>
+            <div class="result-line"><span>退款处理</span><strong>从原订单地区金额中扣除</strong><em>已确认</em></div>
+            <div class="result-line"><span>时间归属</span><strong>paid_at · 北京时间</strong><em>已确认</em></div>
+            <div class="result-line"><span>资料关系</span><strong>orders.customer_id = customers.customer_id</strong><em>有出处</em></div>
+            <div class="evidence-chip">notes.md · 第 7 行：纳入状态、退款和时间需要业务确认</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="可以回看和交接">
+      <div class="slide__inner">
+        <p class="slide__kicker">07 / 留下来的工作记录</p>
+        <h2>留下的不只是一段 AI 回复</h2>
+        <p class="lead">资料、问题、人的回答和候选结果各自保留。换个人接手，也能知道结论从哪里来，还有什么没解决。</p>
+        <div class="readback-chain" aria-label="从资料到候选定义的可回读链路">
+          <div class="readback-step reveal" style="--order:1"><span>01</span><small>本轮资料</small><strong>3 份公开合成文件</strong></div>
+          <div class="readback-step reveal" style="--order:2"><span>02</span><small>为什么追问</small><strong>哪些选择会改变结果</strong></div>
+          <div class="readback-step reveal" style="--order:3"><span>03</span><small>谁做了决定</small><strong>人的回答与确认</strong></div>
+          <div class="readback-step reveal" style="--order:4"><span>04</span><small>这一轮改了什么</small><strong>字段、关系和规则</strong></div>
+          <div class="readback-step reveal" style="--order:5"><span>05</span><small>还不知道什么</small><strong>未知事项继续保留</strong></div>
+        </div>
+        <div class="handoff-note reveal" style="--order:6"><strong>复核时不用重猜</strong><span>出处、回答和变化都能沿着同一条记录往回看</span></div>
+      </div>
+    </section>
+
+    <section class="slide slide--comparison" tabindex="-1" aria-hidden="true" data-title="不同工具解决什么问题">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">08 / 适用场景</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div>
+            <h2>不同工具解决不同阶段的问题</h2>
+            <p class="lead">数契聚焦业务定义还没说清的阶段。它不替代通用 Agent、企业数据平台或问数工具。</p>
+          </div>
+          <span class="data-badge">按任务选择</span>
+        </div>
+        <div class="tool-fit" aria-label="数契与通用 Agent、企业数据平台和问数工具的适用场景对比">
+          <div class="tool-fit__head"><span>当你想做什么</span><span>更适合的工具</span><span>数契的位置</span></div>
+          <article class="tool-fit__row reveal" style="--order:1">
+            <strong>完成代码、研究或制作任务</strong>
+            <span>通用 Agent，如 Codex</span>
+            <p>业务定义明确以后，可以继续交给它执行</p>
+          </article>
+          <article class="tool-fit__row reveal" style="--order:2">
+            <strong>建设目录、血缘、权限和企业上下文</strong>
+            <span>Atlan、DataHub</span>
+            <p>未来可以对接，不重复建设企业数据底座</p>
+          </article>
+          <article class="tool-fit__row reveal" style="--order:3">
+            <strong>在既有语义模型上直接问数</strong>
+            <span>BI 与问数工具</span>
+            <p>数契处理规则还没有确定的前一步</p>
+          </article>
+          <article class="tool-fit__row tool-fit__row--focus reveal" style="--order:4">
+            <strong>一句业务需求有多种理解</strong>
+            <span>数契当前聚焦</span>
+            <p>找出缺口，请人确认，留下可复核的候选定义</p>
+          </article>
+        </div>
+        <div class="comparison-summary reveal" style="--order:5">
+          <p><strong>数契当前注重点</strong>从一组资料和一个具体争议开始，把会改变结果的问题问给人，再把决定、出处和仍未知的内容留在同一份候选定义里。</p>
+          <p><strong>怎么理解“优势”</strong>这是产品选择，不是已经被真实业务验证的绝对优势。后续还要和配置合理的通用 Agent 做同题比较。</p>
+        </div>
+        <p class="comparison-sources">公开产品定位参考（2026-09-13）：<a href="https://openai.com/index/introducing-the-codex-app/" target="_blank" rel="noopener">Codex</a> · <a href="https://atlan.com/context-engineering-studio/" target="_blank" rel="noopener">Atlan</a> · <a href="https://datahub.com/products/context-platform/" target="_blank" rel="noopener">DataHub</a> · <a href="https://learn.microsoft.com/en-us/power-bi/create-reports/copilot-ask-data-question" target="_blank" rel="noopener">Power BI</a></p>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="当前能力与边界">
+      <div class="slide__inner">
+        <p class="slide__kicker">09 / Demo 1.0.0</p>
+        <h2>现在能做什么，也明确不能做什么</h2>
+        <div class="boundary-compare">
+          <section class="boundary-column boundary-column--can reveal" style="--order:1">
+            <small>当前可以体验</small>
+            <ul>
+              <li><strong>和 Agent 连续对话</strong><span>不用先理解复杂运行概念</span></li>
+              <li><strong>明确本轮资料范围</strong><span>只依据你选中的公开或本地资料</span></li>
+              <li><strong>追问并确认关键规则</strong><span>人的决定不会被悄悄代替</span></li>
+              <li><strong>查看候选字段、关系和出处</strong><span>变化和未知事项可以回看</span></li>
+            </ul>
+          </section>
+          <section class="boundary-column boundary-column--not reveal" style="--order:2">
+            <small>当前不能这样理解</small>
+            <ul>
+              <li><strong>候选不等于正式批准</strong><span>关键业务定义仍需要人的审核</span></li>
+              <li><strong>不会写入生产数据库</strong><span>Demo 不执行 SQL 或外部业务写入</span></li>
+              <li><strong>没有云端多人协作</strong><span>当前工作区和状态保存在本机</span></li>
+              <li><strong>客户价值仍需真实案例验证</strong><span>工程检查不代替业务效果</span></li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide slide--stage slide--cta" tabindex="-1" aria-hidden="true" data-title="体验数契">
+      <div class="slide__inner">
+        <img class="stage-mark stage-mark--large reveal" style="--order:0" src="assets/contextox-mark-white.svg" alt="数契标志">
+        <p class="slide__kicker reveal" style="--order:1">数契 ContextOx · Demo 1.0.0</p>
+        <h1 class="reveal" style="--order:2">带一个总对不上的业务口径，<br>和数契一起把它说清楚</h1>
+        <p class="stage-answer reveal" style="--order:3">可以先用公开合成示例体验，也可以带一组脱敏资料试一轮。</p>
+        <div class="stage-actions reveal" style="--order:4">
+          <a class="button button--inverse" href="https://github.com/archerthegoat/contextox-agent/issues" target="_blank" rel="noopener">交流问题或申请体验</a>
+          <a class="button button--ghost" href="https://github.com/archerthegoat" target="_blank" rel="noopener">联系 @archerthegoat</a>
+        </div>
+        <div class="stage-contact reveal" style="--order:5">
+          <a href="downloads/contextox-demo-1.0.0-product-film.mp4" target="_blank">播放 45 秒产品演示</a>
+          <a href="downloads/contextox-demo-1.0.0-presentation.pdf" target="_blank">离线阅读 12 页 PDF</a>
+          <a href="https://github.com/archerthegoat/contextox-agent" target="_blank" rel="noopener">查看公开源码</a>
+        </div>
+        <p class="slide__disclosure">公开源码 · 公开合成 Demo · 候选结果由人核对</p>
+      </div>
+    </section>
+  </main>
+
+  <div class="deck-top-actions">
+    <a href="downloads/contextox-demo-1.0.0-product-film.mp4" target="_blank">45 秒演示</a>
+    <button type="button" data-motion aria-pressed="false">减弱动效</button>
+    <button type="button" data-fullscreen>全屏</button>
+    <button type="button" data-menu-toggle aria-expanded="false" aria-controls="slide-menu">目录</button>
+  </div>
+
+  <nav class="slide-menu" id="slide-menu" data-menu hidden aria-label="页面目录">
+    <button type="button" data-slide-index>01 · 三个答案</button>
+    <button type="button" data-slide-index>02 · 三种算法</button>
+    <button type="button" data-slide-index>03 · 规则没有说清</button>
+    <button type="button" data-slide-index>04 · 数契做什么</button>
+    <button type="button" data-slide-index>05 · 选择资料</button>
+    <button type="button" data-slide-index>06 · Agent 提出问题</button>
+    <button type="button" data-slide-index>07 · 人确认规则</button>
+    <button type="button" data-slide-index>08 · 候选定义更新</button>
+    <button type="button" data-slide-index>09 · 可以回看和交接</button>
+    <button type="button" data-slide-index>10 · 不同工具的分工</button>
+    <button type="button" data-slide-index>11 · 当前能力与边界</button>
+    <button type="button" data-slide-index>12 · 联系与体验</button>
+  </nav>
+
+  <div class="deck-chrome" aria-label="演示控制">
+    <div class="deck-brand"><img src="assets/contextox-mark.svg" alt=""><span>数契 ContextOx</span></div>
+    <div class="deck-progress" data-progress aria-live="polite"></div>
+    <div class="deck-actions">
+      <button class="deck-control" type="button" data-previous aria-label="上一页">←</button>
+      <button class="deck-control" type="button" data-next aria-label="下一页">→</button>
+    </div>
+  </div>
+  <script src="presentation.js"></script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+composition_id: ContextOxProductFilm
+duration_frames: 1350
+fps: 30
+scenes:
+  - scene_id: hook
+    from: 0
+    duration: 120
+    timecode: 00:00-00:04
+    action: 六行公开合成订单逐行组装，689、440、390 依次冲入并同时定格
+    caption: 689？440？390？
+    boundary: 数字仅用于解释规则差异，不是产品运行结果
+  - scene_id: rule_focus
+    from: 120
+    duration: 150
+    timecode: 00:04-00:09
+    action: 放大订单表，依次聚焦 status、amount、region 与待支付、退款记录
+    caption: 不是不会算，是规则没说清
+  - scene_id: select_sources
+    from: 270
+    duration: 180
+    timecode: 00:09-00:15
+    action: Workbench 全屏登场；鼠标选择三份资料，输入目标并发送
+    caption: 选资料，说目标
+  - scene_id: clarify_rules
+    from: 450
+    duration: 210
+    timecode: 00:15-00:22
+    action: 进度推进；Agent 依次提出待支付、退款、时间三个问题
+    caption: Agent 找到需要确认的规则
+  - scene_id: confirm_answers
+    from: 660
+    duration: 210
+    timecode: 00:22-00:29
+    action: 鼠标逐项核对回答卡并点击确认
+    caption: 关键规则，人来定
+  - scene_id: candidate_result
+    from: 870
+    duration: 210
+    timecode: 00:29-00:36
+    action: 候选字段、候选关系、已确认规则和资料来源更新
+    caption: 回答变成候选定义
+  - scene_id: inspect_changes
+    from: 1080
+    duration: 150
+    timecode: 00:36-00:41
+    action: 点击查看本轮变化，展开规则变化、证据位置和仍未知事项
+    caption: 变化、出处、未知，都能回看
+  - scene_id: cta
+    from: 1230
+    duration: 120
+    timecode: 00:41-00:45
+    action: App 收入暗色背景，Logo 与 CTA 定格
+    caption: 数契，把表里的业务意思说清楚

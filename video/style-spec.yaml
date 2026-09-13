@@ -1,0 +1,62 @@
+style_id: contextox-product-film-v2
+visual_theme: release_stage_meets_real_workbench
+palette:
+  paper: "#F5F7FA"
+  surface: "#FFFFFF"
+  ink: "#13243A"
+  muted: "#607086"
+  line: "#DCE3EB"
+  blue: "#1674F3"
+  green: "#147D64"
+  amber: "#A76A08"
+  red: "#B8493E"
+typography:
+  family: system_sans
+  chinese_fallbacks:
+    - PingFang SC
+    - Hiragino Sans GB
+  caption_max_lines: 2
+  minimum_caption_hold_seconds: 1.5
+motion:
+  density: medium_high
+  stage_moments:
+    - opening_numbers
+    - workbench_entrance
+    - closing_brand_lockup
+  ui_language:
+    - cursor_travel
+    - click_feedback
+    - typed_goal
+    - progressive_messages
+    - focused_state_change
+  scene_rule: 每个镜头只承担一个主要动作
+  forbidden:
+    - slide_deck_replay
+    - generic_ai_orb
+    - invented_product_control
+    - decorative_constant_motion
+workbench_fidelity:
+  surfaces:
+    - workspace_navigation
+    - source_picker
+    - agent_conversation
+    - clarification_questions
+    - answer_confirmation
+    - candidate_field
+    - candidate_relationship
+    - round_changes
+  disclosure_always_visible: true
+safe_area_px:
+  horizontal: 76
+  vertical: 24
+audio:
+  bpm: 96
+  style: minimal_electronic
+  voice: none
+  moments:
+    - opening_impact
+    - mouse_clicks
+    - confirmation_chime
+    - result_reveal
+    - closing_resolve
+  third_party_assets: none

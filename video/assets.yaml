@@ -1,0 +1,29 @@
+assets:
+  - asset_id: contextox_mark
+    type: image/png
+    local_path_or_approved_url: public/contextox-mark.png
+    source: repository-owned product mark
+    source_version_or_date: d3f14ac62aebba699f1f5d8b1b7731b6cc8c98c269a6252e86bf2b74f0bdde3e
+    license: project-owned
+    license_evidence: docs/brand/品牌与展示规范.md
+    intended_use: workbench header and closing brand lockup
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    dimensions: 256x256
+    status: ready
+  - asset_id: contextox_v2_mix
+    type: audio/wav
+    local_path_or_approved_url: public/audio/contextox-v2-mix.wav
+    source: deterministic synthesis by scripts/generate_audio.py
+    source_version_or_date: 941a0d01750bbc698ede4bf026a917ddb97c17ec522c28f604141d82bbd353cd
+    license: project-original
+    license_evidence: scripts/generate_audio.py
+    intended_use: 96 BPM minimal electronic music and UI effects
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    duration_seconds: 45
+    sample_rate_hz: 48000
+    channels: 2
+    status: ready
