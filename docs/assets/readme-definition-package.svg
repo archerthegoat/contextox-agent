@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">从资料、问题和人的决定形成可回看的候选定义</title>
+  <desc id="desc">数契工作过程示意图。订单表、客户表和说明经过证据与缺口整理，由人确认统计范围、退款和时间规则，最后形成地区净订单金额候选定义，并保留来源、关系、变化和未知事项。</desc>
+  <defs>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#dce3eb" stroke-width="1" opacity="0.55"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="22" flood-color="#13243a" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1674f3"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="720" fill="#f5f7fa"/>
+  <rect width="1280" height="720" fill="url(#grid)"/>
+
+  <text x="64" y="62" fill="#1674f3" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="15" font-weight="700" letter-spacing="2">一次业务定义任务</text>
+  <text x="64" y="104" fill="#13243a" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="34" font-weight="750">不是生成一段答案，而是留下可回看的过程与结果</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">
+    <g transform="translate(64 145)">
+      <rect width="238" height="112" rx="12" fill="#ffffff" stroke="#bcc8d6"/>
+      <text x="20" y="28" fill="#1674f3" font-size="13" font-weight="700" letter-spacing="1">01 · 选择资料</text>
+      <text x="20" y="62" fill="#13243a" font-size="19" font-weight="700">订单 · 客户 · 说明</text>
+      <text x="20" y="89" fill="#607086" font-size="14">明确本轮授权范围</text>
+    </g>
+    <path d="M316 201 H348" fill="none" stroke="#1674f3" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(363 145)">
+      <rect width="238" height="112" rx="12" fill="#ffffff" stroke="#bcc8d6"/>
+      <text x="20" y="28" fill="#1674f3" font-size="13" font-weight="700" letter-spacing="1">02 · 找证据与缺口</text>
+      <text x="20" y="62" fill="#13243a" font-size="19" font-weight="700">状态 · 金额 · 地区</text>
+      <text x="20" y="89" fill="#607086" font-size="14">标出会改变结果的问题</text>
+    </g>
+    <path d="M615 201 H647" fill="none" stroke="#1674f3" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(662 145)">
+      <rect width="238" height="112" rx="12" fill="#ffffff" stroke="#bcc8d6"/>
+      <text x="20" y="28" fill="#1674f3" font-size="13" font-weight="700" letter-spacing="1">03 · 人确认规则</text>
+      <text x="20" y="62" fill="#13243a" font-size="19" font-weight="700">已支付 · 退款 · 时间</text>
+      <text x="20" y="89" fill="#607086" font-size="14">人的决定绑定本轮回答</text>
+    </g>
+    <path d="M914 201 H946" fill="none" stroke="#1674f3" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g transform="translate(961 145)">
+      <rect width="255" height="112" rx="12" fill="#eef5ff" stroke="#1674f3" stroke-width="2"/>
+      <text x="20" y="28" fill="#1674f3" font-size="13" font-weight="700" letter-spacing="1">04 · 形成候选定义</text>
+      <text x="20" y="62" fill="#13243a" font-size="19" font-weight="700">能核对 · 能追溯</text>
+      <text x="20" y="89" fill="#607086" font-size="14">不是自动批准的最终事实</text>
+    </g>
+  </g>
+
+  <g transform="translate(64 298)" filter="url(#shadow)" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">
+    <rect width="1152" height="352" rx="16" fill="#ffffff" stroke="#bcc8d6"/>
+    <rect x="1" y="1" width="8" height="350" rx="4" fill="#1674f3"/>
+
+    <text x="34" y="44" fill="#607086" font-size="13" font-weight="700" letter-spacing="1.4">候选字段</text>
+    <text x="34" y="86" fill="#13243a" font-size="30" font-weight="750">地区净订单金额</text>
+    <g transform="translate(300 55)">
+      <rect width="104" height="32" rx="16" fill="#fff4dd" stroke="#e2b55c"/>
+      <text x="52" y="21" text-anchor="middle" fill="#8a5707" font-size="13" font-weight="700">待业务核对</text>
+    </g>
+
+    <line x1="34" y1="112" x2="1118" y2="112" stroke="#dce3eb"/>
+
+    <g transform="translate(34 139)">
+      <text x="0" y="0" fill="#607086" font-size="13">业务含义</text>
+      <text x="0" y="30" fill="#13243a" font-size="18" font-weight="650">按客户所属地区汇总已支付订单金额，再扣除原订单对应退款</text>
+
+      <text x="0" y="88" fill="#607086" font-size="13">本轮确认</text>
+      <g transform="translate(0 104)">
+        <rect width="116" height="34" rx="17" fill="#eef5ff"/>
+        <text x="58" y="22" text-anchor="middle" fill="#145ebd" font-size="13" font-weight="650">只统计已支付</text>
+      </g>
+      <g transform="translate(126 104)">
+        <rect width="174" height="34" rx="17" fill="#eef5ff"/>
+        <text x="87" y="22" text-anchor="middle" fill="#145ebd" font-size="13" font-weight="650">退款从原地区扣除</text>
+      </g>
+      <g transform="translate(310 104)">
+        <rect width="112" height="34" rx="17" fill="#eef5ff"/>
+        <text x="56" y="22" text-anchor="middle" fill="#145ebd" font-size="13" font-weight="650">按支付时间</text>
+      </g>
+
+      <text x="0" y="170" fill="#607086" font-size="13">仍需确认</text>
+      <text x="0" y="197" fill="#a76a08" font-size="16" font-weight="650">跨时区订单的自然日边界尚未说明</text>
+    </g>
+
+    <line x1="600" y1="134" x2="600" y2="322" stroke="#dce3eb"/>
+
+    <g transform="translate(632 139)">
+      <text x="0" y="0" fill="#607086" font-size="13">来源范围</text>
+      <text x="0" y="29" fill="#13243a" font-size="16" font-weight="650">orders.csv · customers.csv · notes.md</text>
+
+      <text x="0" y="82" fill="#607086" font-size="13">资料关系</text>
+      <text x="0" y="111" fill="#13243a" font-size="16" font-weight="650">订单 customer_id → 客户 id → 地区</text>
+
+      <text x="0" y="164" fill="#607086" font-size="13">本轮变化</text>
+      <text x="0" y="193" fill="#147d64" font-size="16" font-weight="650">排除待支付订单，并加入退款扣减规则</text>
+    </g>
+  </g>
+
+  <text x="64" y="691" fill="#607086" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="13">公开合成示意 · Demo 1.0.0 的终点是候选定义，不是正式批准结果</text>
+</svg>
