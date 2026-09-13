@@ -586,10 +586,12 @@ def main() -> None:
     build_one_pager(one_pager)
     shutil.copy2(deck_pdf, DOWNLOADS / deck_pdf.name)
     shutil.copy2(one_pager, DOWNLOADS / one_pager.name)
-    video_source = ROOT / "output" / "video" / "contextox-demo-1.0.0-silent-launch.mp4"
+    video_source = ROOT / "output" / "video" / "contextox-demo-1.0.0-product-film.mp4"
+    if not video_source.is_file():
+        raise FileNotFoundError(f"validated product film missing: {video_source}")
     video_download = DOWNLOADS / video_source.name
-    if video_source.is_file():
-        shutil.copy2(video_source, video_download)
+    shutil.copy2(video_source, video_download)
+    (DOWNLOADS / "contextox-demo-1.0.0-silent-launch.mp4").unlink(missing_ok=True)
 
     kit_files = [
         (ASSETS / "contextox-mark.svg", "logo/contextox-mark.svg"),
@@ -600,13 +602,14 @@ def main() -> None:
     kit_files.extend((path, f"logo/{path.name}") for path in logo_pngs)
     deterministic_zip(DOWNLOADS / "contextox-brand-kit.zip", kit_files)
 
-    manifest_paths = [path for path, _, _ in cards] + logo_pngs + [
-        deck_pdf,
-        one_pager,
+    manifest_paths = [path for path, _, _ in cards] + [
+        ASSETS / "contextox-product-film-poster.png",
+    ] + logo_pngs + [
+        DOWNLOADS / deck_pdf.name,
+        DOWNLOADS / one_pager.name,
         DOWNLOADS / "contextox-brand-kit.zip",
+        video_download,
     ]
-    if video_source.is_file():
-        manifest_paths.append(video_source)
     manifest = {
         "version": "Demo 1.0.0",
         "generated_by": "scripts/build_showcase_assets.py",

@@ -224,6 +224,84 @@ h1 { margin-bottom: 22px; font-size: clamp(44px, 4.5vw, 58px); line-height: 1.04
   .reveal { opacity: 1; transform: none; }
 }
 
+/* Landing V2 */
+.hero--v2 .hero__inner { grid-template-columns: minmax(0, 1.08fr) minmax(430px, .92fr); padding-top: 96px; padding-bottom: 88px; }
+.hero--v2 h1 { max-width: 720px; font-size: clamp(46px, 4.35vw, 62px); }
+.hero--v2 .hero__lead { max-width: 720px; font-size: clamp(17px, 1.55vw, 20px); line-height: 1.72; }
+.answer-stage { position: relative; display: grid; gap: 10px; padding: 28px; overflow: hidden; border: 1px solid #263a53; background: var(--ink); color: white; box-shadow: 0 32px 90px rgba(19,36,58,.2); }
+.answer-stage::before { content: ""; position: absolute; inset: 0; opacity: .18; background-image: linear-gradient(rgba(255,255,255,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px); background-size: 36px 36px; }
+.answer-stage > * { position: relative; }
+.answer-stage > p { margin: 0 0 4px; color: #9fc4f8; font-size: 13px; font-weight: 800; letter-spacing: .08em; }
+.answer-stage__number { display: grid; grid-template-columns: 1fr auto; align-items: end; padding: 16px 18px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.055); }
+.answer-stage__number--focus { border-color: #4d9aff; background: rgba(22,116,243,.24); }
+.answer-stage__number strong { font-size: 62px; line-height: .92; letter-spacing: -.06em; font-variant-numeric: tabular-nums; }
+.answer-stage__number span { padding-bottom: 4px; color: #b8c8dd; }
+.answer-stage__number small { grid-column: 1 / -1; margin-top: 9px; color: #b8c8dd; font-size: 12px; }
+.answer-stage footer { margin-top: 7px; color: #d9e3ef; font-size: 13px; }
+
+.math-ledger { border: 1px solid var(--line-strong); background: var(--surface); }
+.math-ledger > div { display: grid; grid-template-columns: 1.1fr 1.5fr .6fr; align-items: center; gap: 22px; min-height: 76px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+.math-ledger > div:last-child { border-bottom: 0; }
+.math-ledger__head { min-height: 48px !important; background: #e9eef5; color: var(--muted); font-size: 12px; font-weight: 750; letter-spacing: .05em; }
+.math-ledger code { color: var(--muted); font: 600 15px/1.4 SFMono-Regular, Menlo, Consolas, monospace; }
+.math-ledger b { justify-self: end; color: var(--ink); font-size: 24px; }
+.math-ledger .is-focus { box-shadow: inset 4px 0 var(--blue); background: var(--blue-soft); }
+.math-ledger .is-focus b { color: var(--blue); }
+.plain-problem { display: grid; grid-template-columns: 190px 1fr; gap: 36px; margin-top: 22px; padding: 26px 30px; border-left: 4px solid var(--amber); background: #fff9ec; }
+.plain-problem strong { color: var(--amber); }
+.plain-problem p { max-width: 760px; margin: 0; color: #5c6878; }
+
+.film-section { padding-bottom: 104px; }
+.film-frame { padding: 12px; border: 1px solid var(--line-strong); background: #0d1b2e; box-shadow: var(--shadow); }
+.film-frame video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #0d1b2e; }
+.film-notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 18px; border: 1px solid var(--line-strong); background: var(--line); }
+.film-notes > div { padding: 23px 24px; background: var(--surface); }
+.film-notes small, .download-label { color: var(--blue); font-size: 12px; font-weight: 800; letter-spacing: .06em; }
+.film-notes strong { display: block; margin-top: 16px; font-size: 17px; line-height: 1.35; }
+.film-notes p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+
+.workflow-strip { display: grid; grid-template-columns: repeat(4, 1fr); margin: 0; padding: 0; border: 1px solid var(--line-strong); background: var(--line); gap: 1px; list-style: none; }
+.workflow-strip li { display: grid; grid-template-columns: auto 1fr; gap: 16px; min-height: 180px; padding: 26px 22px; background: var(--surface); }
+.workflow-strip li > span { color: var(--blue); font: 750 12px/1.4 SFMono-Regular, Menlo, Consolas, monospace; }
+.workflow-strip h3 { margin: 42px 0 7px; font-size: 22px; }
+.workflow-strip p { margin: 0; color: var(--muted); font-size: 14px; }
+.workbench-wide { position: relative; margin: 34px 0 0; padding: 12px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 18px 48px rgba(19,36,58,.08); }
+.workbench-wide img { display: block; width: 100%; }
+.workbench-wide figcaption { position: absolute; right: 26px; bottom: 26px; padding: 7px 11px; border: 1px solid rgba(255,255,255,.55); background: rgba(19,36,58,.86); color: white; font-size: 11px; }
+
+.boundary--v2 { padding: 0; border-left: 0; background: transparent; }
+.boundary--v2 .boundary-grid { margin-top: 0; }
+.download-label { margin-bottom: 12px; }
+.download-label--secondary { margin-top: 34px; color: var(--muted); }
+.download-grid--primary { grid-template-columns: repeat(3, 1fr); }
+.download-grid--primary a { min-height: 196px; box-shadow: inset 0 4px var(--blue); }
+.download-grid--secondary { grid-template-columns: repeat(4, 1fr); }
+.download-grid--secondary a { min-height: 144px; }
+.download-grid--secondary strong { margin-top: 24px; font-size: 17px; }
+
+@media (max-width: 900px) {
+  .hero--v2 .hero__inner { grid-template-columns: 1fr; padding-top: 62px; padding-bottom: 62px; }
+  .film-notes, .boundary--v2 .boundary-grid { grid-template-columns: 1fr; }
+  .workflow-strip { grid-template-columns: 1fr 1fr; }
+  .download-grid--primary, .download-grid--secondary { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 560px) {
+  .hero--v2 h1 { font-size: 44px; }
+  .answer-stage { padding: 18px; }
+  .answer-stage__number strong { font-size: 52px; }
+  .math-ledger__head { display: none !important; }
+  .math-ledger > div { grid-template-columns: 1fr auto; gap: 8px 16px; padding: 18px; }
+  .math-ledger code { grid-column: 1 / -1; grid-row: 2; font-size: 13px; }
+  .math-ledger b { grid-column: 2; grid-row: 1; font-size: 20px; }
+  .plain-problem { grid-template-columns: 1fr; gap: 8px; padding: 22px; }
+  .film-frame { width: calc(100% + 28px); margin-left: -14px; padding: 4px; }
+  .film-notes, .workflow-strip, .download-grid--primary, .download-grid--secondary { grid-template-columns: 1fr; }
+  .workflow-strip li { min-height: 140px; }
+  .workbench-wide { padding: 4px; }
+  .workbench-wide figcaption { position: static; display: block; padding: 10px; background: var(--ink); }
+}
+
 /* Presentation V2 */
 .slide__inner {
   width: min(1500px, calc(100vw - 136px));

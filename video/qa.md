@@ -42,7 +42,7 @@
 ## 验收记录
 
 ```text
-Build ID: PENDING_COMMIT
+Build ID: 16f2db7
 Composition: ContextOxProductFilm
 Viewport: 1920x1080 / 100%
 Test data: 公开合成订单、客户与说明资料

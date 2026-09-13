@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import csv
 from decimal import Decimal
+from hashlib import sha256
 from html.parser import HTMLParser
+import json
 from pathlib import Path
 import sys
 from urllib.parse import urlsplit
@@ -23,6 +25,7 @@ class ShowcaseParser(HTMLParser):
         self.slides = 0
         self.menu_items = 0
         self.ids: set[str] = set()
+        self.videos: list[dict[str, str | None]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = dict(attrs)
@@ -38,6 +41,8 @@ class ShowcaseParser(HTMLParser):
             self.slides += 1
         if tag == "button" and "data-slide-index" in values:
             self.menu_items += 1
+        if tag == "video":
+            self.videos.append(values)
 
 
 def compute_east_china_totals() -> tuple[Decimal, Decimal, Decimal]:
@@ -83,6 +88,10 @@ def main() -> int:
         "assets/demo-flow.webp",
         "assets/demo-real.jpg",
         "assets/demo-preview.jpg",
+        "assets/contextox-product-film-poster.png",
+        "downloads/contextox-demo-1.0.0-product-film.mp4",
+        "downloads/contextox-demo-1.0.0-presentation.pdf",
+        "downloads/manifest.json",
     }
     for relative in sorted(required):
         if not (SITE / relative).is_file():
@@ -128,6 +137,19 @@ def main() -> int:
                 f"presentation menu/slide mismatch: {deck.menu_items}/{deck.slides}"
             )
 
+    landing = parsed.get("index.html")
+    if landing:
+        if len(landing.videos) != 1:
+            errors.append(f"landing page must contain one product video, found {len(landing.videos)}")
+        else:
+            video = landing.videos[0]
+            if "controls" not in video:
+                errors.append("landing product video must expose controls")
+            if "autoplay" in video:
+                errors.append("landing product video must not autoplay")
+            if video.get("poster") != "assets/contextox-product-film-poster.png":
+                errors.append("landing product video poster is not the V2 Workbench frame")
+
     all_copy = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (SITE / "index.html", SITE / "presentation.html")
@@ -139,6 +161,22 @@ def main() -> int:
     for required_copy in ("Demo 1.0.0", "公开合成", "候选"):
         if required_copy not in all_copy:
             errors.append(f"required disclosure missing: {required_copy}")
+    for required_landing_copy in (
+        "同一份订单数据，为什么会有三个答案？",
+        "看 45 秒产品演示",
+        "打开动态介绍",
+        "45 秒无旁白产品片",
+        "11 页动态 HTML",
+        "11 页演示 PDF",
+    ):
+        if required_landing_copy not in (SITE / "index.html").read_text(encoding="utf-8"):
+            errors.append(f"landing V2 copy missing: {required_landing_copy}")
+
+    legacy_video = SITE / "downloads" / "contextox-demo-1.0.0-silent-launch.mp4"
+    if legacy_video.exists():
+        errors.append("legacy silent-launch video remains in the distribution package")
+    if "silent-launch" in all_copy:
+        errors.append("legacy silent-launch reference remains in showcase copy")
 
     totals = compute_east_china_totals()
     expected_totals = (Decimal("689.00"), Decimal("440.00"), Decimal("390.00"))
@@ -152,6 +190,34 @@ def main() -> int:
         if visible_value not in all_copy:
             errors.append(f"public demo total missing from showcase copy: {visible_value}")
 
+    manifest_path = SITE / "downloads" / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_entries = manifest.get("files", [])
+            manifest_names = {entry.get("path") for entry in manifest_entries}
+            expected_video_path = "site/downloads/contextox-demo-1.0.0-product-film.mp4"
+            if expected_video_path not in manifest_names:
+                errors.append("product film missing from manifest")
+            if any("silent-launch" in str(name) for name in manifest_names):
+                errors.append("legacy silent-launch video remains in manifest")
+            for entry in manifest_entries:
+                relative = entry.get("path")
+                if not isinstance(relative, str):
+                    errors.append("manifest entry has no path")
+                    continue
+                artifact = ROOT / relative
+                if not artifact.is_file():
+                    errors.append(f"manifest target missing: {relative}")
+                    continue
+                if artifact.stat().st_size != entry.get("bytes"):
+                    errors.append(f"manifest byte count drift: {relative}")
+                digest = sha256(artifact.read_bytes()).hexdigest()
+                if digest != entry.get("sha256"):
+                    errors.append(f"manifest sha256 drift: {relative}")
+        except (json.JSONDecodeError, OSError) as error:
+            errors.append(f"manifest cannot be read: {error}")
+
     if errors:
         print("showcase validation: FAIL")
         for error in errors:
@@ -161,6 +227,8 @@ def main() -> int:
     print("- landing page: references and disclosures valid")
     print("- presentation: 11 slides and 11 menu entries")
     print("- public demo arithmetic: 华东 689 / 440 / 390")
+    print("- product film: controls, no autoplay, V2 poster and no legacy file")
+    print("- manifest: byte counts and SHA-256 values verified")
     print("- asset policy: no missing local dependencies")
     return 0
 
