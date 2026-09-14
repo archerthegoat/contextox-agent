@@ -79,7 +79,9 @@ safe_area_px:
 workbench_fidelity:
   screenshot_coordinate_space: 1684x947
   target_source: video/v4/workbench-layout.json
-  screenshot_policy: 真实产品截图作为界面底图；程序化图层只重绘当前 Workbench 已存在的局部状态和控件，不增加能力
+  screenshot_policy: 真实产品截图作为界面底图；程序化图层只重绘当前 Workbench 已存在的局部状态、文案层级和控件，不增加能力
+  persistent_coordinate_rule: 15.5–37 秒始终保留完整 Workbench 与同一 1920x1080 坐标系；提问、回答、候选定义和本轮变化不得切成脱离产品的全屏概念卡
+  answer_form_rule: 必须按当前产品顺序展示问题卡、快捷选择、回答、回答来源与依据、仅保存、尚未批准和确认并继续
   continuity_rule: 开场后的资料范围始终是 orders.csv、customers.csv、notes.md；不得混入旧两文件候选截图
 comparison_boundary:
   compare_focus_not_capability: true

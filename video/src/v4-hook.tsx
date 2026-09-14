@@ -984,7 +984,10 @@ const HookAudio: React.FC<{variant: HookVariant; profile: HookProfile}> = ({vari
   );
 };
 
-const ProductFilmV4Hook: React.FC<{variant: HookVariant}> = ({variant}) => {
+const ProductFilmV4Hook: React.FC<{variant: HookVariant; withAudio?: boolean}> = ({
+  variant,
+  withAudio = true,
+}) => {
   const profile = PROFILES[variant];
   return (
     <AbsoluteFill style={{background: COLORS.navy}}>
@@ -1003,7 +1006,7 @@ const ProductFilmV4Hook: React.FC<{variant: HookVariant}> = ({variant}) => {
       >
         <WorkbenchEntryScene duration={profile.scenes.workbenchEntry.duration} />
       </Sequence>
-      <HookAudio variant={variant} profile={profile} />
+      {withAudio ? <HookAudio variant={variant} profile={profile} /> : null}
     </AbsoluteFill>
   );
 };
@@ -1011,3 +1014,7 @@ const ProductFilmV4Hook: React.FC<{variant: HookVariant}> = ({variant}) => {
 export const ContextOxProductFilmV4HookA: React.FC = () => <ProductFilmV4Hook variant="A" />;
 
 export const ContextOxProductFilmV4HookB: React.FC = () => <ProductFilmV4Hook variant="B" />;
+
+export const ContextOxProductFilmV4HookAVisual: React.FC = () => (
+  <ProductFilmV4Hook variant="A" withAudio={false} />
+);

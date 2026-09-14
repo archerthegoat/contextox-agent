@@ -67,28 +67,28 @@ scenes:
     from: 630
     duration: 180
     purpose: 展示人的决定如何进入流程
-    primary_visual: 三条大白话回答与确认并继续
-    cause: 光标逐项核对回答，最后触发确认
-    meaning: 关键业务规则由人决定，点击确认后才采用
-    effect: 同一光标坐标驱动选中、按下和轻点击声；不使用震屏或涟漪
+    primary_visual: 当前回答卡中的快捷选择、回答、来源与依据、保存和确认并继续
+    cause: 光标逐项选择大白话回答，核对回答人与依据，先保存再触发确认
+    meaning: 关键业务规则由人决定并留下依据，保存后仍是尚未批准，点击确认后才继续
+    effect: 同一光标坐标驱动选中、保存、确认和对应轻点击声；不使用震屏或涟漪
     shot_card: input-trigger-moves/cursor-performance_adapted
   - scene_id: candidate_definition
     from: 810
     duration: 180
     purpose: 显示回答被整理为候选定义
-    primary_visual: 地区净订单金额候选
+    primary_visual: 当前 Workbench「关系与字段」中的地区净订单金额候选
     cause: 已确认的三条规则进入候选字段
     meaning: 结果包含含义、规则、关系、来源和仍未知事项
-    effect: 内容只在现有成果面板边界内分层揭示；无连接线和装饰转场
+    effect: 保留完整 Workbench 坐标系，内容只在现有成果区域内分层揭示；无连接线和装饰转场
     shot_card: none_content_clip_reveal
   - scene_id: round_changes
     from: 990
     duration: 120
     purpose: 展示候选变化可以回看
-    primary_visual: 查看本轮变化按钮和三条变化记录
+    primary_visual: 当前 Agent 面板中的「查看本轮变化」按钮，以及中心区的本轮更新记录
     cause: 光标按下现有按钮
     meaning: 人的回答、证据位置与仍未知事项不会消失在聊天记录里
-    effect: 按钮下陷后同一区域展开三条水平记录
+    effect: 按钮下陷后，中心区切换到当前「本轮更新」结构并依次展开变化记录
     shot_card: input-trigger-moves/cursor-performance_adapted
   - scene_id: positioning_handoff
     from: 1110
@@ -118,11 +118,12 @@ audio_cues:
   - {cue: ui_click, from: 660, duration_frames: 8, gain: 0.13, meaning: 核对纳入范围}
   - {cue: ui_click, from: 705, duration_frames: 8, gain: 0.13, meaning: 核对退款处理}
   - {cue: ui_click, from: 750, duration_frames: 8, gain: 0.13, meaning: 核对时间归属}
-  - {cue: confirm_tick, from: 765, duration_frames: 18, gain: 0.18, meaning: 确认并继续}
+  - {cue: ui_click, from: 770, duration_frames: 8, gain: 0.13, meaning: 仅保存，稍后继续}
+  - {cue: confirm_tick, from: 795, duration_frames: 18, gain: 0.18, meaning: 确认并继续}
   - {cue: result_open, from: 810, duration_frames: 24, gain: 0.15, meaning: 候选成果更新}
   - {cue: ui_click, from: 1005, duration_frames: 8, gain: 0.15, meaning: 查看本轮变化}
 qa_targets:
   cutpoint_error_frames_max: 3
-  frame_board_seconds: [0, 2.5, 4.0, 6.5, 7.5, 10.5, 12, 13, 15.5, 17.5, 21, 23.5, 25.5, 27, 30, 33, 35, 37, 39.5, 42, 44]
+  frame_board_frames: [0, 75, 120, 195, 225, 315, 360, 390, 465, 525, 630, 705, 750, 770, 795, 810, 900, 990, 1005, 1050, 1110, 1185, 1260, 1320]
   forbid_old_candidate_texture: true
   exact_candidate_path: output/video/contextox-demo-1.0.0-product-film-v4-a-candidate.mp4

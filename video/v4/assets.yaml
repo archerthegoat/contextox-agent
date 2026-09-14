@@ -81,3 +81,42 @@ assets:
     redaction_status: not_required_public_synthetic_only
     dimensions: 1684x947
     status: ready
+  - asset_id: ui_click
+    type: audio/wav
+    local_path_or_approved_url: public/audio/v4/ui-click.wav
+    source: project-generated deterministic oscillator and seeded-noise synthesis
+    source_version_or_date: 3d18ee4ac9f370af5b0b155dbf15623cd65ffc21072d0926ab68dacb08ad3f65
+    license: project-owned
+    license_evidence: video/scripts/generate_v4_sfx.py
+    intended_use: only on real Workbench control presses in the V4 A full-film candidate
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    duration_seconds: 0.18
+    status: ready
+  - asset_id: confirm_tick
+    type: audio/wav
+    local_path_or_approved_url: public/audio/v4/confirm-tick.wav
+    source: project-generated deterministic oscillator and seeded-noise synthesis
+    source_version_or_date: 23169454fa8b2f240c61123f5ff490f7037924cabfb2dd85cc9ba222d5141404
+    license: project-owned
+    license_evidence: video/scripts/generate_v4_sfx.py
+    intended_use: human answer confirmation in the V4 A full-film candidate
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    duration_seconds: 0.58
+    status: ready
+  - asset_id: result_open
+    type: audio/wav
+    local_path_or_approved_url: public/audio/v4/result-open.wav
+    source: project-generated deterministic oscillator and seeded-noise synthesis
+    source_version_or_date: b7367b6a3d907f288cdb7b837f921a7ed6d0456eb05db71ca45d004f8ec1ae06
+    license: project-owned
+    license_evidence: video/scripts/generate_v4_sfx.py
+    intended_use: candidate definition update in the V4 A full-film candidate
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    duration_seconds: 0.72
+    status: ready
