@@ -4,6 +4,8 @@ variants:
   A:
     composition_id: ContextOxProductFilmV4HookA
     music: dirty_thinkin
+    music_source_start_frames: 165
+    music_gain: 0.78
     estimated_bpm: 120
     scenes:
       - {scene_id: east_orders, from: 0, duration: 75}
@@ -13,6 +15,8 @@ variants:
   B:
     composition_id: ContextOxProductFilmV4HookB
     music: night_patrol
+    music_source_start_frames: 0
+    music_gain: 0.74
     estimated_bpm: 100
     scenes:
       - {scene_id: east_orders, from: 0, duration: 72}
@@ -32,7 +36,7 @@ scene_contracts:
     primary_visual: 当前被纳入或扣除的单元格
     cause: 当前规则改变了纳入行集合
     meaning: 689、440、390 分别对应全算、只算已支付、已支付扣退款
-    effect: exact_rect_trace 与 right_angle_connector；一次只画一套
+    effect: exact_rect_trace 与 right_angle_connector；一次只画一套，结果卡与主连接先落定，再由已连接的汇流线回接精确单元格
     shot_card: draw-svg-trace/draw-svg-trace
   plain_language:
     purpose: 把结论说成大白话
@@ -44,9 +48,27 @@ scene_contracts:
   workbench_entry:
     purpose: 从问题进入真实产品
     primary_visual: 真实资料列表与 Agent 输入框
-    cause: 用户先选资料，再说目标
+    cause: 真实截图里本轮范围已有三份资料，光标聚焦资料后进入目标输入框
     meaning: 数契从明确资料范围和业务目标开始
-    effect: 由真实 DOM 框驱动焦点与光标，输入后用同坐标截图交叉淡入
+    effect: 由真实 DOM 框驱动焦点与光标；不模拟资料点击，输入后用同坐标截图交叉淡入
     shot_card: input-trigger-moves/cursor-performance
+audio_cues:
+  shared_rules:
+    - 音乐从第 344 帧开始淡出，第 359 帧归零
+    - plain_language 镜头把音乐降低到基础增益的 36%，Workbench 进入后恢复
+    - 笔触音只覆盖框线和连线绘制阶段，不覆盖结果停留
+    - 每段规则的框线、连接与结果在本段第 15 帧全部落定；A 至少停留 25 帧，B 至少停留 27 帧
+  A:
+    - {cue: paper_slice_quick, from: 7, duration_frames: 13, gain: 0.13, meaning: 订单表进入}
+    - {cue: marker_pen_line, from: 76, duration_frames: 14, gain: 0.11, meaning: 第一套精确框线}
+    - {cue: marker_pen_line, from: 116, duration_frames: 14, gain: 0.11, meaning: 第二套精确框线}
+    - {cue: marker_pen_line, from: 156, duration_frames: 14, gain: 0.11, meaning: 第三套精确框线}
+    - {cue: paper_slice_quick, from: 227, duration_frames: 13, gain: 0.10, meaning: Workbench 进入}
+  B:
+    - {cue: paper_slice_quick, from: 7, duration_frames: 13, gain: 0.13, meaning: 订单表进入}
+    - {cue: marker_pen_line, from: 73, duration_frames: 14, gain: 0.13, meaning: 第一套精确框线}
+    - {cue: marker_pen_line, from: 115, duration_frames: 14, gain: 0.13, meaning: 第二套精确框线}
+    - {cue: marker_pen_line, from: 157, duration_frames: 14, gain: 0.13, meaning: 第三套精确框线}
+    - {cue: paper_slice_quick, from: 236, duration_frames: 13, gain: 0.10, meaning: Workbench 进入}
 gallery_revision: bdd94be16d60fa8f
 gallery_reference_clip_status: unavailable_remote_preview

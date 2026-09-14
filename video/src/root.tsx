@@ -2,6 +2,7 @@ import React from 'react';
 import {Composition} from 'remotion';
 import {ContextOxReadmeDemo} from './readme-demo';
 import {ContextOxProductFilm} from './video';
+import {ContextOxProductFilmV4HookA, ContextOxProductFilmV4HookB} from './v4-hook';
 
 export const RemotionRoot: React.FC = () => (
   <>
@@ -17,6 +18,22 @@ export const RemotionRoot: React.FC = () => (
       id="ContextOxReadmeDemo"
       component={ContextOxReadmeDemo}
       durationInFrames={420}
+      fps={30}
+      width={1920}
+      height={1080}
+    />
+    <Composition
+      id="ContextOxProductFilmV4HookA"
+      component={ContextOxProductFilmV4HookA}
+      durationInFrames={360}
+      fps={30}
+      width={1920}
+      height={1080}
+    />
+    <Composition
+      id="ContextOxProductFilmV4HookB"
+      component={ContextOxProductFilmV4HookB}
+      durationInFrames={360}
       fps={30}
       width={1920}
       height={1080}

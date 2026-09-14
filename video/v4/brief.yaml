@@ -32,10 +32,12 @@ direction_proof:
       title: Dirty Thinkin'
       artist: Michael Ramir C.
       direction: 120 BPM 爵士放克，鼓与贝斯更外放，开场推进更强
+      source_start_seconds: 5.5
     - id: B
       title: Night Patrol
       artist: Michael Ramir C.
       direction: 约 100 BPM 节奏底，贝斯更稳，产品感更克制
+      source_start_seconds: 0
 visual_thesis:
   notice_first: 华东四笔订单以及它们如何被三种规则取舍
   communicate: 严谨、有人做关键判断、真实产品可复核
