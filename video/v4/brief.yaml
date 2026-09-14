@@ -1,55 +1,55 @@
-production_id: contextox-demo-1.0.0-product-film-v4
-revision: hook_direction_proof_1
-status: direction_proof
+production_id: contextox-demo-1.0.0-product-film-v4-a
+revision: full_candidate_1
+status: ready_for_production
 mode: silent_product_launch
-purpose: 先验证新的视觉精度、特效因果和音乐吸引力，再扩展为 45 秒成片
+purpose: 把已选定的 A 版爵士放克方向扩展为一条连续、可信、可人工验收的 45 秒产品片
 audience:
   - 业务负责人
   - 产品负责人
   - 数据负责人
   - 交付负责人
-viewer_change: 观众在 12 秒内看懂三个数字来自三种规则，并感觉自己已经进入真实产品操作
-primary_message: 同一份订单数据，为什么会有三个答案？
-supporting_message: 不是算错，而是哪些算进去、退款怎么处理、按哪个时间还没有说清。
-preserved_full_film_path:
-  - 689／440／390 的公开合成案例
-  - 数契与通用执行型 Agent 的关注重点差异
-  - 选择资料并说出目标
-  - Agent 提出会改变结果的问题
-  - 人确认关键规则
-  - 形成候选定义并查看本轮变化
-  - 品牌与边界收束
-direction_proof:
-  duration_seconds: 12
-  dimensions: 1920x1080
+viewer_change: 观众先看懂同一数据为什么有三个答案，再看见数契怎样把资料、问题、人的决定和候选定义串成一轮真实工作
+primary_message: 不是不会算，是业务规则还没有说清。
+supporting_message: 数契让 Agent 找出处、提出会改变结果的问题，由人确认关键规则，再留下可以回看的候选定义。
+selected_direction:
+  id: A
+  music_title: Dirty Thinkin'
+  music_artist: Michael Ramir C.
+  music_direction: 120 BPM 爵士放克，鼓与贝斯更外放；保留强弱反差，不用音效轰炸
+  source_start_seconds: 5.5
+  approved_proof: output/video/contextox-demo-1.0.0-product-film-v4-hook-a.mp4
+  approved_scope: 方向选择，不等于 45 秒成片人工验收
+deliverable:
+  composition_id: ContextOxProductFilmV4A
+  duration_seconds: 45
+  duration_frames: 1350
   fps: 30
-  compositions:
-    - ContextOxProductFilmV4HookA
-    - ContextOxProductFilmV4HookB
-  visual_content: 两个版本共用同一套精确画面，只比较音乐与剪辑呼吸
-  music_options:
-    - id: A
-      title: Dirty Thinkin'
-      artist: Michael Ramir C.
-      direction: 120 BPM 爵士放克，鼓与贝斯更外放，开场推进更强
-      source_start_seconds: 5.5
-    - id: B
-      title: Night Patrol
-      artist: Michael Ramir C.
-      direction: 约 100 BPM 节奏底，贝斯更稳，产品感更克制
-      source_start_seconds: 0
+  dimensions: 1920x1080
+  candidate_path: output/video/contextox-demo-1.0.0-product-film-v4-a-candidate.mp4
+content_path:
+  - 689／440／390 的公开合成案例
+  - 同一套资料进入 Workbench，发送目标并推进理解
+  - Agent 提出待支付、退款和时间三个问题
+  - 人用大白话核对并确认规则
+  - 形成地区净订单金额候选定义
+  - 查看本轮变化、证据位置和仍未知事项
+  - 说明数契与 Codex 等通用执行型 Agent 的分工重点
+  - 品牌与联系方式收束
 visual_thesis:
-  notice_first: 华东四笔订单以及它们如何被三种规则取舍
-  communicate: 严谨、有人做关键判断、真实产品可复核
-  motion_behavior: 硬切负责节奏，几何框线负责因果，光标负责真实操作；动作完成后静止
+  notice_first: 规则改变纳入的数据，人的回答再改变候选定义
+  communicate: 严谨、有节奏、人在关键节点作决定、真实产品状态可复核
+  motion_behavior: 硬切跟随鼓点；光标只触发真实控件；局部推近只解释当前动作；状态落定后留出阅读停顿
   deliberately_absent:
-    - 自由手绘圈线
-    - 闪白与镜头震动
-    - 无来由的泛光、粒子和 3D 翻转
-    - 与产品动作无关的装饰转场
+    - 自由手绘圈线和漂浮连线
+    - 震屏、闪白、粒子和装饰性泛光
+    - 与界面动作无关的卡片乱飞
+    - 假按钮、假自动运行和正式批准结果
 product_boundary:
   numeric_case: 三个数字只解释规则差异，不是数契运行结果
-  product_endpoint: 候选定义
-  disclosure: 公开合成演示；候选而非正式批准结果
+  product_endpoint: 候选定义和本轮变化
+  comparison: 只说明产品注重点与交接关系，不声称 Codex 或同类工具做不到定义整理
+  disclosure: 公开合成 Demo；候选而非正式批准结果
+speech_source: none
+voice_origin: none
 publication: not_authorized
 human_acceptance: pending

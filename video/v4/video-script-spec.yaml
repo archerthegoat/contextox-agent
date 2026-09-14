@@ -1,16 +1,18 @@
-content_id: contextox-product-film-v4-hook
+content_id: contextox-product-film-v4-a
 mode: silent-product-launch
 speech_source: none
 voice_origin: none
 content_goal: launch
-visual_source: mixed
+visual_source: mixed_real_workbench_and_measured_ui_detail
 audience:
   - 业务负责人
   - 产品负责人
   - 数据负责人
   - 交付负责人
-duration_target_seconds: 12
-timing_basis: music_audition_cut
+duration_target_seconds: 45
+duration_frames: 1350
+fps: 30
+timing_basis: selected_music_beat_grid
 aspect_profiles:
   - landscape
 claims:
@@ -26,12 +28,22 @@ claims:
   - claim: 三个答案来自规则差异，不是产品运行结果
     evidence_ref: 用户已批准的 V2／V3 内容边界
     status: verified
+  - claim: 当前 Workbench 存在资料范围、发送推进、澄清、回答确认、候选成果和查看本轮变化状态
+    evidence_ref: web/src/App.tsx + ConversationDialogue.tsx + ConversationAnswers.tsx + ClarificationAnswers.tsx
+    status: verified
+  - claim: 数契与 Codex 的页面只说明默认注重点与交接，不声明绝对能力差异
+    evidence_ref: README.md#difference
+    status: verified
 required_assets:
   - public/textures/workbench-start.jpg
   - public/textures/workbench-goal.jpg
   - public/audio/v4/dirty-thinkin.mp3
-  - public/audio/v4/night-patrol.mp3
   - public/audio/v4/marker-pen-line.mp3
   - public/audio/v4/paper-slice-quick.mp3
+  - public/audio/v4/ui-click.wav
+  - public/audio/v4/confirm-tick.wav
+  - public/audio/v4/result-open.wav
 missing_inputs: []
-script_status: ready_for_direction_proof
+script_status: ready_for_production
+publication: not_authorized
+human_acceptance: pending

@@ -1,0 +1,16 @@
+{
+  "asset": "public/audio/v4/dirty-thinkin.mp3",
+  "analysis_trim_start_seconds": 5.5,
+  "analysis_duration_seconds": 50.0,
+  "decoded_sample_rate_hz": 8000,
+  "energy_window_seconds": 0.05,
+  "detected_bpm": 120.0,
+  "beat_interval_seconds": 0.5,
+  "beat_interval_frames_at_30fps": 15,
+  "strong_onset_phase_seconds_after_trim": 0.5,
+  "strong_onset_phase_frames_at_30fps": 15,
+  "timeline_grid_frames": 15,
+  "analysis_resolution_frames": 1.5,
+  "method": "mono PCM short-window RMS positive-flux autocorrelation; verified against strong onset peaks",
+  "note": "Frame 0 and frame 15 are on the same 15-frame beat grid. Every full-film scene boundary is an integer multiple of 15 frames."
+}

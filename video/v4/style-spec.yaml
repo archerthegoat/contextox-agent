@@ -1,10 +1,13 @@
-style_id: contextox-product-film-v4-measured-editorial
-status: direction_proof
-visual_thesis: 让精确的数据取舍先建立可信度，再用真实光标把观众带进 Workbench
+style_id: contextox-product-film-v4-a-measured-editorial
+status: selected_direction_ready_for_production
+visual_thesis: 用同一套精确取舍建立可信度，再让真实光标和产品状态承担动态；动作像人在操作，不像模板在表演
+direction_evidence:
+  selected_proof: output/video/contextox-demo-1.0.0-product-film-v4-hook-a.mp4
+  reason_no_additional_styleframe: 12 秒运动样片已经同时验证构图、框线、真实 Workbench 和 A 曲剪辑呼吸，比静态风格帧提供更强证据
 hierarchy:
-  primary: 每镜只允许一个金额规则或一个产品动作成为主角
-  supporting: 解释标签、披露和非当前数据降到背景层
-  progressive_reveal: 表格先完整出现，再逐条取舍；Workbench 先全景，再进入资料和输入框
+  primary: 每镜只允许一个规则、一个问题或一个产品动作成为主角
+  supporting: 解释标签、比较说明和披露保持清楚但不抢主动作
+  progressive_reveal: 数据逐条取舍；产品沿发送、提问、确认、候选、变化连续推进
 palette:
   navy: '#0D1B2E'
   paper: '#F4F1EA'
@@ -24,35 +27,51 @@ typography:
   family: system_sans
   headline_px: 72
   result_px: 74
-  caption_px: 60
-  supporting_px: 32
+  caption_px: 54
+  supporting_px: 30
+  minimum_product_overlay_px: 28
   max_caption_lines: 2
 motion_language:
+  selected_shot_cards:
+    - input-trigger-moves/cursor-performance
+  inherited_approved_hook_method:
+    - draw-svg-trace/exact_rect_trace
   allowed:
-    - direct_hard_cut_on_musical_accent
-    - exact_rect_trace_from_declared_bounds
-    - right_angle_connector_from_cell_edge
+    - direct_hard_cut_on_120_bpm_accent
+    - exact_rect_trace_from_declared_bounds_in_approved_hook_only
     - focus_mask_that_dims_non_target_content
-    - cursor_move_to_real_dom_target
-    - screenshot_state_crossfade_at_same_coordinates
+    - cursor_move_to_real_control_coordinates
+    - click_anchored_camera_punch_with_return
+    - same_coordinate_screenshot_state_crossfade
+    - content_clip_reveal_inside_existing_panel_bounds
   forbidden:
     - freehand_circle_or_underline
-    - camera_shake
-    - paparazzi_flash
-    - decorative_glow_or_particle
-    - generic_card_pop
-    - fake_product_control
-  annotation_rule: 所有框线、连线和高亮由同一份坐标数据生成；路径起终点必须落在目标框边缘
+    - floating_connector_or_decorative_line
+    - camera_shake_or_flash
+    - decorative_glow_particle_or_three_dimensional_flip
+    - random_card_pop_or_unmotivated_parallax
+    - fake_product_control_or_fake_final_approval
+  annotation_rule: 只有开场数据镜头使用连线；所有框线与连接继续由同一份声明式单元格坐标生成
+  cursor_rule: 光标路径、点击点和局部推近原点必须共享同一份控件坐标；按钮按下、音效与镜头推近同帧
   effect_rule: 每个效果必须在 storyboard 的 cause 和 meaning 字段中说明对应产品动作与信息作用
-  hold_rule: 每条结论完整落定后至少静止 24 帧；Workbench 输入结果至少静止 42 帧
-  deterministic_rule: 不使用 Math.random、Date.now 或运行时测量漂移
+  hold_rule: 问题和回答落定至少 30 帧；候选定义完整落定至少 45 帧；结尾 CTA 定格至少 60 帧
+  deterministic_rule: 不使用 Math.random、Date.now 或运行时 DOM 测量
 audio_direction:
-  option_a: 120 BPM 爵士放克；更明显的鼓点和推进，适合外放发布感
-  option_b: 约 100 BPM 节奏底；贝斯与鼓更克制，适合成熟产品感
+  music: Dirty Thinkin' by Michael Ramir C.
+  bpm: 120
+  beat_interval_frames: 15
+  source_start_frames: 165
+  source_start_seconds: 5.5
+  cut_grid: 所有段落边界使用 15 帧整数倍
+  energy_arc: 强钩子 -> 一拍抽空 -> 操作律动 -> 候选成果抬升 -> 对比降噪 -> 品牌收束
   sfx_vocabulary:
     - short_paper_slice_for_material_entry
     - marker_foley_only_while_geometry_is_drawn
-  restraint: 强节奏 BGM 下不叠点击包、闪光、riser 或重复 impact
+    - original_dry_ui_click_on_real_control_press
+    - original_confirm_tick_on_human_confirmation
+    - original_short_result_open_on_candidate_update
+  restraint: 强节奏 BGM 下只在真实交互触发点加音效；不叠 riser、音爆、游戏式点击包或无来源 impact
+  loudness_target: 约 -16 LUFS，True Peak 不高于 -1 dBTP；最终 AAC 回读后再确认
   voice: none
 safe_area_px:
   horizontal: 72
@@ -60,7 +79,11 @@ safe_area_px:
 workbench_fidelity:
   screenshot_coordinate_space: 1684x947
   target_source: video/v4/workbench-layout.json
-  screenshot_policy: 真实产品截图是唯一界面纹理；程序化图层只负责镜头、焦点、光标和坐标框
+  screenshot_policy: 真实产品截图作为界面底图；程序化图层只重绘当前 Workbench 已存在的局部状态和控件，不增加能力
+  continuity_rule: 开场后的资料范围始终是 orders.csv、customers.csv、notes.md；不得混入旧两文件候选截图
+comparison_boundary:
+  compare_focus_not_capability: true
+  handoff_sentence: 先把定义说清，再交给 Codex 或数据团队执行
 inspiration_boundary:
-  use: 强弱节奏反差、编辑式硬切、具有人手判断感的批注动作
+  use: 强弱节奏反差、编辑式硬切、具有人手判断感的操作动作
   do_not_use: 复制任何创作者的具体构图、镜头、素材、音乐或签名式效果

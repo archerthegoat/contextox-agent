@@ -1,0 +1,128 @@
+duration_frames: 1350
+fps: 30
+composition_id: ContextOxProductFilmV4A
+music:
+  asset_id: dirty_thinkin
+  trim_before_frames: 165
+  detected_bpm: 120
+  beat_interval_frames: 15
+  detected_phase_seconds_after_trim: 0.5
+  scene_boundaries_on_grid: true
+scenes:
+  - scene_id: east_orders
+    from: 0
+    duration: 75
+    purpose: 建立同一组事实
+    primary_visual: 华东四笔订单
+    cause: 数据行按金额列阅读顺序原位显形
+    meaning: 后续三个答案来自同一组数据
+    effect: 保留已选中 A 样片的原位显形与一次纸切
+    shot_card: inherited_v4_hook_custom_measured_table
+  - scene_id: three_rules
+    from: 75
+    duration: 120
+    purpose: 精确展示三种取舍
+    primary_visual: 当前被纳入或扣除的真实单元格
+    cause: 当前规则改变纳入行集合
+    meaning: 689、440、390 分别对应全算、只算已支付、已支付扣退款
+    effect: 保留已验收方向中的 exact_rect_trace；不增加新标注
+    shot_card: inherited_draw-svg-trace/exact_rect_trace
+  - scene_id: plain_language
+    from: 195
+    duration: 30
+    purpose: 把结论说成大白话
+    primary_visual: 不是算错，是规则没说清
+    cause: 三个算法都能从同一表格算出
+    meaning: 产品处理业务定义，而不是再造计算器
+    effect: 一拍抽空，画面真静止
+    shot_card: none_direct_title
+  - scene_id: workbench_entry
+    from: 225
+    duration: 135
+    purpose: 从问题进入真实产品
+    primary_visual: 三份资料与 Agent 输入框
+    cause: 光标核对已在范围内的资料后进入目标输入框
+    meaning: 数契从明确资料范围和业务目标开始
+    effect: 保留 A 样片真实坐标焦点与同坐标截图切换
+    shot_card: inherited_input-trigger-moves/cursor-performance
+  - scene_id: send_and_understand
+    from: 360
+    duration: 105
+    purpose: 让观众看见一次真实推进动作
+    primary_visual: 发送按钮与理解资料进度
+    cause: 人按下真实发送按钮
+    meaning: 目标和资料明确后，Agent 才开始分析
+    effect: 光标移动、按钮下陷、以点击点为原点 1.18x 推近并回到全景；进度状态在点击后更新
+    shot_card: input-trigger-moves/cursor-performance
+  - scene_id: agent_questions
+    from: 465
+    duration: 165
+    purpose: 展示 Agent 不是直接猜答案
+    primary_visual: 待支付、退款、时间三个问题
+    cause: 每个缺口都可能改变结果或归属范围
+    meaning: Agent 把需要人的判断具体问出来，并说明影响
+    effect: 问题只在现有对话面板边界内依次展开；当前问题放大 1.02，其余弱化
+    shot_card: none_measured_panel_reveal
+  - scene_id: human_answers
+    from: 630
+    duration: 180
+    purpose: 展示人的决定如何进入流程
+    primary_visual: 三条大白话回答与确认并继续
+    cause: 光标逐项核对回答，最后触发确认
+    meaning: 关键业务规则由人决定，点击确认后才采用
+    effect: 同一光标坐标驱动选中、按下和轻点击声；不使用震屏或涟漪
+    shot_card: input-trigger-moves/cursor-performance_adapted
+  - scene_id: candidate_definition
+    from: 810
+    duration: 180
+    purpose: 显示回答被整理为候选定义
+    primary_visual: 地区净订单金额候选
+    cause: 已确认的三条规则进入候选字段
+    meaning: 结果包含含义、规则、关系、来源和仍未知事项
+    effect: 内容只在现有成果面板边界内分层揭示；无连接线和装饰转场
+    shot_card: none_content_clip_reveal
+  - scene_id: round_changes
+    from: 990
+    duration: 120
+    purpose: 展示候选变化可以回看
+    primary_visual: 查看本轮变化按钮和三条变化记录
+    cause: 光标按下现有按钮
+    meaning: 人的回答、证据位置与仍未知事项不会消失在聊天记录里
+    effect: 按钮下陷后同一区域展开三条水平记录
+    shot_card: input-trigger-moves/cursor-performance_adapted
+  - scene_id: positioning_handoff
+    from: 1110
+    duration: 150
+    purpose: 说明和 Codex 等通用执行型 Agent 的区别与配合
+    primary_visual: 定义工作与执行工作的二分
+    cause: 候选定义已经具备可交接内容
+    meaning: 数契先把定义问清，Codex 或数据团队再继续执行；这是注重点不同，不是绝对能力边界
+    effect: 左右内容沿中线裁切展开，底部交接句在最后两个节拍定格
+    shot_card: none_direct_comparison
+  - scene_id: brand_close
+    from: 1260
+    duration: 90
+    purpose: 品牌与联系入口收束
+    primary_visual: 数契 Logo、品牌句与 @archerthegoat
+    cause: 完整工作流已经演完
+    meaning: 邀请观众带一个业务口径问题体验
+    effect: 界面缩入背景，Logo 与文案原位显形，最后 60 帧真静止
+    shot_card: none_brand_hold
+audio_cues:
+  - {cue: paper_slice_quick, from: 7, duration_frames: 13, gain: 0.13, meaning: 订单表进入}
+  - {cue: marker_pen_line, from: 76, duration_frames: 14, gain: 0.11, meaning: 第一套精确框线}
+  - {cue: marker_pen_line, from: 116, duration_frames: 14, gain: 0.11, meaning: 第二套精确框线}
+  - {cue: marker_pen_line, from: 156, duration_frames: 14, gain: 0.11, meaning: 第三套精确框线}
+  - {cue: paper_slice_quick, from: 227, duration_frames: 13, gain: 0.10, meaning: Workbench 进入}
+  - {cue: ui_click, from: 390, duration_frames: 8, gain: 0.20, meaning: 发送目标}
+  - {cue: ui_click, from: 660, duration_frames: 8, gain: 0.13, meaning: 核对纳入范围}
+  - {cue: ui_click, from: 705, duration_frames: 8, gain: 0.13, meaning: 核对退款处理}
+  - {cue: ui_click, from: 750, duration_frames: 8, gain: 0.13, meaning: 核对时间归属}
+  - {cue: confirm_tick, from: 765, duration_frames: 18, gain: 0.18, meaning: 确认并继续}
+  - {cue: result_open, from: 810, duration_frames: 24, gain: 0.15, meaning: 候选成果更新}
+  - {cue: ui_click, from: 1005, duration_frames: 8, gain: 0.15, meaning: 查看本轮变化}
+qa_targets:
+  cutpoint_error_frames_max: 3
+  frame_board_seconds: [0, 2.5, 4.0, 6.5, 7.5, 10.5, 12, 13, 15.5, 17.5, 21, 23.5, 25.5, 27, 30, 33, 35, 37, 39.5, 42, 44]
+  forbid_old_candidate_texture: true
+  exact_candidate_path: output/video/contextox-demo-1.0.0-product-film-v4-a-candidate.mp4
