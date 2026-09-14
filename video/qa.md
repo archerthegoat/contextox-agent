@@ -1,6 +1,12 @@
 # 数契 45 秒产品片 V3 QA
 
-状态：`candidate_render`；人工验收 `PENDING`，公开发布 `NOT RUN`。
+状态：`rejected_candidate`；人工验收 `FAIL`，公开发布 `NOT RUN`。
+
+## V3 人工验收结论（2026-09-14）
+
+用户观看 V3 后明确否决该候选。失败集中在三个可观察问题：画线与目标元素没有精确贴合；若干特效没有服务对应的产品动作，造成风格和内容脱节；音乐虽然按固定节拍编排，但缺少有吸引力的起伏、停顿与记忆点。自动渲染、媒体规格和静帧检查仍然保留为工程证据，但不能抵消本次人工观感 `FAIL`。
+
+V3 不进入公开分发。后续 V4 使用独立 Composition 和候选文件：先完成声音结构与 10–12 秒钩子样片，再扩展完整 45 秒；界面标注必须由真实页面坐标生成，视觉效果必须逐项绑定产品动作。V3 源码与工件仅作为 Git 历史中的失败基线保留。
 
 ## README 14 秒产品动图 V2
 
@@ -78,14 +84,14 @@ Composition: ContextOxProductFilm
 Viewport: 1920x1080 / 100%
 Test data: 公开合成订单、客户与说明资料
 
-Specification: PENDING HUMAN REVIEW
-Visual and timing: PENDING HUMAN REVIEW
-Captions: PENDING HUMAN REVIEW
-Audio: PENDING HUMAN REVIEW
-Aspects/readability: PENDING HUMAN REVIEW
-Product fidelity: PENDING HUMAN REVIEW
+Specification: NOT REASSESSED
+Visual and timing: FAIL
+Captions: NOT REASSESSED
+Audio: FAIL
+Aspects/readability: NOT REASSESSED
+Product fidelity: FAIL — annotation targets were not precise
 Full render: PASS
 
-Human acceptance: PENDING
-Notes:
+Human acceptance: FAIL
+Notes: V3 rejected on 2026-09-14 for imprecise line animation, effects that did not fit the demonstrated actions, and an unengaging music rhythm.
 ```
