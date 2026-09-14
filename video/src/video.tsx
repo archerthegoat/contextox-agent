@@ -84,7 +84,7 @@ const EditorialLabel: React.FC<{children: ReactNode; dark?: boolean}> = ({
       border: `1px solid ${dark ? 'rgba(255,255,255,.2)' : palette.lineStrong}`,
       background: dark ? 'rgba(13,27,46,.84)' : 'rgba(255,255,255,.88)',
       color: dark ? '#D9E7F8' : palette.blue,
-      fontSize: 15,
+      fontSize: 34,
       fontWeight: 780,
       letterSpacing: 0.7,
     }}
@@ -93,7 +93,7 @@ const EditorialLabel: React.FC<{children: ReactNode; dark?: boolean}> = ({
   </div>
 );
 
-const Disclosure: React.FC<{dark?: boolean}> = ({dark = false}) => (
+const Disclosure: React.FC<{dark?: boolean; children?: ReactNode}> = ({dark = false, children}) => (
   <div
     style={{
       position: 'absolute',
@@ -101,12 +101,13 @@ const Disclosure: React.FC<{dark?: boolean}> = ({dark = false}) => (
       top: 40,
       zIndex: 80,
       color: dark ? '#9FB0C5' : palette.muted,
-      fontSize: 14,
+      fontSize: 36,
       fontWeight: 650,
       letterSpacing: 0.2,
+      textAlign: 'right',
     }}
   >
-    公开合成 Demo · 对应当前 Workbench
+    {children ?? '公开合成 Demo · 对应当前 Workbench'}
   </div>
 );
 
@@ -133,13 +134,13 @@ const SceneCaption: React.FC<{
       style={{
         color: palette.marker,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-        fontSize: 22,
+        fontSize: 32,
         fontWeight: 850,
       }}
     >
       {index}
     </span>
-    <strong style={{fontSize: 36, lineHeight: 1.15, letterSpacing: -1.2}}>{children}</strong>
+    <strong style={{fontSize: 64, lineHeight: 1.08, letterSpacing: -1.9}}>{children}</strong>
   </div>
 );
 
@@ -180,7 +181,7 @@ const OrdersTable: React.FC<{
         padding: large ? '20px 24px' : '15px 20px',
         background: dark ? 'rgba(255,255,255,.085)' : '#E8EEF6',
         color: dark ? '#AFBED2' : palette.muted,
-        fontSize: large ? 20 : 16,
+        fontSize: large ? 32 : 16,
         fontWeight: 780,
       }}
     >
@@ -196,11 +197,11 @@ const OrdersTable: React.FC<{
             gridTemplateColumns: '1.2fr 1fr 1fr 1.2fr 1fr',
             alignItems: 'center',
             gap: 10,
-            minHeight: large ? 76 : 58,
+            minHeight: large ? 80 : 58,
             padding: large ? '10px 24px' : '8px 20px',
             borderTop: `1px solid ${dark ? 'rgba(255,255,255,.11)' : palette.line}`,
             color: dark ? '#F6F9FD' : palette.ink,
-            fontSize: large ? 22 : 18,
+            fontSize: large ? 34 : 18,
             opacity: reveal,
             transform: `translateX(${(1 - reveal) * -26}px)`,
           }}
@@ -213,7 +214,7 @@ const OrdersTable: React.FC<{
               justifySelf: 'start',
               padding: '5px 9px',
               borderRadius: 4,
-              fontSize: large ? 17 : 14,
+              fontSize: large ? 30 : 14,
               fontWeight: 760,
               ...toneFor(row[3]),
             }}
@@ -252,11 +253,11 @@ const MarkerStroke: React.FC<{
 
 const NumberBarrage: React.FC = () => {
   const frame = useCurrentFrame();
-  const flashes = Math.max(pulse(frame, 18, 4), pulse(frame, 54, 4), pulse(frame, 90, 4));
+  const flashes = Math.max(pulse(frame, 18, 4), pulse(frame, 54, 4), pulse(frame, 72, 4));
   const values = [
     {value: '689', note: '全部状态直接相加', at: 18},
     {value: '440', note: '只统计已支付', at: 54},
-    {value: '390', note: '已支付再扣退款', at: 90},
+    {value: '390', note: '已支付再扣退款', at: 72},
   ];
 
   return (
@@ -295,9 +296,9 @@ const NumberBarrage: React.FC = () => {
             >
               <strong style={{display: 'block', fontSize: 100, lineHeight: 0.95, letterSpacing: -7}}>
                 {value}
-                <small style={{marginLeft: 12, fontSize: 28, letterSpacing: 0}}>元</small>
+                <small style={{marginLeft: 12, fontSize: 32, letterSpacing: 0}}>元</small>
               </strong>
-              <span style={{display: 'block', marginTop: 14, color: '#B9C8DB', fontSize: 20}}>{note}</span>
+              <span style={{display: 'block', marginTop: 14, color: '#B9C8DB', fontSize: 32}}>{note}</span>
             </div>
           );
         })}
@@ -313,9 +314,7 @@ const NumberBarrage: React.FC = () => {
         }}
       />
       <SceneCaption index="01" dark>同一份数据，三个答案？</SceneCaption>
-      <div style={{position: 'absolute', right: 84, bottom: 42, color: '#899BB1', fontSize: 13}}>
-        数字用于解释规则差异，不是产品计算结果
-      </div>
+      <Disclosure dark>数字仅说明规则差异 · 不是产品计算结果</Disclosure>
     </AbsoluteFill>
   );
 };
@@ -324,9 +323,9 @@ const FreezeRules: React.FC = () => {
   const frame = useCurrentFrame();
   const zoom = tween(frame, 0, 15, 1.16, 1);
   const tags = [
-    {title: '哪些算进去', body: '待支付算不算？', at: 26, left: 1170, top: 250},
-    {title: '退款怎么处理', body: '从哪里扣？', at: 56, left: 1260, top: 480},
-    {title: '按什么时间', body: '下单还是支付？', at: 86, left: 1120, top: 710},
+    {title: '哪些算进去', body: '待支付算不算？', at: 18, left: 1170, top: 250},
+    {title: '退款怎么处理', body: '从哪里扣？', at: 36, left: 1260, top: 480},
+    {title: '按什么时间', body: '下单还是支付？', at: 54, left: 1120, top: 710},
   ];
   return (
     <AbsoluteFill style={{...paperTexture, fontFamily, color: palette.ink}}>
@@ -346,9 +345,9 @@ const FreezeRules: React.FC = () => {
       >
         <OrdersTable frame={120} large />
         <svg style={{position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible'}} viewBox="0 0 1010 580">
-          <MarkerStroke frame={frame} start={22} path="M650 12 C780 0 908 6 1000 18" />
-          <MarkerStroke frame={frame} start={52} path="M600 276 C695 250 820 248 920 278 C825 305 692 307 600 276" />
-          <MarkerStroke frame={frame} start={82} path="M816 14 C865 4 932 7 998 24" />
+          <MarkerStroke frame={frame} start={18} path="M650 12 C780 0 908 6 1000 18" />
+          <MarkerStroke frame={frame} start={36} path="M600 276 C695 250 820 248 920 278 C825 305 692 307 600 276" />
+          <MarkerStroke frame={frame} start={54} path="M816 14 C865 4 932 7 998 24" />
         </svg>
       </div>
       {tags.map((tag, index) => {
@@ -373,8 +372,8 @@ const FreezeRules: React.FC = () => {
               transform: `translateX(${(1 - amount) * 55}px) rotate(${index % 2 ? 0.7 : -0.7}deg)`,
             }}
           >
-            <small style={{color: palette.blue, fontSize: 18, fontWeight: 850}}>{tag.title}</small>
-            <strong style={{display: 'block', marginTop: 7, fontSize: 31}}>{tag.body}</strong>
+            <small style={{color: palette.blue, fontSize: 32, fontWeight: 850}}>{tag.title}</small>
+            <strong style={{display: 'block', marginTop: 7, fontSize: 42}}>{tag.body}</strong>
           </div>
         );
       })}
@@ -393,18 +392,18 @@ const Positioning: React.FC = () => {
       <EditorialLabel dark>不是替代 · 是关注重点不同</EditorialLabel>
       <div style={{position: 'absolute', left: 110, right: 110, top: 165, bottom: 150, display: 'grid', gridTemplateColumns: '1fr 120px 1fr', alignItems: 'center'}}>
         <div style={{opacity: leftIn, transform: `translateX(${(1 - leftIn) * -55}px)`}}>
-          <span style={{color: '#97A9BE', fontSize: 19, fontWeight: 750}}>CODEX 等通用 AGENT</span>
+          <span style={{color: '#97A9BE', fontSize: 32, fontWeight: 750}}>CODEX 等通用 AGENT</span>
           <h2 style={{margin: '24px 0 18px', fontSize: 66, lineHeight: 1.08, letterSpacing: -3}}>理解要求，<br />把任务执行出来</h2>
-          <p style={{margin: 0, color: '#B7C5D7', fontSize: 24, lineHeight: 1.6}}>写代码、查资料、操作工具，<br />在明确目标下完成工作。</p>
+          <p style={{margin: 0, color: '#B7C5D7', fontSize: 32, lineHeight: 1.45}}>写代码、查资料、操作工具，<br />在明确目标下完成工作。</p>
         </div>
         <div style={{height: 420, borderLeft: '1px solid rgba(255,255,255,.18)', justifySelf: 'center'}} />
         <div style={{position: 'relative', opacity: rightIn, transform: `translateX(${(1 - rightIn) * 55}px)`}}>
-          <span style={{color: '#81B5FF', fontSize: 19, fontWeight: 850}}>数契 CONTEXTOX</span>
+          <span style={{color: '#81B5FF', fontSize: 32, fontWeight: 850}}>数契 CONTEXTOX</span>
           <h2 style={{margin: '24px 0 18px', fontSize: 66, lineHeight: 1.08, letterSpacing: -3}}>找到歧义，<br /><span style={{color: '#78B0FF'}}>把业务定义说清楚</span></h2>
           <svg style={{position: 'absolute', left: 0, top: 180, width: 650, height: 45}} viewBox="0 0 650 45">
             <path d="M8 26 C165 12 316 33 642 17" pathLength={100} stroke="#4D9AFF" strokeWidth="10" fill="none" strokeLinecap="round" strokeDasharray={100} strokeDashoffset={underline} />
           </svg>
-          <p style={{margin: 0, color: '#D0DBE8', fontSize: 24, lineHeight: 1.6}}>证据、问题、人的决定和变化，<br />留在同一条可回看的路径里。</p>
+          <p style={{margin: 0, color: '#D0DBE8', fontSize: 32, lineHeight: 1.45}}>证据、问题、人的决定和变化，<br />留在同一条可回看的路径里。</p>
         </div>
       </div>
       <SceneCaption index="03" dark>通用 Agent 负责执行；数契聚焦业务定义</SceneCaption>
@@ -548,7 +547,7 @@ const WorkbenchInput: React.FC = () => {
               borderRadius: 8,
               background: 'white',
               color: palette.ink,
-              fontSize: 22,
+              fontSize: 32,
               boxSizing: 'border-box',
             }}
           >
@@ -578,7 +577,7 @@ const QuestionRow: React.FC<{
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '66px 1fr 330px',
+        gridTemplateColumns: '70px 1fr 410px',
         alignItems: 'center',
         gap: 22,
         padding: '20px 24px',
@@ -589,9 +588,9 @@ const QuestionRow: React.FC<{
         transform: `translateY(${(1 - amount) * 32}px) scale(${0.98 + amount * 0.02})`,
       }}
     >
-      <strong style={{color, fontSize: 30, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace'}}>{number}</strong>
-      <strong style={{fontSize: 25}}>{title}</strong>
-      <span style={{padding: '12px 14px', background, color, fontSize: 18, fontWeight: 720}}>{impact}</span>
+      <strong style={{color, fontSize: 32, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace'}}>{number}</strong>
+      <strong style={{fontSize: 36}}>{title}</strong>
+      <span style={{padding: '12px 14px', background, color, fontSize: 32, fontWeight: 720}}>{impact}</span>
     </div>
   );
 };
@@ -622,7 +621,7 @@ const AgentQuestions: React.FC = () => {
       >
         <div style={{display: 'flex', alignItems: 'center', gap: 15, marginBottom: 24}}>
           <Img src={staticFile('contextox-mark.png')} style={{width: 46, height: 46}} />
-          <div><strong style={{display: 'block', fontSize: 24}}>这些回答会直接改变结果</strong><span style={{color: palette.muted, fontSize: 17}}>所以 Agent 不替你猜。</span></div>
+          <div><strong style={{display: 'block', fontSize: 36}}>这些回答会直接改变结果</strong><span style={{color: palette.muted, fontSize: 32}}>所以 Agent 不替你猜。</span></div>
         </div>
         <div style={{display: 'grid', gap: 13}}>
           <QuestionRow frame={frame} at={36} number="01" title="待支付订单算不算？" impact="会影响 199 元是否进入" tone="amber" />
@@ -646,7 +645,7 @@ const AnswerRow: React.FC<{
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '54px 235px 1fr',
+        gridTemplateColumns: '58px 300px 1fr',
         alignItems: 'center',
         minHeight: 92,
         padding: '0 22px',
@@ -658,35 +657,35 @@ const AnswerRow: React.FC<{
         style={{
           display: 'grid',
           placeItems: 'center',
-          width: 31,
-          height: 31,
+          width: 40,
+          height: 40,
           border: `2px solid ${checked > 0.4 ? palette.blue : palette.lineStrong}`,
           borderRadius: '50%',
           background: checked > 0.4 ? palette.blue : 'white',
           color: 'white',
-          fontSize: 19,
+          fontSize: 30,
           fontWeight: 900,
           transform: `scale(${0.9 + checked * 0.1})`,
         }}
       >
         {checked > 0.4 ? '✓' : ''}
       </span>
-      <span style={{color: palette.muted, fontSize: 18}}>{label}</span>
-      <strong style={{fontSize: 23}}>{answer}</strong>
+      <span style={{color: palette.muted, fontSize: 32}}>{label}</span>
+      <strong style={{fontSize: 34}}>{answer}</strong>
     </div>
   );
 };
 
 const HumanConfirmation: React.FC = () => {
   const frame = useCurrentFrame();
-  const impactAt = 126;
+  const impactAt = 108;
   const zoom = frame < impactAt ? 1 : frame < impactAt + 6 ? tween(frame, impactAt, impactAt + 6, 1, 1.12) : tween(frame, impactAt + 6, impactAt + 21, 1.12, 1.025);
   const shakeAmount = tween(frame, impactAt + 6, impactAt + 24, 1, 0);
   const shakeX = Math.sin((frame - impactAt) * 2.3) * 9 * shakeAmount;
   const shakeY = Math.cos((frame - impactAt) * 1.7) * 5 * shakeAmount;
-  const cursorY = frame < 46 ? 374 : frame < 78 ? 466 : frame < 110 ? 558 : 752;
-  const cursorX = frame < 110 ? 470 : 1435;
-  const click = Math.max(pulse(frame, 32), pulse(frame, 64), pulse(frame, 96), pulse(frame, impactAt));
+  const cursorY = frame < 40 ? 374 : frame < 76 ? 466 : frame < 104 ? 558 : 752;
+  const cursorX = frame < 104 ? 470 : 1435;
+  const click = Math.max(pulse(frame, 18), pulse(frame, 54), pulse(frame, 90), pulse(frame, impactAt));
   return (
     <AbsoluteFill style={{...paperTexture, fontFamily, color: palette.ink}}>
       <RealWorkbench asset="textures/workbench-goal.jpg" opacity={0.16} />
@@ -708,12 +707,12 @@ const HumanConfirmation: React.FC = () => {
         }}
       >
         <div style={{padding: '26px 28px 22px'}}>
-          <small style={{color: palette.blue, fontSize: 17, fontWeight: 820}}>核对回答</small>
-          <h2 style={{margin: '7px 0 0', fontSize: 34}}>以下规则确认后，才会进入候选定义</h2>
+          <small style={{color: palette.blue, fontSize: 32, fontWeight: 820}}>核对回答</small>
+          <h2 style={{margin: '7px 0 0', fontSize: 42}}>以下规则确认后，才会进入候选定义</h2>
         </div>
-        <AnswerRow frame={frame} at={28} label="纳入哪些订单" answer="只统计已支付订单" />
-        <AnswerRow frame={frame} at={60} label="退款怎么处理" answer="从原订单地区扣除" />
-        <AnswerRow frame={frame} at={92} label="按哪个时间" answer="按支付时间归属" />
+        <AnswerRow frame={frame} at={14} label="纳入哪些订单" answer="只统计已支付订单" />
+        <AnswerRow frame={frame} at={50} label="退款怎么处理" answer="从原订单地区扣除" />
+        <AnswerRow frame={frame} at={86} label="按哪个时间" answer="按支付时间归属" />
         <button
           type="button"
           style={{
@@ -727,7 +726,7 @@ const HumanConfirmation: React.FC = () => {
             background: palette.blue,
             color: 'white',
             fontFamily,
-            fontSize: 21,
+            fontSize: 32,
             fontWeight: 820,
             transform: `scale(${click > 0.5 && frame >= 115 ? 0.96 : 1})`,
           }}
@@ -748,7 +747,7 @@ const CandidateDefinition: React.FC = () => {
   const x = interpolate(morph, [0, 1], [1260, 255]);
   const y = interpolate(morph, [0, 1], [720, 205]);
   const width = interpolate(morph, [0, 1], [315, 820]);
-  const height = interpolate(morph, [0, 1], [66, 340]);
+  const height = interpolate(morph, [0, 1], [66, 420]);
   const radius = interpolate(morph, [0, 1], [8, 15]);
   const details = tween(frame, 32, 52);
   const travel = tween(frame, 70, 122);
@@ -774,15 +773,15 @@ const CandidateDefinition: React.FC = () => {
         }}
       >
         {morph < 0.42 ? (
-          <div style={{display: 'grid', placeItems: 'center', width: '100%', height: '100%', fontSize: 21, fontWeight: 820}}>确认并继续</div>
+          <div style={{display: 'grid', placeItems: 'center', width: '100%', height: '100%', fontSize: 32, fontWeight: 820}}>确认并继续</div>
         ) : (
           <div style={{padding: '28px 32px', opacity: details}}>
-            <small style={{color: palette.blue, fontSize: 17, fontWeight: 850}}>候选字段</small>
-            <h2 style={{margin: '10px 0 8px', fontSize: 43, letterSpacing: -1.8}}>地区净订单金额</h2>
-            <p style={{margin: 0, color: palette.muted, fontSize: 20, lineHeight: 1.55}}>按客户地区汇总已支付金额，再扣除同一地区的退款金额。</p>
+            <small style={{color: palette.blue, fontSize: 32, fontWeight: 850}}>候选字段</small>
+            <h2 style={{margin: '10px 0 8px', fontSize: 50, letterSpacing: -1.8}}>地区净订单金额</h2>
+            <p style={{margin: 0, color: palette.muted, fontSize: 32, lineHeight: 1.45}}>按客户地区汇总已支付金额，再扣除同一地区的退款金额。</p>
             <div style={{display: 'flex', gap: 9, marginTop: 25}}>
               {['只统计已支付', '退款按原地区扣除', '按支付时间'].map((text) => (
-                <span key={text} style={{padding: '9px 12px', background: palette.greenSoft, color: palette.green, fontSize: 16, fontWeight: 730}}>{text}</span>
+                <span key={text} style={{padding: '9px 12px', background: palette.greenSoft, color: palette.green, fontSize: 32, fontWeight: 730}}>{text}</span>
               ))}
             </div>
           </div>
@@ -801,17 +800,17 @@ const CandidateDefinition: React.FC = () => {
         }}
       >
         <div style={{padding: '25px 26px', border: `1px solid ${palette.lineStrong}`, background: 'rgba(255,255,255,.96)'}}>
-          <small style={{color: palette.blue, fontSize: 16, fontWeight: 820}}>候选关系</small>
-          <strong style={{display: 'block', marginTop: 9, fontSize: 28}}>订单 ↔ 客户</strong>
-          <span style={{display: 'block', marginTop: 8, color: palette.muted, fontSize: 18}}>通过客户标识连接，地区来自客户资料</span>
+          <small style={{color: palette.blue, fontSize: 32, fontWeight: 820}}>候选关系</small>
+          <strong style={{display: 'block', marginTop: 9, fontSize: 40}}>订单 ↔ 客户</strong>
+          <span style={{display: 'block', marginTop: 8, color: palette.muted, fontSize: 32}}>通过客户标识连接，地区来自客户资料</span>
         </div>
         <div style={{padding: '25px 26px', border: `1px solid ${palette.lineStrong}`, background: 'rgba(255,255,255,.96)'}}>
-          <small style={{color: palette.blue, fontSize: 16, fontWeight: 820}}>资料来源</small>
-          <strong style={{display: 'block', marginTop: 9, fontSize: 24}}>订单表 · 客户表 · 业务说明</strong>
+          <small style={{color: palette.blue, fontSize: 32, fontWeight: 820}}>资料来源</small>
+          <strong style={{display: 'block', marginTop: 9, fontSize: 34}}>订单表 · 客户表 · 业务说明</strong>
         </div>
         <div style={{padding: '18px 22px', borderLeft: `6px solid ${palette.amber}`, background: 'rgba(255,248,230,.97)'}}>
-          <small style={{color: palette.amber, fontSize: 16, fontWeight: 820}}>仍未知</small>
-          <strong style={{display: 'block', marginTop: 6, fontSize: 22}}>跨月退款边界仍待补充</strong>
+          <small style={{color: palette.amber, fontSize: 32, fontWeight: 820}}>仍未知</small>
+          <strong style={{display: 'block', marginTop: 6, fontSize: 34}}>跨月退款边界仍待补充</strong>
         </div>
       </div>
       <SceneCaption index="07">回答变成候选定义</SceneCaption>
@@ -821,6 +820,7 @@ const CandidateDefinition: React.FC = () => {
 
 const RoundChanges: React.FC = () => {
   const frame = useCurrentFrame();
+  const click = pulse(frame, 8);
   const rows = [
     {label: '规则变化', value: '纳入、退款、时间已经写清', color: palette.blue, background: palette.blueSoft, at: 12},
     {label: '证据位置', value: '3 份资料都能回到出处', color: palette.green, background: palette.greenSoft, at: 30},
@@ -833,20 +833,23 @@ const RoundChanges: React.FC = () => {
       <Disclosure />
       <div style={{position: 'absolute', left: 260, top: 180, width: 1400, padding: '36px 40px', border: `1px solid ${palette.lineStrong}`, background: 'rgba(255,255,255,.97)', boxShadow: '0 30px 85px rgba(20,38,60,.2)', boxSizing: 'border-box'}}>
         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 26}}>
-          <div><small style={{color: palette.blue, fontSize: 17, fontWeight: 850}}>查看本轮变化</small><h2 style={{margin: '8px 0 0', fontSize: 39}}>这轮到底改变了什么？</h2></div>
-          <span style={{padding: '9px 12px', background: palette.greenSoft, color: palette.green, fontSize: 17, fontWeight: 760}}>可以回看</span>
+          <div><small style={{color: palette.blue, fontSize: 32, fontWeight: 850}}>查看本轮变化</small><h2 style={{margin: '8px 0 0', fontSize: 46}}>这轮到底改变了什么？</h2></div>
+          <span style={{padding: '9px 12px', background: palette.greenSoft, color: palette.green, fontSize: 32, fontWeight: 760}}>可以回看</span>
         </div>
         <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 17}}>
           {rows.map((row) => {
             const amount = spring({frame: frame - row.at, fps: 30, config: {damping: 17, stiffness: 160, mass: 0.7}});
             return (
               <div key={row.label} style={{minHeight: 260, padding: '28px 27px', borderTop: `7px solid ${row.color}`, background: row.background, opacity: amount, transform: `translateY(${(1 - amount) * 38}px)`}}>
-                <small style={{color: row.color, fontSize: 18, fontWeight: 850}}>{row.label}</small>
-                <strong style={{display: 'block', marginTop: 26, fontSize: 30, lineHeight: 1.35}}>{row.value}</strong>
+                <small style={{color: row.color, fontSize: 32, fontWeight: 850}}>{row.label}</small>
+                <strong style={{display: 'block', marginTop: 26, fontSize: 36, lineHeight: 1.35}}>{row.value}</strong>
               </div>
             );
           })}
         </div>
+      </div>
+      <div style={{opacity: 1 - tween(frame, 18, 28)}}>
+        <Cursor x={380} y={230} down={click > 0.55} click={click} />
       </div>
       <SceneCaption index="08">变化、出处、未知，都能回看</SceneCaption>
     </AbsoluteFill>
@@ -917,11 +920,11 @@ const BrandMorph: React.FC = () => {
         }}
       />
       <div style={{position: 'absolute', left: 155, top: 250, width: 1030, opacity: copyIn, transform: `translateY(${(1 - copyIn) * 35}px)`}}>
-        <span style={{color: '#82B6FF', fontSize: 20, fontWeight: 820}}>数契 CONTEXTOX · DEMO 1.0.0</span>
+        <span style={{color: '#82B6FF', fontSize: 32, fontWeight: 820}}>数契 CONTEXTOX · DEMO 1.0.0</span>
         <h1 style={{margin: '28px 0 0', fontSize: 82, lineHeight: 1.12, letterSpacing: -4.2}}>把表里的<br /><span style={{color: '#78B0FF'}}>业务意思说清楚</span></h1>
-        <p style={{margin: '32px 0 0', color: '#C5D2E2', fontSize: 25}}>Agent 找证据 · 人确认关键规则 · 候选定义可以回看</p>
+        <p style={{margin: '32px 0 0', color: '#C5D2E2', fontSize: 32}}>Agent 找证据 · 人确认关键规则 · 候选定义可以回看</p>
       </div>
-      <div style={{position: 'absolute', left: 155, right: 155, bottom: 70, display: 'flex', justifyContent: 'space-between', color: '#9FB0C5', fontSize: 16, opacity: tween(frame, 58, 72)}}>
+      <div style={{position: 'absolute', left: 155, right: 155, bottom: 70, display: 'flex', justifyContent: 'space-between', gap: 60, color: '#9FB0C5', fontSize: 36, opacity: tween(frame, 58, 72)}}>
         <span>公开合成 Demo · 候选而非正式批准结果</span>
         <span>github.com/archerthegoat/contextox-agent</span>
       </div>

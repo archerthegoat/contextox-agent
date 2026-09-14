@@ -19,6 +19,10 @@ typography:
     - Hiragino Sans GB
   caption_max_lines: 2
   minimum_caption_hold_seconds: 1.5
+  narrative_caption_min_effective_px: 56
+  supporting_text_min_effective_px: 32
+  implementation_caption_font_px: 64
+  implementation_disclosure_font_px: 36
 motion:
   density: high_but_breathing
   rhythm: 100_bpm_exact_18_frame_grid

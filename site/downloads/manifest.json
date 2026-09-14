@@ -24,8 +24,8 @@
     },
     {
       "path": "site/assets/contextox-product-film-poster.png",
-      "bytes": 482965,
-      "sha256": "2709677e6181d66d484796eaece0d3db80f96ffa0b31c118154d926f3ab57edb"
+      "bytes": 619613,
+      "sha256": "50fe002563b1c4390ccf67a7650310ceb06390631cdc22de11d6c2e4f3fd26fb"
     },
     {
       "path": "site/downloads/contextox-mark-32.png",
@@ -74,8 +74,8 @@
     },
     {
       "path": "site/downloads/contextox-demo-1.0.0-product-film.mp4",
-      "bytes": 5704345,
-      "sha256": "4de5d8e04a49a0ec58cfaac791db4007f100a2ee0926e762b54707f4b320bcdd"
+      "bytes": 11345098,
+      "sha256": "976622b0b20c9ed8dfd0797bd9e4d24086ebdad38e42994a83357bd5266b0eb8"
     }
   ]
 }

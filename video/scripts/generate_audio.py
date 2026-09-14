@@ -30,13 +30,12 @@ BEAT_SECONDS = 60 / BPM
 SWING_RATIO = 0.58
 TAU = math.tau
 
-SCENE_BEATS = (0, 8, 16, 22, 34, 44, 54, 64, 69)
-OPENING_HITS = tuple(beat * BEAT_SECONDS for beat in (1, 3, 5))
-UI_CLICKS = tuple(
-    beat * BEAT_SECONDS
-    for beat in (24.0, 26.0, 28.0, 31.5, 46.0, 48.0, 50.0, 52.0, 65.0)
-)
-CONFIRM_IMPACTS = tuple(beat * BEAT_SECONDS for beat in (53.0, 54.0, 69.0))
+OPENING_HIT_FRAMES = (18, 54, 72)
+OPENING_HITS = tuple(frame / 30 for frame in OPENING_HIT_FRAMES)
+UI_CLICK_FRAMES = (426, 450, 474, 541, 594, 810, 846, 882, 900, 1160)
+UI_CLICKS = tuple(frame / 30 for frame in UI_CLICK_FRAMES)
+IMPACT_FRAMES = (900, 972, 1242)
+CONFIRM_IMPACTS = tuple(frame / 30 for frame in IMPACT_FRAMES)
 BRUSH_FILLS = tuple(beat * BEAT_SECONDS for beat in (15.25, 15.5, 15.75, 43.25, 43.5, 43.75, 52.25, 52.5, 52.75))
 
 BASS_ROOTS = (55.00, 65.41, 73.42, 49.00)  # A1, C2, D2, G1
@@ -198,7 +197,10 @@ def normalize(raw_path: Path) -> None:
             "-i",
             str(raw_path),
             "-af",
-            "loudnorm=I=-16:TP=-1:LRA=7:linear=true",
+            # AAC can overshoot the PCM true peak slightly. The hotter loudness
+            # target and lower peak ceiling compensate for that final encode so
+            # the distributed MP4 lands near -16 LUFS without exceeding -1 dBTP.
+            "loudnorm=I=-14.9:TP=-1.6:LRA=7:linear=true",
             "-ar",
             str(SAMPLE_RATE),
             "-ac",

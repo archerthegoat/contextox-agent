@@ -16,7 +16,7 @@ assets:
     type: audio/wav
     local_path_or_approved_url: public/audio/contextox-v3-jazz-mix.wav
     source: deterministic synthesis by scripts/generate_audio.py
-    source_version_or_date: 0d898854e1a685320a8f6da2b92039df8a7b11d53f21a6fac183f4c16d4e3203
+    source_version_or_date: 8f017ea63b03ccaa97340203f90d6e6a7556e5e11fdc31bd92aa0337c90983a1
     license: project-original
     license_evidence: scripts/generate_audio.py
     intended_use: 100 BPM swung jazz drums, short fills, muted bass, and UI effects
@@ -30,10 +30,10 @@ assets:
   - asset_id: workbench_start_capture
     type: image/jpeg
     local_path_or_approved_url: public/textures/workbench-start.jpg
-    source: fresh localhost capture from a temporary public-synthetic-demo workspace
+    source: fresh localhost capture of the repository Workbench using the public synthetic Demo fixture
     source_version_or_date: 3fc87bd1c502585a758e7d4ec3b6babd7c01e56294cd49abe6b6d7ab9e2921e2
     license: project-owned
-    license_evidence: web source and repository public demo endpoint
+    license_evidence: repository Workbench source and src/contextox/demo/*
     intended_use: real Workbench texture before typing the goal
     contains_personal_data: false
     presenter_consent: not_applicable
@@ -43,10 +43,10 @@ assets:
   - asset_id: workbench_goal_capture
     type: image/jpeg
     local_path_or_approved_url: public/textures/workbench-goal.jpg
-    source: fresh localhost capture from the same temporary public-synthetic-demo workspace
+    source: fresh localhost capture of the same repository Workbench and public synthetic Demo fixture
     source_version_or_date: 4e4a9cd59c57bc6b1db2fc01bfe86fdb8bd281663bc5290e234d83fbfca8238b
     license: project-owned
-    license_evidence: web source and repository public demo endpoint
+    license_evidence: repository Workbench source and src/contextox/demo/*
     intended_use: real Workbench texture after typing the goal, before sending
     contains_personal_data: false
     presenter_consent: not_applicable
