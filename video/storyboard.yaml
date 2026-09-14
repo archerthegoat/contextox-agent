@@ -2,52 +2,77 @@ composition_id: ContextOxProductFilm
 duration_frames: 1350
 fps: 30
 scenes:
-  - scene_id: hook
+  - scene_id: number_barrage
     from: 0
-    duration: 120
-    timecode: 00:00-00:04
-    action: 六行公开合成订单逐行组装，689、440、390 依次冲入并同时定格
-    caption: 689？440？390？
+    duration: 144
+    timecode: 00:00-00:04.8
+    beats: 0-8
+    action: 三次白闪把订单表、689、440、390 撞入；最后 60 帧全部定格
+    caption: 同一份数据，三个答案？
+    shot_card: beat-cut-moves/paparazzi-flash
     boundary: 数字仅用于解释规则差异，不是产品运行结果
-  - scene_id: rule_focus
-    from: 120
-    duration: 150
-    timecode: 00:04-00:09
-    action: 放大订单表，依次聚焦 status、amount、region 与待支付、退款记录
-    caption: 不是不会算，是规则没说清
-  - scene_id: select_sources
-    from: 270
-    duration: 180
-    timecode: 00:09-00:15
-    action: Workbench 全屏登场；鼠标选择三份资料，输入目标并发送
+  - scene_id: freeze_rules
+    from: 144
+    duration: 144
+    timecode: 00:04.8-00:09.6
+    beats: 8-16
+    action: 冻结订单局部，status、退款与时间依次被手写圈线标出，静止至少 45 帧后释放
+    caption: 差的不是公式，是规则
+    shot_card: speed-ramp-freeze/freeze-annotate
+  - scene_id: positioning
+    from: 288
+    duration: 108
+    timecode: 00:09.6-00:13.2
+    beats: 16-22
+    action: 通用执行型 Agent 与数契以关注重点对照；数契标题落稳后用 10 帧手写下划线强调
+    caption: 执行任务 / 说清业务定义
+    shot_card: marker-underline-title
+    boundary: 不表达 Codex 或通用 Agent 不具备澄清能力
+  - scene_id: workbench_input
+    from: 396
+    duration: 216
+    timecode: 00:13.2-00:20.4
+    beats: 22-34
+    action: 真实 Workbench 截图作为纹理进入；鼠标弧线移动、悬停、点击并触发目标输入，镜头轻推后归位
     caption: 选资料，说目标
-  - scene_id: clarify_rules
-    from: 450
-    duration: 210
-    timecode: 00:15-00:22
-    action: 进度推进；Agent 依次提出待支付、退款、时间三个问题
-    caption: Agent 找到需要确认的规则
-  - scene_id: confirm_answers
-    from: 660
-    duration: 210
-    timecode: 00:22-00:29
-    action: 鼠标逐项核对回答卡并点击确认
+    shot_card: input-trigger-moves/cursor-performance
+  - scene_id: agent_questions
+    from: 612
+    duration: 180
+    timecode: 00:20.4-00:26.4
+    beats: 34-44
+    action: 先出现一句摘要，再以 3 帧错位展开待支付、退款、时间三个问题，末尾留 45 帧静止
+    caption: Agent 找到会改变结果的问题
+    shot_card: ai-stream-response
+  - scene_id: human_confirmation
+    from: 792
+    duration: 180
+    timecode: 00:26.4-00:32.4
+    beats: 44-54
+    action: 鼠标核对三条规则；确认时 6 帧推近，最多 9px 衰减震动，随后清晰定格
     caption: 关键规则，人来定
-  - scene_id: candidate_result
-    from: 870
-    duration: 210
-    timecode: 00:29-00:36
-    action: 候选字段、候选关系、已确认规则和资料来源更新
+    shot_card: crash-zoom-punch/impact
+  - scene_id: candidate_definition
+    from: 972
+    duration: 180
+    timecode: 00:32.4-00:38.4
+    beats: 54-64
+    action: 确认元素连续变形成候选字段，镜头横移展示关系、来源和已确认规则，落点误差为零
     caption: 回答变成候选定义
-  - scene_id: inspect_changes
-    from: 1080
-    duration: 150
-    timecode: 00:36-00:41
-    action: 点击查看本轮变化，展开规则变化、证据位置和仍未知事项
+    shot_card: transition-travel/shared-element-morph
+  - scene_id: round_changes
+    from: 1152
+    duration: 90
+    timecode: 00:38.4-00:41.4
+    beats: 64-69
+    action: 点击查看本轮变化；规则、出处、未知按一个主次顺序展开，至少保留 15 帧最终状态
     caption: 变化、出处、未知，都能回看
-  - scene_id: cta
-    from: 1230
-    duration: 120
-    timecode: 00:41-00:45
-    action: App 收入暗色背景，Logo 与 CTA 定格
+  - scene_id: brand_morph
+    from: 1242
+    duration: 108
+    timecode: 00:41.4-00:45
+    beats: 69-75
+    action: 界面卡片使用同一组位置、尺寸和圆角曲线变形成 4 个 Logo 几何片，最终品牌定格至少 36 帧
     caption: 数契，把表里的业务意思说清楚
+    shot_card: ui-to-brand-morph/input-morph-assemble
+    boundary: 公开合成 Demo；候选而非正式批准结果

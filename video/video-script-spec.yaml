@@ -1,30 +1,47 @@
-spec_version: 2
+spec_version: 3
 production_id: contextox-demo-1.0.0-product-film
 composition_id: ContextOxProductFilm
 mode: silent_product_demo
 voice_origin: none
 main_voice_asset: null
-music_asset: public/audio/contextox-v2-mix.wav
+music_asset: public/audio/contextox-v3-jazz-mix.wav
 captions: burned_in_chinese
 cta: github.com/archerthegoat/contextox-agent
+timing:
+  fps: 30
+  bpm: 100
+  frames_per_beat: 18
+  total_beats: 75
+  total_frames: 1350
 timeline:
-  - {scene_id: hook, from: 0, duration: 120}
-  - {scene_id: rule_focus, from: 120, duration: 150}
-  - {scene_id: select_sources, from: 270, duration: 180}
-  - {scene_id: clarify_rules, from: 450, duration: 210}
-  - {scene_id: confirm_answers, from: 660, duration: 210}
-  - {scene_id: candidate_result, from: 870, duration: 210}
-  - {scene_id: inspect_changes, from: 1080, duration: 150}
-  - {scene_id: cta, from: 1230, duration: 120}
-total_frames: 1350
+  - {scene_id: number_barrage, from: 0, duration: 144, beat_from: 0, beat_duration: 8}
+  - {scene_id: freeze_rules, from: 144, duration: 144, beat_from: 8, beat_duration: 8}
+  - {scene_id: positioning, from: 288, duration: 108, beat_from: 16, beat_duration: 6}
+  - {scene_id: workbench_input, from: 396, duration: 216, beat_from: 22, beat_duration: 12}
+  - {scene_id: agent_questions, from: 612, duration: 180, beat_from: 34, beat_duration: 10}
+  - {scene_id: human_confirmation, from: 792, duration: 180, beat_from: 44, beat_duration: 10}
+  - {scene_id: candidate_definition, from: 972, duration: 180, beat_from: 54, beat_duration: 10}
+  - {scene_id: round_changes, from: 1152, duration: 90, beat_from: 64, beat_duration: 5}
+  - {scene_id: brand_morph, from: 1242, duration: 108, beat_from: 69, beat_duration: 6}
+shot_cards:
+  number_barrage: beat-cut-moves/paparazzi-flash
+  freeze_rules: speed-ramp-freeze/freeze-annotate
+  positioning: marker-underline-title
+  workbench_input: input-trigger-moves/cursor-performance
+  agent_questions: ai-stream-response
+  human_confirmation: crash-zoom-punch/impact
+  candidate_definition: transition-travel/shared-element-morph
+  brand_morph: ui-to-brand-morph/input-morph-assemble
 claims:
   required:
     - Demo 1.0.0
     - 公开合成资料
     - 候选定义
     - 关键规则由人确认
+    - 定位对照描述关注重点而非排他能力
   forbidden:
     - 689、440、390 是产品运行结果
+    - Codex 或通用 Agent 不会澄清
     - 正式批准结果
     - 生产数据库写入
     - 客户案例

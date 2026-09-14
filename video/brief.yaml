@@ -1,6 +1,7 @@
 production_id: contextox-demo-1.0.0-product-film
+version: v3_candidate
 mode: silent_product_demo
-purpose: 落地页首屏产品演示与线下介绍开场
+purpose: 动态介绍首屏产品演示与线下介绍开场
 audience:
   - 业务负责人
   - 产品负责人
@@ -8,6 +9,11 @@ audience:
   - 交付负责人
 primary_message: 同一份订单数据，为什么会有三个答案？
 supporting_message: 不是大家不会算，而是没有先说清哪些算进去、退款怎么处理、按哪个时间。数契让 Agent 找出处、提出问题，人确认关键规则，再留下可以回看的候选定义。
+positioning_message: 通用执行型 Agent 擅长完成任务；数契聚焦把业务定义的证据、缺口、人的决定与本轮变化留在一起。
+creative_direction:
+  reference: GAWX-inspired editorial energy
+  interpretation: 快切与静帧交替、手写批注、景别变化、纸张颗粒和声音驱动剪辑
+  originality_boundary: 只借鉴高级表达原则，不复制任何具体作品、镜头或素材
 duration_seconds: 45
 aspect: 16:9
 dimensions: 1920x1080
@@ -15,13 +21,16 @@ fps: 30
 composition_id: ContextOxProductFilm
 audio:
   voice: none
-  music: project_original_96_bpm_electronic
+  bpm: 100
+  beat_grid_frames: 18
+  music: project_original_swung_jazz_drums_and_muted_bass
   ui_sound_effects: project_original
   target_lufs: -16
   true_peak_dbtp_max: -1
 product_boundary:
   numeric_case: 689、440、390 只解释规则不同会得到不同答案
   product_endpoint: 候选定义
+  comparison: 描述产品关注重点，不贬低或虚构 Codex 等通用 Agent 的能力边界
   disclosure: 公开合成 Demo；候选而非正式批准结果
 publication: not_authorized
 human_acceptance: pending
