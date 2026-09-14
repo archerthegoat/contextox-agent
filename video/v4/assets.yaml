@@ -1,0 +1,83 @@
+assets:
+  - asset_id: dirty_thinkin
+    type: audio/mp3
+    local_path_or_approved_url: public/audio/v4/dirty-thinkin.mp3
+    source: Mixkit track 989, Dirty Thinkin' by Michael Ramir C.
+    source_version_or_date: e36220dbbaf56e0380bb106e32779b1832fa8f4bd8d40edcaf15b07a17bb9a8f
+    license: Mixkit Stock Music Free License
+    license_evidence: https://mixkit.co/license/#musicFree
+    source_url: https://assets.mixkit.co/music/989/989.mp3
+    intended_use: V4 hook option A and possible full-film score
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    duration_seconds: 89.182041
+    status: ready
+  - asset_id: night_patrol
+    type: audio/mp3
+    local_path_or_approved_url: public/audio/v4/night-patrol.mp3
+    source: Mixkit track 853, Night Patrol by Michael Ramir C.
+    source_version_or_date: b1ce1bf29a9047c2967a5feca141d4dae2c34ee8e1cf489e0b98ca1fd64d4233
+    license: Mixkit Stock Music Free License
+    license_evidence: https://mixkit.co/license/#musicFree
+    source_url: https://assets.mixkit.co/music/853/853.mp3
+    intended_use: V4 hook option B and possible full-film score
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    duration_seconds: 89.208163
+    status: ready
+  - asset_id: marker_pen_line
+    type: audio/mp3
+    local_path_or_approved_url: public/audio/v4/marker-pen-line.mp3
+    source: Mixkit sound effect 2998, Pen marker line
+    source_version_or_date: ae15103bc9f247c52255ea424a7c1e19e642f2eb95d2dd4e7f398e0cb7967cf4
+    license: Mixkit Sound Effects Free License
+    license_evidence: https://mixkit.co/license/#sfxFree
+    source_url: https://assets.mixkit.co/active_storage/sfx/2998/2998-preview.mp3
+    intended_use: only while exact geometry trace is drawn
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    duration_seconds: 1.28
+    status: ready
+  - asset_id: paper_slice_quick
+    type: audio/mp3
+    local_path_or_approved_url: public/audio/v4/paper-slice-quick.mp3
+    source: Mixkit sound effect 2384, Paper quick slice
+    source_version_or_date: ed7434e6bca4db8f3129ab730e1fc509664388df7ce67450843a1e8c75303095
+    license: Mixkit Sound Effects Free License
+    license_evidence: https://mixkit.co/license/#sfxFree
+    source_url: https://assets.mixkit.co/active_storage/sfx/2384/2384-preview.mp3
+    intended_use: table and Workbench material entry only
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_applicable
+    duration_seconds: 0.391837
+    status: ready
+  - asset_id: workbench_start_capture
+    type: image/jpeg
+    local_path_or_approved_url: public/textures/workbench-start.jpg
+    source: localhost Workbench using the public synthetic Demo fixture
+    source_version_or_date: 3fc87bd1c502585a758e7d4ec3b6babd7c01e56294cd49abe6b6d7ab9e2921e2
+    license: project-owned
+    license_evidence: repository Workbench source and src/contextox/demo
+    intended_use: authentic Workbench entry state
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_required_public_synthetic_only
+    dimensions: 1684x947
+    status: ready
+  - asset_id: workbench_goal_capture
+    type: image/jpeg
+    local_path_or_approved_url: public/textures/workbench-goal.jpg
+    source: localhost Workbench using the same public synthetic Demo fixture
+    source_version_or_date: 4e4a9cd59c57bc6b1db2fc01bfe86fdb8bd281663bc5290e234d83fbfca8238b
+    license: project-owned
+    license_evidence: repository Workbench source and src/contextox/demo
+    intended_use: authentic Workbench state after the goal is typed
+    contains_personal_data: false
+    presenter_consent: not_applicable
+    redaction_status: not_required_public_synthetic_only
+    dimensions: 1684x947
+    status: ready

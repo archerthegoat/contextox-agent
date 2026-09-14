@@ -1,0 +1,37 @@
+content_id: contextox-product-film-v4-hook
+mode: silent-product-launch
+speech_source: none
+voice_origin: none
+content_goal: launch
+visual_source: mixed
+audience:
+  - 业务负责人
+  - 产品负责人
+  - 数据负责人
+  - 交付负责人
+duration_target_seconds: 12
+timing_basis: music_audition_cut
+aspect_profiles:
+  - landscape
+claims:
+  - claim: 华东公开合成订单按所有状态相加为 689 元
+    evidence_ref: src/contextox/demo/orders.csv + customers.csv
+    status: verified
+  - claim: 华东公开合成订单只统计 paid 为 440 元
+    evidence_ref: src/contextox/demo/orders.csv + customers.csv
+    status: verified
+  - claim: 华东已支付金额再扣除退款为 390 元
+    evidence_ref: src/contextox/demo/orders.csv + customers.csv
+    status: verified
+  - claim: 三个答案来自规则差异，不是产品运行结果
+    evidence_ref: 用户已批准的 V2／V3 内容边界
+    status: verified
+required_assets:
+  - public/textures/workbench-start.jpg
+  - public/textures/workbench-goal.jpg
+  - public/audio/v4/dirty-thinkin.mp3
+  - public/audio/v4/night-patrol.mp3
+  - public/audio/v4/marker-pen-line.mp3
+  - public/audio/v4/paper-slice-quick.mp3
+missing_inputs: []
+script_status: ready_for_direction_proof

@@ -1,0 +1,66 @@
+style_id: contextox-product-film-v4-measured-editorial
+status: direction_proof
+visual_thesis: 让精确的数据取舍先建立可信度，再用真实光标把观众带进 Workbench
+hierarchy:
+  primary: 每镜只允许一个金额规则或一个产品动作成为主角
+  supporting: 解释标签、披露和非当前数据降到背景层
+  progressive_reveal: 表格先完整出现，再逐条取舍；Workbench 先全景，再进入资料和输入框
+palette:
+  navy: '#0D1B2E'
+  paper: '#F4F1EA'
+  surface: '#FFFFFF'
+  ink: '#13243A'
+  muted: '#667487'
+  line: '#CCD5E0'
+  blue: '#1674F3'
+  blue_soft: '#EAF3FF'
+  green: '#147D64'
+  green_soft: '#EAF7F2'
+  amber: '#A76A08'
+  amber_soft: '#FFF2D4'
+  red: '#B8493E'
+  red_soft: '#FFE8E4'
+typography:
+  family: system_sans
+  headline_px: 72
+  result_px: 74
+  caption_px: 60
+  supporting_px: 32
+  max_caption_lines: 2
+motion_language:
+  allowed:
+    - direct_hard_cut_on_musical_accent
+    - exact_rect_trace_from_declared_bounds
+    - right_angle_connector_from_cell_edge
+    - focus_mask_that_dims_non_target_content
+    - cursor_move_to_real_dom_target
+    - screenshot_state_crossfade_at_same_coordinates
+  forbidden:
+    - freehand_circle_or_underline
+    - camera_shake
+    - paparazzi_flash
+    - decorative_glow_or_particle
+    - generic_card_pop
+    - fake_product_control
+  annotation_rule: 所有框线、连线和高亮由同一份坐标数据生成；路径起终点必须落在目标框边缘
+  effect_rule: 每个效果必须在 storyboard 的 cause 和 meaning 字段中说明对应产品动作与信息作用
+  hold_rule: 每条结论完整落定后至少静止 24 帧；Workbench 输入结果至少静止 42 帧
+  deterministic_rule: 不使用 Math.random、Date.now 或运行时测量漂移
+audio_direction:
+  option_a: 120 BPM 爵士放克；更明显的鼓点和推进，适合外放发布感
+  option_b: 约 100 BPM 节奏底；贝斯与鼓更克制，适合成熟产品感
+  sfx_vocabulary:
+    - short_paper_slice_for_material_entry
+    - marker_foley_only_while_geometry_is_drawn
+  restraint: 强节奏 BGM 下不叠点击包、闪光、riser 或重复 impact
+  voice: none
+safe_area_px:
+  horizontal: 72
+  vertical: 32
+workbench_fidelity:
+  screenshot_coordinate_space: 1684x947
+  target_source: video/v4/workbench-layout.json
+  screenshot_policy: 真实产品截图是唯一界面纹理；程序化图层只负责镜头、焦点、光标和坐标框
+inspiration_boundary:
+  use: 强弱节奏反差、编辑式硬切、具有人手判断感的批注动作
+  do_not_use: 复制任何创作者的具体构图、镜头、素材、音乐或签名式效果

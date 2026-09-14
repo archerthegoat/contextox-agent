@@ -1,0 +1,53 @@
+production_id: contextox-demo-1.0.0-product-film-v4
+revision: hook_direction_proof_1
+status: direction_proof
+mode: silent_product_launch
+purpose: 先验证新的视觉精度、特效因果和音乐吸引力，再扩展为 45 秒成片
+audience:
+  - 业务负责人
+  - 产品负责人
+  - 数据负责人
+  - 交付负责人
+viewer_change: 观众在 12 秒内看懂三个数字来自三种规则，并感觉自己已经进入真实产品操作
+primary_message: 同一份订单数据，为什么会有三个答案？
+supporting_message: 不是算错，而是哪些算进去、退款怎么处理、按哪个时间还没有说清。
+preserved_full_film_path:
+  - 689／440／390 的公开合成案例
+  - 数契与通用执行型 Agent 的关注重点差异
+  - 选择资料并说出目标
+  - Agent 提出会改变结果的问题
+  - 人确认关键规则
+  - 形成候选定义并查看本轮变化
+  - 品牌与边界收束
+direction_proof:
+  duration_seconds: 12
+  dimensions: 1920x1080
+  fps: 30
+  compositions:
+    - ContextOxProductFilmV4HookA
+    - ContextOxProductFilmV4HookB
+  visual_content: 两个版本共用同一套精确画面，只比较音乐与剪辑呼吸
+  music_options:
+    - id: A
+      title: Dirty Thinkin'
+      artist: Michael Ramir C.
+      direction: 120 BPM 爵士放克，鼓与贝斯更外放，开场推进更强
+    - id: B
+      title: Night Patrol
+      artist: Michael Ramir C.
+      direction: 约 100 BPM 节奏底，贝斯更稳，产品感更克制
+visual_thesis:
+  notice_first: 华东四笔订单以及它们如何被三种规则取舍
+  communicate: 严谨、有人做关键判断、真实产品可复核
+  motion_behavior: 硬切负责节奏，几何框线负责因果，光标负责真实操作；动作完成后静止
+  deliberately_absent:
+    - 自由手绘圈线
+    - 闪白与镜头震动
+    - 无来由的泛光、粒子和 3D 翻转
+    - 与产品动作无关的装饰转场
+product_boundary:
+  numeric_case: 三个数字只解释规则差异，不是数契运行结果
+  product_endpoint: 候选定义
+  disclosure: 公开合成演示；候选而非正式批准结果
+publication: not_authorized
+human_acceptance: pending

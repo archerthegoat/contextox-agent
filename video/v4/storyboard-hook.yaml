@@ -1,0 +1,52 @@
+duration_frames: 360
+fps: 30
+variants:
+  A:
+    composition_id: ContextOxProductFilmV4HookA
+    music: dirty_thinkin
+    estimated_bpm: 120
+    scenes:
+      - {scene_id: east_orders, from: 0, duration: 75}
+      - {scene_id: three_rules, from: 75, duration: 120}
+      - {scene_id: plain_language, from: 195, duration: 30}
+      - {scene_id: workbench_entry, from: 225, duration: 135}
+  B:
+    composition_id: ContextOxProductFilmV4HookB
+    music: night_patrol
+    estimated_bpm: 100
+    scenes:
+      - {scene_id: east_orders, from: 0, duration: 72}
+      - {scene_id: three_rules, from: 72, duration: 126}
+      - {scene_id: plain_language, from: 198, duration: 36}
+      - {scene_id: workbench_entry, from: 234, duration: 126}
+scene_contracts:
+  east_orders:
+    purpose: 建立同一组事实
+    primary_visual: 华东四笔订单
+    cause: 数据行按金额列的阅读顺序原位显形
+    meaning: 后续三个答案来自同一组数据
+    effect: 原位显形与一次短纸切，不使用闪白或震动
+    shot_card: none_custom_measured_table
+  three_rules:
+    purpose: 精确展示三种取舍
+    primary_visual: 当前被纳入或扣除的单元格
+    cause: 当前规则改变了纳入行集合
+    meaning: 689、440、390 分别对应全算、只算已支付、已支付扣退款
+    effect: exact_rect_trace 与 right_angle_connector；一次只画一套
+    shot_card: draw-svg-trace/draw-svg-trace
+  plain_language:
+    purpose: 把结论说成大白话
+    primary_visual: 不是算错，是规则没说清
+    cause: 三个算法都能从同一表格算出
+    meaning: 产品要处理的是业务定义，而不是再造一个计算器
+    effect: 硬切后真静止
+    shot_card: none_direct_title
+  workbench_entry:
+    purpose: 从问题进入真实产品
+    primary_visual: 真实资料列表与 Agent 输入框
+    cause: 用户先选资料，再说目标
+    meaning: 数契从明确资料范围和业务目标开始
+    effect: 由真实 DOM 框驱动焦点与光标，输入后用同坐标截图交叉淡入
+    shot_card: input-trigger-moves/cursor-performance
+gallery_revision: bdd94be16d60fa8f
+gallery_reference_clip_status: unavailable_remote_preview

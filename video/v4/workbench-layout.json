@@ -1,0 +1,18 @@
+{
+  "capture": {
+    "width": 1684,
+    "height": 947,
+    "source": "localhost Workbench public synthetic Demo",
+    "measuredAt": "2026-09-14"
+  },
+  "regions": {
+    "navigation": {"x": 0, "y": 0, "width": 220, "height": 947.37, "radius": 0},
+    "agentPanel": {"x": 1044.22, "y": 0, "width": 639.99, "height": 947.37, "radius": 0},
+    "ordersSource": {"x": 13.99, "y": 368.37, "width": 191.13, "height": 37.35, "radius": 6},
+    "customersSource": {"x": 13.99, "y": 408.71, "width": 191.13, "height": 37.35, "radius": 6},
+    "notesSource": {"x": 13.99, "y": 449.05, "width": 191.13, "height": 37.35, "radius": 6},
+    "understandSources": {"x": 1084.09, "y": 262.51, "width": 87.75, "height": 31.54, "radius": 6},
+    "goalInput": {"x": 1066.21, "y": 759.33, "width": 596, "height": 90.04, "radius": 8},
+    "sendButton": {"x": 1618.21, "y": 860.99, "width": 44, "height": 31.78, "radius": 6}
+  }
+}
