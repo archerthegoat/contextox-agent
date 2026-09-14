@@ -79,27 +79,6 @@ const dark: CSSProperties = {
   backgroundSize: '72px 72px',
 };
 
-const Disclosure: React.FC<{darkText?: boolean}> = ({darkText = true}) => (
-  <div
-    style={{
-      position: 'absolute',
-      right: 72,
-      top: 34,
-      zIndex: 190,
-      padding: '8px 12px',
-      borderRadius: 8,
-      border: darkText ? `1px solid ${C.line}` : '1px solid rgba(255,255,255,.18)',
-      background: darkText ? 'rgba(255,255,255,.94)' : 'rgba(13,27,46,.72)',
-      color: darkText ? C.muted : 'rgba(255,255,255,.74)',
-      fontFamily: FONT,
-      fontSize: 24,
-      fontWeight: 650,
-    }}
-  >
-    公开合成 Demo · 候选而非正式批准结果
-  </div>
-);
-
 const Kicker: React.FC<{children: ReactNode; darkText?: boolean; left?: number}> = ({
   children,
   darkText = true,
@@ -434,7 +413,6 @@ const SendAndUnderstandScene: React.FC = () => {
         <StepStrip active={1} frame={Math.max(0, frame - 52)} />
       </div>
       <Kicker>一次真实推进</Kicker>
-      <Disclosure />
       <CaptionBar index="05" right={620}>按下发送，开始理解资料</CaptionBar>
     </AbsoluteFill>
   );
@@ -528,7 +506,6 @@ const AgentQuestionsScene: React.FC = () => {
         </AgentPanel>
       </WorkbenchCamera>
       <Kicker>Agent 把缺口问出来</Kicker>
-      <Disclosure />
       <CaptionBar index="06">会改变结果的问题，先问清楚</CaptionBar>
     </AbsoluteFill>
   );
@@ -630,6 +607,14 @@ const HumanAnswersScene: React.FC = () => {
   const phaseFrame = frame - index * 45;
   const savePhase = frame >= 135 && frame < 150;
   const confirmPhase = frame >= 150;
+  const answerKicker =
+    frame < 135
+      ? '人的决定 · 逐项回答'
+      : savePhase
+        ? '人的决定 · 先保存'
+        : frame < 171
+          ? '已保存 · 尚未批准'
+          : '人的决定 · 已确认采用';
   const clicks = [30, 75, 120, 140, 165];
   const pressed = Math.max(...clicks.map((at) => pulse(frame, at, 4)));
   const cursor = pathPoint(frame, [
@@ -658,8 +643,7 @@ const HumanAnswersScene: React.FC = () => {
         </AgentPanel>
         <Cursor x={cursor.x} y={cursor.y} pressed={pressed} />
       </WorkbenchCamera>
-      <Kicker>人的决定 · 明确采用</Kicker>
-      <Disclosure />
+      <Kicker>{answerKicker}</Kicker>
       <CaptionBar index="07">回答、来源和依据，都由人确认</CaptionBar>
     </AbsoluteFill>
   );
@@ -876,7 +860,6 @@ const CandidateDefinitionScene: React.FC = () => {
         <ResultAgentPanel />
       </WorkbenchCamera>
       <Kicker>真实工作区 · 候选定义</Kicker>
-      <Disclosure />
       <CaptionBar index="08">回答进入候选字段，不是最终批准</CaptionBar>
     </AbsoluteFill>
   );
@@ -901,7 +884,6 @@ const RoundChangesScene: React.FC = () => {
         <Cursor x={cursor.x} y={cursor.y} pressed={pulse(frame, clickAt, 4)} />
       </WorkbenchCamera>
       <Kicker>真实控件 · 查看本轮变化</Kicker>
-      <Disclosure />
       <CaptionBar index="09">人的回答、变化和未知，都能回看</CaptionBar>
     </AbsoluteFill>
   );
@@ -920,7 +902,6 @@ const PositioningScene: React.FC = () => {
       <div style={{position: 'absolute', inset: '0 0 0 50%', background: `rgba(244,241,234,${wash})`}} />
       <div style={{position: 'absolute', left: '50%', top: 0, bottom: 0, width: 2, background: C.lineStrong, opacity: wash}} />
       <Kicker>分工不同 · 可以接力</Kicker>
-      <Disclosure />
       <div
         style={{
           position: 'absolute',
@@ -1027,11 +1008,25 @@ const BrandCloseScene: React.FC = () => {
 function musicVolume(frame: number): number {
   return interpolate(
     frame,
-    [0, 188, 197, 219, 240, 450, 465, 795, 810, 1095, 1110, 1230, 1260, 1318, 1349],
-    [0.78, 0.78, 0.31, 0.31, 0.78, 0.78, 0.70, 0.70, 0.84, 0.84, 0.52, 0.52, 0.80, 0.80, 0],
+    [0, 1290, 1349],
+    [0.72, 0.72, 0],
     {...clamp, easing: easeInOut},
   );
 }
+
+const EndFade: React.FC = () => {
+  const frame = useCurrentFrame();
+  return (
+    <AbsoluteFill
+      style={{
+        zIndex: 999,
+        background: '#05070A',
+        opacity: tween(frame, 1320, 1349, 0, 1, easeInOut),
+        pointerEvents: 'none',
+      }}
+    />
+  );
+};
 
 const V4FullAudio: React.FC = () => (
   <>
@@ -1071,5 +1066,6 @@ export const ContextOxProductFilmV4A: React.FC = () => (
     <Sequence from={1110} durationInFrames={150}><PositioningScene /></Sequence>
     <Sequence from={1260} durationInFrames={90}><BrandCloseScene /></Sequence>
     <V4FullAudio />
+    <EndFade />
   </AbsoluteFill>
 );

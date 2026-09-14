@@ -13,6 +13,7 @@ const compositor = resolve(videoRoot, 'node_modules', '@remotion', 'compositor-d
 const ffmpeg = resolve(compositor, 'ffmpeg');
 const ffmpegEnvironment = {...process.env, DYLD_LIBRARY_PATH: compositor};
 const normalizeOnly = process.argv.includes('--normalize-only');
+const outputDurationSeconds = 45;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -81,6 +82,7 @@ run(ffmpeg, [
   '-b:a', '192k',
   '-ar', '48000',
   '-ac', '2',
+  '-t', String(outputDurationSeconds),
   finalPath,
 ], {env: ffmpegEnvironment});
 

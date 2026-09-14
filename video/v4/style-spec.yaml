@@ -54,7 +54,7 @@ motion_language:
   annotation_rule: 只有开场数据镜头使用连线；所有框线与连接继续由同一份声明式单元格坐标生成
   cursor_rule: 光标路径、点击点和局部推近原点必须共享同一份控件坐标；按钮按下、音效与镜头推近同帧
   effect_rule: 每个效果必须在 storyboard 的 cause 和 meaning 字段中说明对应产品动作与信息作用
-  hold_rule: 问题和回答落定至少 30 帧；候选定义完整落定至少 45 帧；结尾 CTA 定格至少 60 帧
+  hold_rule: 问题和回答落定至少 30 帧；候选定义完整落定至少 45 帧；结尾 CTA 完整落定后停留 30 帧，最后 30 帧淡出至黑
   deterministic_rule: 不使用 Math.random、Date.now 或运行时 DOM 测量
 audio_direction:
   music: Dirty Thinkin' by Michael Ramir C.
@@ -63,7 +63,9 @@ audio_direction:
   source_start_frames: 165
   source_start_seconds: 5.5
   cut_grid: 所有段落边界使用 15 帧整数倍
-  energy_arc: 强钩子 -> 一拍抽空 -> 操作律动 -> 候选成果抬升 -> 对比降噪 -> 品牌收束
+  energy_arc: 爵士放克底色保持稳定 -> 界面音效标记真实动作 -> 品牌收束后统一淡出
+  music_volume_policy: 全片保持同一基准增益，不按镜头推高或压低；只在最后 60 帧平滑归零
+  visual_fade_policy: 最后 30 帧由完整品牌画面淡出至黑
   sfx_vocabulary:
     - short_paper_slice_for_material_entry
     - marker_foley_only_while_geometry_is_drawn

@@ -8,6 +8,8 @@ music:
   beat_interval_frames: 15
   detected_phase_seconds_after_trim: 0.5
   scene_boundaries_on_grid: true
+  volume_policy: stable_until_final_fade
+  final_audio_fade_frames: [1290, 1349]
 scenes:
   - scene_id: east_orders
     from: 0
@@ -34,7 +36,7 @@ scenes:
     primary_visual: 不是算错，是规则没说清
     cause: 三个算法都能从同一表格算出
     meaning: 产品处理业务定义，而不是再造计算器
-    effect: 一拍抽空，画面真静止
+    effect: 画面真静止；音乐保持同一基准音量，不做人为抽空
     shot_card: none_direct_title
   - scene_id: workbench_entry
     from: 225
@@ -106,7 +108,7 @@ scenes:
     primary_visual: 数契 Logo、品牌句与 @archerthegoat
     cause: 完整工作流已经演完
     meaning: 邀请观众带一个业务口径问题体验
-    effect: 界面缩入背景，Logo 与文案原位显形，最后 60 帧真静止
+    effect: 界面缩入背景，Logo 与文案原位显形；完整停留后，最后 30 帧音画淡出至黑
     shot_card: none_brand_hold
 audio_cues:
   - {cue: paper_slice_quick, from: 7, duration_frames: 13, gain: 0.13, meaning: 订单表进入}
@@ -124,6 +126,6 @@ audio_cues:
   - {cue: ui_click, from: 1005, duration_frames: 8, gain: 0.15, meaning: 查看本轮变化}
 qa_targets:
   cutpoint_error_frames_max: 3
-  frame_board_frames: [0, 75, 120, 195, 225, 315, 360, 390, 465, 525, 630, 705, 750, 770, 795, 810, 900, 990, 1005, 1050, 1110, 1185, 1260, 1320]
+  frame_board_frames: [0, 75, 120, 195, 225, 315, 360, 390, 465, 525, 630, 660, 705, 750, 770, 780, 795, 801, 810, 900, 990, 1005, 1050, 1110, 1185, 1260, 1290, 1320, 1335, 1348]
   forbid_old_candidate_texture: true
   exact_candidate_path: output/video/contextox-demo-1.0.0-product-film-v4-a-candidate.mp4
