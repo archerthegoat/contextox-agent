@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ContextOx Demo 1.0.0: start with three answers, clarify how a business definition forms, compare ContextOx with adjacent tools, and see how to try it">
+  <title>ContextOx dynamic product introduction</title>
+  <link rel="icon" href="assets/favicon.svg">
+  <link rel="stylesheet" href="styles.css?v=4">
+  <style>.motion-reduced *, .motion-reduced *::before, .motion-reduced *::after { animation: none !important; transition: none !important; } .motion-reduced .reveal { opacity: 1; transform: none; }</style>
+</head>
+<body class="deck-body">
+  <main class="deck" aria-label="ContextOx project dynamic introduction">
+    <section class="slide slide--stage slide--opening" tabindex="-1" aria-hidden="true" data-title="Three answers">
+      <div class="slide__inner">
+        <p class="slide__kicker reveal" style="--order:0">A real question about numbers · public synthetic data</p>
+        <h1 class="reveal" style="--order:1">The same order data,<br>why does it have<br class="mobile-only-break">three answers?</h1>
+        <div class="answer-numbers" aria-label="three possible answers">
+          <div class="answer-number reveal" style="--order:2"><strong>689</strong><span>CNY</span><small>add every record</small></div>
+          <div class="answer-number reveal" style="--order:3"><strong>440</strong><span>CNY</span><small>count paid orders only</small></div>
+          <div class="answer-number answer-number--focus reveal" style="--order:4"><strong>390</strong><span>CNY</span><small>paid minus refunds</small></div>
+        </div>
+        <p class="stage-answer reveal" style="--order:5">All three numbers can be calculated. What is missing is the rule: what counts, how refunds are handled, and which time to use.</p>
+        <p class="slide__disclosure">数契 ContextOx · Demo 1.0.0</p>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="How the three answers are calculated">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">01 / How the three answers are calculated</p>
+        <div class="slide-title-row">
+          <div>
+            <h2>One dataset, three calculations</h2>
+            <p class="lead">These six orders are from the public synthetic example. First see the rows, then see how each rule changes the East China total.</p>
+          </div>
+          <span class="data-badge">Public synthetic data</span>
+        </div>
+        <div class="data-story">
+          <div class="data-table-wrap reveal" style="--order:1">
+            <table class="data-table">
+              <thead><tr><th>Order</th><th>Region</th><th>Amount</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr class="row-paid"><td>O001</td><td>East China</td><td>120.00</td><td><span>paid</span></td></tr>
+                <tr class="row-paid"><td>O002</td><td>South China</td><td>80.50</td><td><span>paid</span></td></tr>
+                <tr class="row-refunded"><td>O003</td><td>East China</td><td>50.00</td><td><span>refunded</span></td></tr>
+                <tr class="row-pending"><td>O004</td><td>East China</td><td>199.00</td><td><span>pending</span></td></tr>
+                <tr class="row-paid"><td>O005</td><td>South China</td><td>60.00</td><td><span>paid</span></td></tr>
+                <tr class="row-paid"><td>O006</td><td>East China</td><td>320.00</td><td><span>paid</span></td></tr>
+              </tbody>
+            </table>
+            <p class="table-note">Region comes from <code>customer_id</code> joining the customers table</p>
+          </div>
+          <div class="calculation-stack">
+            <div class="calculation reveal" style="--order:2"><small>Calculation A · add all records</small><strong>120 + 50 + 199 + 320</strong><b>689 CNY</b></div>
+            <div class="calculation reveal" style="--order:3"><small>Calculation B · paid only</small><strong>120 + 320</strong><b>440 CNY</b></div>
+            <div class="calculation calculation--focus reveal" style="--order:4"><small>Calculation C · paid minus refunded</small><strong>120 + 320 − 50</strong><b>390 CNY</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="The rule is unclear">
+      <div class="slide__inner">
+        <p class="slide__kicker">02 / Why the rework keeps coming back</p>
+        <h2>The formula is easy; the rule is still in everyone's head</h2>
+        <p class="lead">“Report order amounts by region” sounds clear. Once work starts, three people may silently fill in three different rules.</p>
+        <div class="friction-flow" aria-label="One request produces three different results">
+          <div class="friction-request reveal" style="--order:1"><small>One request</small><strong>Report order amounts by region</strong></div>
+          <div class="friction-branches">
+            <div class="friction-branch reveal" style="--order:2"><span>Business</span><strong>Include pending orders</strong><b>689</b></div>
+            <div class="friction-branch reveal" style="--order:3"><span>Analyst</span><strong>Look at paid orders only</strong><b>440</b></div>
+            <div class="friction-branch reveal" style="--order:4"><span>Finance</span><strong>Subtract refunds from paid</strong><b>390</b></div>
+          </div>
+          <div class="friction-result reveal" style="--order:5"><small>The question left behind</small><strong>Who is wrong? Where is the evidence? Which rule should we use next time?</strong></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide slide--stage slide--product-intro" tabindex="-1" aria-hidden="true" data-title="What ContextOx does">
+      <div class="slide__inner">
+        <img class="stage-mark reveal" style="--order:0" src="assets/contextox-mark-white.svg" alt="">
+        <p class="slide__kicker reveal" style="--order:1">数契 ContextOx</p>
+        <h1 class="reveal" style="--order:2">Make the business meaning clear,<br>before delivery starts</h1>
+        <div class="product-promise reveal" style="--order:3">
+          <span>Bring the sources in and say what you need to understand</span>
+          <span>The Agent finds evidence and asks about rules that could change the result</span>
+          <span>A person confirms the key rules and leaves a candidate definition that can be revisited</span>
+        </div>
+        <p class="slide__disclosure">Agent finds evidence · people confirm business facts</p>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="Select sources">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">03 / Step one</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div><h2>Tell it which sources to use this time</h2><p class="lead">Set the source boundary first, so the Agent knows what this round can rely on.</p></div>
+          <span class="simulation-badge">Walk-through simulation · mirrors the current Workbench</span>
+        </div>
+        <div class="workbench reveal" style="--order:1" aria-label="Walk-through simulation for selecting sources and entering a goal">
+          <aside class="workbench__nav">
+            <div class="wb-brand"><img src="assets/contextox-mark.svg" alt=""><strong>数契</strong></div>
+            <button class="wb-new">New conversation</button>
+            <small>Sources</small>
+            <ul class="wb-sources">
+              <li class="is-selected">✓ orders.csv</li>
+              <li class="is-selected">✓ customers.csv</li>
+              <li class="is-selected">✓ notes.md</li>
+            </ul>
+            <p>3 sources selected for this round</p>
+          </aside>
+          <div class="workbench__center">
+            <small class="wb-label">Current progress</small>
+            <h3>Start with one question</h3>
+            <div class="wb-progress"><b class="is-active">1 Set the goal</b><span>2 Understand sources</span><span>3 Clarify rules</span><span>4 Organize the result</span></div>
+            <div class="wb-summary"><span>What is happening<strong>Waiting for your goal</strong></span><span>What we need from you<strong>Say what you want to understand</strong></span><span>What we have<strong>3 sources are in this round</strong></span></div>
+            <div class="wb-canvas"><small>Task workspace</small><strong>Sources are selected</strong><p>Orders, customers and the notes will enter this analysis together.</p></div>
+          </div>
+          <aside class="workbench__agent">
+            <div class="wb-agent-title"><strong>ContextOx Agent</strong><span>Work through the question together</span></div>
+            <div class="wb-message">What do you want to understand from these three sources?</div>
+            <div class="wb-compose"><p>I want to report order amounts by region.</p><div><span>Sources · 3</span><button>Send</button></div></div>
+          </aside>
+          <div class="cursor cursor--send" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="Agent Ask questions">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">04 / Step two</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div><h2>The Agent asks the questions that can change the result</h2><p class="lead">It does not guess business facts for you. Each question explains why it needs an answer now.</p></div>
+          <span class="simulation-badge">Walk-through simulation · public synthetic sources</span>
+        </div>
+        <div class="question-workbench">
+          <div class="question-context reveal" style="--order:1">
+            <div class="wb-progress wb-progress--large"><b>1 Set the goal</b><b>2 Understand sources</b><b class="is-active">3 Clarify rules</b><span>4 Organize the result</span></div>
+            <div class="source-findings">
+              <small>Already found in the sources</small>
+              <p><strong>Order status: </strong>paid、refunded、pending</p>
+              <p><strong>Join fields: </strong>orders.customer_id and customers.customer_id</p>
+              <p><strong>Time field: </strong>paid_at; pending orders are empty</p>
+            </div>
+          </div>
+          <div class="question-list">
+            <article class="question-item reveal" style="--order:2"><span>01</span><div><strong>Should pending orders count?</strong><p>This decides whether the East China 199 CNY enters the result.</p></div><b>Changes the population</b></article>
+            <article class="question-item reveal" style="--order:3"><span>02</span><div><strong>How should refunds be handled?</strong><p>Excluding refunds and subtracting them from paid amounts produce different answers.</p></div><b>Changes the amount rule</b></article>
+            <article class="question-item reveal" style="--order:4"><span>03</span><div><strong>Which time should assign the order?</strong><p>The sources have payment time; refunds and pending records need a separate rule.</p></div><b>Changes the time window</b></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="Human confirms rules">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">05 / Step three</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div><h2>A person makes the decision in plain language</h2><p class="lead">The Agent turns the answers into rules. A person checks them before the next round.</p></div>
+          <span class="simulation-badge">Walk-through simulation · used only after human confirmation</span>
+        </div>
+        <div class="answer-review reveal" style="--order:1">
+          <div class="answer-review__intro">
+            <span class="status-pill">Awaiting confirmation</span>
+            <h3>I organized your answers into 3 rules</h3>
+            <p>Please confirm that the wording below matches your meaning.</p>
+            <div class="answer-impact"><small>After confirmation, update</small><strong>Net order amount by region</strong><strong>Order–customer relationship</strong></div>
+          </div>
+          <div class="answer-review__rules">
+            <label class="rule-answer"><span>Which orders count</span><strong>Count paid orders only</strong><small>Pending does not enter the amount</small></label>
+            <label class="rule-answer"><span>How refunds are handled</span><strong>Subtract from paid amount in the original order region</strong><small>Treat refunded as a deduction</small></label>
+            <label class="rule-answer"><span>Which time to use</span><strong>Assign by payment time</strong><small>Pending orders have no payment time</small></label>
+            <div class="review-actions"><button>Edit answer</button><button class="is-primary">Confirm and continue</button></div>
+          </div>
+          <div class="cursor cursor--confirm" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="Candidate definition updates">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">06 / What the answers change</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div><h2>After the answers, the definition really changes</h2><p class="lead">ContextOx does not present 390 CNY as a computed result. It first writes down a candidate definition for how to calculate it later.</p></div>
+          <span class="simulation-badge">Walk-through simulation · candidate result</span>
+        </div>
+        <div class="result-workbench reveal" style="--order:1">
+          <div class="result-summary">
+            <small>Updated this round</small>
+            <h3>Net order amount by region</h3>
+            <p>Aggregate paid amounts by customer region, then subtract refunds from that same region.</p>
+            <div class="result-counts"><span><b>1</b> candidate field</span><span><b>1</b> candidate relationship</span><span><b>3</b> confirmed rules</span></div>
+          </div>
+          <div class="result-detail">
+            <div class="result-line"><span>Included records</span><strong>status = paid</strong><em>Confirmed</em></div>
+            <div class="result-line"><span>Refund handling</span><strong>Subtract from the original order region amount</strong><em>Confirmed</em></div>
+            <div class="result-line"><span>Time assignment</span><strong>paid_at · China Standard Time</strong><em>Confirmed</em></div>
+            <div class="result-line"><span>Source relationship</span><strong>orders.customer_id = customers.customer_id</strong><em>Evidence linked</em></div>
+            <div class="evidence-chip">notes.md · line 7: inclusion, refunds and time need business confirmation</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="Review and hand off">
+      <div class="slide__inner">
+        <p class="slide__kicker">07 / The record left behind</p>
+        <h2>What remains is more than an AI reply</h2>
+        <p class="lead">Sources, questions, human answers and the candidate result are kept separately. A new owner can see where the conclusion came from and what is still open.</p>
+        <div class="readback-chain" aria-label="Traceable path from sources to candidate definition">
+          <div class="readback-step reveal" style="--order:1"><span>01</span><small>Sources this round</small><strong>3 public synthetic files</strong></div>
+          <div class="readback-step reveal" style="--order:2"><span>02</span><small>Why we asked</small><strong>Which choices change the result</strong></div>
+          <div class="readback-step reveal" style="--order:3"><span>03</span><small>Who decided</small><strong>Human answer and confirmation</strong></div>
+          <div class="readback-step reveal" style="--order:4"><span>04</span><small>What changed this round</small><strong>Fields, relationships and rules</strong></div>
+          <div class="readback-step reveal" style="--order:5"><span>05</span><small>What is still unknown</small><strong>Open items stay visible</strong></div>
+        </div>
+        <div class="handoff-note reveal" style="--order:6"><strong>Review without guessing again</strong><span>Evidence, answers and changes can be traced through the same record</span></div>
+      </div>
+    </section>
+
+    <section class="slide slide--comparison" tabindex="-1" aria-hidden="true" data-title="What different tools solve">
+      <div class="slide__inner slide__inner--top">
+        <p class="slide__kicker">08 / Where it fits</p>
+        <div class="slide-title-row slide-title-row--compact">
+          <div>
+            <h2>Different tools solve different stages</h2>
+            <p class="lead">ContextOx focuses on the stage where the business definition is still unclear. It does not replace general Agents, enterprise data platforms or BI tools.</p>
+          </div>
+          <span class="data-badge">Choose by task</span>
+        </div>
+        <div class="tool-fit" aria-label="ContextOx and general Agent、Comparison of where general Agents, enterprise data platforms and BI tools fit">
+          <div class="tool-fit__head"><span>What you want to do</span><span>A better-fit tool</span><span>ContextOx's place</span></div>
+          <article class="tool-fit__row reveal" style="--order:1">
+            <strong>Complete coding, research or making work</strong>
+            <span>General Agent, such as Codex</span>
+            <p>Once the business definition is clear, hand execution to it</p>
+          </article>
+          <article class="tool-fit__row reveal" style="--order:2">
+            <strong>Build catalogs, lineage, permissions and enterprise context</strong>
+            <span>Atlan, DataHub</span>
+            <p>Can be connected later; no need to rebuild the enterprise data foundation</p>
+          </article>
+          <article class="tool-fit__row reveal" style="--order:3">
+            <strong>Ask questions on an existing semantic model</strong>
+            <span>BI and data-question tools</span>
+            <p>ContextOx handles the step before the rule is settled</p>
+          </article>
+          <article class="tool-fit__row tool-fit__row--focus reveal" style="--order:4">
+            <strong>One business request has several possible meanings</strong>
+            <span>ContextOx focus today</span>
+            <p>Find gaps, ask a person to decide, and leave a reviewable candidate definition</p>
+          </article>
+        </div>
+        <div class="comparison-summary reveal" style="--order:5">
+          <p><strong>ContextOx's current bet</strong>Start with a set of sources and one concrete disagreement. Ask a person about the choices that change the result, then keep the decision, evidence and unknowns in one candidate definition.</p>
+          <p><strong>How to read “advantage”</strong>This is a product choice, not an absolute advantage validated in real business. It still needs a like-for-like comparison with a well-configured general Agent.</p>
+        </div>
+        <p class="comparison-sources">Public product-positioning references (2026-09-13): <a href="https://openai.com/index/introducing-the-codex-app/" target="_blank" rel="noopener">Codex</a> · <a href="https://atlan.com/context-engineering-studio/" target="_blank" rel="noopener">Atlan</a> · <a href="https://datahub.com/products/context-platform/" target="_blank" rel="noopener">DataHub</a> · <a href="https://learn.microsoft.com/en-us/power-bi/create-reports/copilot-ask-data-question" target="_blank" rel="noopener">Power BI</a></p>
+      </div>
+    </section>
+
+    <section class="slide" tabindex="-1" aria-hidden="true" data-title="Capabilities and boundaries">
+      <div class="slide__inner">
+        <p class="slide__kicker">09 / Demo 1.0.0</p>
+        <h2>What it can do now—and what it cannot</h2>
+        <div class="boundary-compare">
+          <section class="boundary-column boundary-column--can reveal" style="--order:1">
+            <small>You can try now</small>
+            <ul>
+              <li><strong>Have a continuous conversation with an Agent</strong><span>No need to learn complex run concepts first</span></li>
+              <li><strong>Set the source boundary for this round</strong><span>Use only the public or local sources you selected</span></li>
+              <li><strong>Ask about and confirm key rules</strong><span>Human decisions are not silently replaced</span></li>
+              <li><strong>Review candidate fields, relationships and evidence</strong><span>Changes and unknowns stay reviewable</span></li>
+            </ul>
+          </section>
+          <section class="boundary-column boundary-column--not reveal" style="--order:2">
+            <small>Do not interpret it as</small>
+            <ul>
+              <li><strong>A candidate is not a formal approval</strong><span>Key business definitions still need human review</span></li>
+              <li><strong>It does not write to production databases</strong><span>The Demo does not run SQL or external business writes</span></li>
+              <li><strong>There is no cloud multi-user collaboration</strong><span>The current workspace and state stay on this machine</span></li>
+              <li><strong>Customer value still needs real-case validation</strong><span>Engineering checks do not replace business outcomes</span></li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide slide--stage slide--cta" tabindex="-1" aria-hidden="true" data-title="Try ContextOx">
+      <div class="slide__inner">
+        <img class="stage-mark stage-mark--large reveal" style="--order:0" src="assets/contextox-mark-white.svg" alt="ContextOx mark">
+        <p class="slide__kicker reveal" style="--order:1">数契 ContextOx · Demo 1.0.0</p>
+        <h1 class="reveal" style="--order:2">Bring a business definition that never quite matches,<br>and make it clear with ContextOx</h1>
+        <p class="stage-answer reveal" style="--order:3">Start with the public synthetic example, or bring a redacted set of sources for one round.</p>
+        <div class="stage-actions reveal" style="--order:4">
+          <a class="button button--inverse" href="https://github.com/archerthegoat/contextox-agent/issues" target="_blank" rel="noopener">Discuss a question or request a trial</a>
+          <a class="button button--ghost" href="https://github.com/archerthegoat" target="_blank" rel="noopener">Contact @archerthegoat</a>
+        </div>
+        <div class="stage-contact reveal" style="--order:5">
+          <a href="downloads/contextox-demo-1.0.0-product-film-en.mp4" target="_blank">Play the 45-second product film</a>
+          <a href="downloads/contextox-demo-1.0.0-presentation-en.pdf" target="_blank">Read the 12-page PDF offline</a>
+          <a href="https://github.com/archerthegoat/contextox-agent" target="_blank" rel="noopener">View the public source</a>
+        </div>
+        <p class="slide__disclosure">Public source · public synthetic Demo · candidate results checked by people</p>
+      </div>
+    </section>
+  </main>
+
+  <div class="deck-top-actions">
+    <a href="downloads/contextox-demo-1.0.0-product-film-en.mp4" target="_blank">45-second film</a>
+    <a class="language-link" href="presentation.html#1" lang="zh-CN">Chinese</a>
+    <button type="button" data-motion aria-pressed="false">Reduce motion</button>
+    <button type="button" data-fullscreen>Fullscreen</button>
+    <button type="button" data-menu-toggle aria-expanded="false" aria-controls="slide-menu">Contents</button>
+  </div>
+
+  <nav class="slide-menu" id="slide-menu" data-menu hidden aria-label="Page contents">
+    <button type="button" data-slide-index>01 · Three answers</button>
+    <button type="button" data-slide-index>02 · Three calculations</button>
+    <button type="button" data-slide-index>03 · The rule is unclear</button>
+    <button type="button" data-slide-index>04 · What ContextOx does</button>
+    <button type="button" data-slide-index>05 · Select sources</button>
+    <button type="button" data-slide-index>06 · Agent asks</button>
+    <button type="button" data-slide-index>07 · Human confirms</button>
+    <button type="button" data-slide-index>08 · Candidate definition updates</button>
+    <button type="button" data-slide-index>09 · Review and hand off</button>
+    <button type="button" data-slide-index>10 · Different tool roles</button>
+    <button type="button" data-slide-index>11 · Capabilities and boundaries</button>
+    <button type="button" data-slide-index>12 · Contact and try</button>
+  </nav>
+
+  <div class="deck-chrome" aria-label="Presentation controls">
+    <div class="deck-brand"><img src="assets/contextox-mark.svg" alt=""><span>数契 ContextOx</span></div>
+    <div class="deck-progress" data-progress aria-live="polite"></div>
+    <div class="deck-actions">
+      <button class="deck-control" type="button" data-previous aria-label="Previous slide">←</button>
+      <button class="deck-control" type="button" data-next aria-label="Next slide">→</button>
+    </div>
+  </div>
+  <script src="presentation.js"></script>
+</body>
+</html>

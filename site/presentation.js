@@ -6,6 +6,8 @@ const menu = document.querySelector("[data-menu]");
 const menuToggle = document.querySelector("[data-menu-toggle]");
 const fullscreen = document.querySelector("[data-fullscreen]");
 const motion = document.querySelector("[data-motion]");
+const isEnglish = document.documentElement.lang === "en";
+const deckLabel = isEnglish ? "ContextOx dynamic introduction" : "数契动态介绍";
 let current = Math.max(0, Math.min(slides.length - 1, Number(location.hash.slice(1) || 1) - 1));
 
 function render(index, push = true) {
@@ -15,7 +17,7 @@ function render(index, push = true) {
   progress.textContent = `${String(current + 1).padStart(2, "0")} / ${String(slides.length).padStart(2, "0")}`;
   previous.disabled = current === 0;
   next.disabled = current === slides.length - 1;
-  document.title = `${slides[current].dataset.title} · 数契动态介绍`;
+  document.title = `${slides[current].dataset.title} · ${deckLabel}`;
   document.body.classList.toggle("deck-stage-active", slides[current].classList.contains("slide--stage"));
   if (push) history.replaceState(null, "", `#${current + 1}`);
   slides[current].focus({preventScroll: true});
@@ -47,7 +49,9 @@ fullscreen.addEventListener("click", async () => {
 motion.addEventListener("click", () => {
   const reduced = document.documentElement.classList.toggle("motion-reduced");
   motion.setAttribute("aria-pressed", String(reduced));
-  motion.textContent = reduced ? "恢复动效" : "减弱动效";
+  motion.textContent = reduced
+    ? (isEnglish ? "Restore motion" : "恢复动效")
+    : (isEnglish ? "Reduce motion" : "减弱动效");
 });
 
 document.addEventListener("keydown", (event) => {

@@ -78,7 +78,9 @@ def main() -> int:
     errors: list[str] = []
     required = {
         "index.html",
+        "index-en.html",
         "presentation.html",
+        "presentation-en.html",
         "presentation.js",
         "styles.css",
         "assets/contextox-mark.svg",
@@ -91,6 +93,9 @@ def main() -> int:
         "assets/contextox-product-film-poster.png",
         "downloads/contextox-demo-1.0.0-product-film.mp4",
         "downloads/contextox-demo-1.0.0-presentation.pdf",
+        "downloads/contextox-demo-1.0.0-presentation-en.pdf",
+        "downloads/contextox-demo-1.0.0-one-pager-en.pdf",
+        "downloads/contextox-demo-1.0.0-product-film-en.mp4",
         "downloads/manifest.json",
     }
     for relative in sorted(required):
@@ -98,7 +103,7 @@ def main() -> int:
             errors.append(f"missing required file: site/{relative}")
 
     parsed: dict[str, ShowcaseParser] = {}
-    for name in ("index.html", "presentation.html"):
+    for name in ("index.html", "index-en.html", "presentation.html", "presentation-en.html"):
         path = SITE / name
         if not path.is_file():
             continue
@@ -128,23 +133,32 @@ def main() -> int:
                 elif fragment not in target_parser.ids:
                     errors.append(f"missing fragment in {name}: {reference}")
 
-    deck = parsed.get("presentation.html")
-    if deck:
-        if deck.slides != 12:
-            errors.append(f"presentation must contain 12 slides, found {deck.slides}")
-        if deck.menu_items != deck.slides:
-            errors.append(
-                f"presentation menu/slide mismatch: {deck.menu_items}/{deck.slides}"
-            )
+    for name in ("presentation.html", "presentation-en.html"):
+        deck = parsed.get(name)
+        if deck:
+            if deck.slides != 12:
+                errors.append(f"{name} must contain 12 slides, found {deck.slides}")
+            if deck.menu_items != deck.slides:
+                errors.append(
+                    f"{name} menu/slide mismatch: {deck.menu_items}/{deck.slides}"
+                )
 
     entry_text = (SITE / "index.html").read_text(encoding="utf-8")
     if "presentation.html#1" not in entry_text:
         errors.append("root entry must open presentation.html#1")
+    if "index-en.html" not in entry_text:
+        errors.append("root entry must expose the English entrypoint")
     if "下载物料" in entry_text or "download-grid" in entry_text:
         errors.append("root entry still exposes the retired material download center")
     entry = parsed.get("index.html")
     if entry and entry.slides:
         errors.append("root entry must stay a technical handoff, not a second presentation")
+    english_entry_text = (SITE / "index-en.html").read_text(encoding="utf-8")
+    if "presentation-en.html#1" not in english_entry_text:
+        errors.append("English entry must open presentation-en.html#1")
+    english_entry = parsed.get("index-en.html")
+    if english_entry and english_entry.slides:
+        errors.append("English entry must stay a technical handoff, not a second presentation")
 
     all_copy = "\n".join(
         path.read_text(encoding="utf-8")
@@ -170,6 +184,22 @@ def main() -> int:
     ):
         if required_presentation_copy not in (SITE / "presentation.html").read_text(encoding="utf-8"):
             errors.append(f"presentation V2.1 copy missing: {required_presentation_copy}")
+
+    english_presentation_text = (SITE / "presentation-en.html").read_text(encoding="utf-8")
+    for required_english_copy in (
+        "The same order data",
+        "three answers",
+        "Public synthetic data",
+        "General Agent, such as Codex",
+        "Atlan, DataHub",
+        "ContextOx's current bet",
+        "candidate definition",
+        "Chinese",
+    ):
+        if required_english_copy not in english_presentation_text:
+            errors.append(f"English presentation copy missing: {required_english_copy}")
+    if 'lang="en"' not in english_presentation_text:
+        errors.append("English presentation must declare lang=\"en\"")
 
     legacy_video = SITE / "downloads" / "contextox-demo-1.0.0-silent-launch.mp4"
     if legacy_video.exists():
@@ -198,6 +228,13 @@ def main() -> int:
             expected_video_path = "site/downloads/contextox-demo-1.0.0-product-film.mp4"
             if expected_video_path not in manifest_names:
                 errors.append("product film missing from manifest")
+            for english_path in (
+                "site/downloads/contextox-demo-1.0.0-presentation-en.pdf",
+                "site/downloads/contextox-demo-1.0.0-one-pager-en.pdf",
+                "site/downloads/contextox-demo-1.0.0-product-film-en.mp4",
+            ):
+                if english_path not in manifest_names:
+                    errors.append(f"English showcase artifact missing from manifest: {english_path}")
             if any("silent-launch" in str(name) for name in manifest_names):
                 errors.append("legacy silent-launch video remains in manifest")
             for entry in manifest_entries:
@@ -225,6 +262,7 @@ def main() -> int:
     print("showcase validation: PASS")
     print("- root entry: opens the dynamic presentation without a material download center")
     print("- presentation: 12 slides and 12 menu entries")
+    print("- English presentation: 12 slides, language switch and English downloads")
     print("- positioning: Codex, Atlan/DataHub, BI and ContextOx roles are explicit")
     print("- public demo arithmetic: 华东 689 / 440 / 390")
     print("- product film: playable artifact link and no legacy file")

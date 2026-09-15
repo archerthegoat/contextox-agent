@@ -76,6 +76,21 @@
       "path": "site/downloads/contextox-demo-1.0.0-product-film.mp4",
       "bytes": 5258696,
       "sha256": "db6abca2b0cb191c17d391c870bd57395d4bd46a2f2b2a9df3ed4b179b0eec34"
+    },
+    {
+      "path": "site/downloads/contextox-demo-1.0.0-presentation-en.pdf",
+      "bytes": 64449,
+      "sha256": "1f3d6487b2ddb361b915156555f3f349c374e9a0868788a5907c9b3502a2af64"
+    },
+    {
+      "path": "site/downloads/contextox-demo-1.0.0-one-pager-en.pdf",
+      "bytes": 149091,
+      "sha256": "627678c26f72bad242d63429bc4109dfcef83662977ae86c3f9b4893f82d4770"
+    },
+    {
+      "path": "site/downloads/contextox-demo-1.0.0-product-film-en.mp4",
+      "bytes": 5656178,
+      "sha256": "d881ad8f550c8fe66d39356d982cb1782fd7c33e1b81f067931f004d23834ff4"
     }
   ]
 }

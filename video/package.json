@@ -13,6 +13,7 @@
     "render:v4-hook-b": "remotion render src/index.ts ContextOxProductFilmV4HookB ../output/video/contextox-demo-1.0.0-product-film-v4-hook-b.mp4 --codec=h264 --crf=18 --audio-codec=aac",
     "sfx:v4": "/usr/bin/python3 scripts/generate_v4_sfx.py",
     "render:v4-a": "node scripts/render_v4_a.mjs",
+    "render:v4-en": "node scripts/render_v4_en.mjs",
     "normalize:v4-a": "node scripts/render_v4_a.mjs --normalize-only",
     "review-board:v4-a": "node scripts/generate_v4_review_board.mjs"
   },

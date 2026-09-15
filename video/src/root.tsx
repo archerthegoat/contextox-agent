@@ -4,6 +4,7 @@ import {ContextOxReadmeDemo} from './readme-demo';
 import {ContextOxProductFilm} from './video';
 import {ContextOxProductFilmV4HookA, ContextOxProductFilmV4HookB} from './v4-hook';
 import {ContextOxProductFilmV4A} from './v4-full';
+import {ContextOxProductFilmV4AEn} from './v4-full-en';
 
 export const RemotionRoot: React.FC = () => (
   <>
@@ -42,6 +43,14 @@ export const RemotionRoot: React.FC = () => (
     <Composition
       id="ContextOxProductFilmV4A"
       component={ContextOxProductFilmV4A}
+      durationInFrames={1350}
+      fps={30}
+      width={1920}
+      height={1080}
+    />
+    <Composition
+      id="ContextOxProductFilmV4AEn"
+      component={ContextOxProductFilmV4AEn}
       durationInFrames={1350}
       fps={30}
       width={1920}
