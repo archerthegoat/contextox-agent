@@ -254,6 +254,7 @@ TRANSLATIONS = {
     "45 秒演示": "45-second film",
     "减弱动效": "Reduce motion",
     "恢复动效": "Restore motion",
+    "切换到英文": "Switch to English",
     "全屏": "Fullscreen",
     "目录": "Contents",
     "页面目录": "Page contents",
@@ -295,8 +296,8 @@ def translate(source: str) -> str:
     # The source has a dedicated language link marker so the two routes remain
     # one click apart without relying on browser locale detection.
     output = output.replace(
-        '<a class="language-link" href="presentation-en.html#1" lang="en">English</a>',
-        '<a class="language-link" href="presentation.html#1" lang="zh-CN">Chinese</a>',
+        '<a class="language-link" data-language-switch href="presentation-en.html#1" lang="en" aria-label="Switch to English">English</a>',
+        '<a class="language-link" data-language-switch href="presentation.html#1" lang="zh-CN" aria-label="Switch to Chinese">Chinese</a>',
     )
     output = output.replace(
         "downloads/contextox-demo-1.0.0-product-film.mp4",

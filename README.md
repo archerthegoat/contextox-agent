@@ -6,9 +6,9 @@
 <p align="center">
   <a href="https://archerthegoat.github.io/contextox-agent/">动态产品介绍</a> ·
   <a href="https://archerthegoat.github.io/contextox-agent/downloads/contextox-demo-1.0.0-product-film.mp4">45 秒产品演示</a> ·
-  <a href="README.en.md">English</a> ·
   <a href="https://github.com/archerthegoat/contextox-agent/releases/tag/v1.0.0">获取 Demo 1.0.0</a>
 </p>
+<p align="center">语言 / Language: <strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 <p align="center">
   <a href="#problem">先看问题</a> ·
   <a href="#workflow">工作方式</a> ·
@@ -146,6 +146,8 @@ Demo 1.0.0 的终点是**可核对的候选定义**，不是正式批准的企�
 - [English product film](https://archerthegoat.github.io/contextox-agent/downloads/contextox-demo-1.0.0-product-film-en.mp4)：英文字幕与同一套 45 秒工作流。
 - [English presentation PDF](https://archerthegoat.github.io/contextox-agent/downloads/contextox-demo-1.0.0-presentation-en.pdf) · [English one-pager](https://archerthegoat.github.io/contextox-agent/downloads/contextox-demo-1.0.0-one-pager-en.pdf)
 - [查看 Demo 1.0.0 Release](https://github.com/archerthegoat/contextox-agent/releases/tag/v1.0.0)：当前提供源码和公开合成示例。
+
+动态介绍在浏览器中运行，右上角的 **English** / **Chinese** 会保留当前页码，在两种语言之间切换。
 
 ### 在本机运行
 

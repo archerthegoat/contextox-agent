@@ -142,6 +142,9 @@ def main() -> int:
                 errors.append(
                     f"{name} menu/slide mismatch: {deck.menu_items}/{deck.slides}"
                 )
+        deck_text = (SITE / name).read_text(encoding="utf-8")
+        if "data-language-switch" not in deck_text:
+            errors.append(f"{name} must expose the browser language switch")
 
     entry_text = (SITE / "index.html").read_text(encoding="utf-8")
     if "presentation.html#1" not in entry_text:
@@ -200,6 +203,8 @@ def main() -> int:
             errors.append(f"English presentation copy missing: {required_english_copy}")
     if 'lang="en"' not in english_presentation_text:
         errors.append("English presentation must declare lang=\"en\"")
+    if "Switch to Chinese" not in english_presentation_text:
+        errors.append("English presentation language switch label missing")
 
     legacy_video = SITE / "downloads" / "contextox-demo-1.0.0-silent-launch.mp4"
     if legacy_video.exists():

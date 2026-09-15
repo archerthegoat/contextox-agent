@@ -6,9 +6,9 @@
 <p align="center">
   <a href="https://archerthegoat.github.io/contextox-agent/presentation-en.html#1">Dynamic introduction</a> ·
   <a href="https://archerthegoat.github.io/contextox-agent/downloads/contextox-demo-1.0.0-product-film-en.mp4">45-second product film</a> ·
-  <a href="README.md">简体中文</a> ·
   <a href="https://github.com/archerthegoat/contextox-agent/releases/tag/v1.0.0">Demo 1.0.0 release</a>
 </p>
+<p align="center">Language / 语言: <strong>English</strong> · <a href="README.md">简体中文</a></p>
 
 ## The same order data can have three answers
 
@@ -94,6 +94,8 @@ That vision does not turn the current Demo into a data catalog, permission platf
 - [Shared logo and brand kit](https://archerthegoat.github.io/contextox-agent/downloads/contextox-brand-kit.zip)
 
 All public showcase links are served by GitHub Pages from the `site/` directory. The English route is a sibling of the original Chinese route, so existing links remain stable.
+
+The introduction runs directly in the browser. Its top-right **English** / **Chinese** switch keeps the current slide number while changing language.
 
 ## Run the open Demo locally
 

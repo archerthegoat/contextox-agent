@@ -6,9 +6,17 @@ const menu = document.querySelector("[data-menu]");
 const menuToggle = document.querySelector("[data-menu-toggle]");
 const fullscreen = document.querySelector("[data-fullscreen]");
 const motion = document.querySelector("[data-motion]");
+const languageSwitch = document.querySelector("[data-language-switch]");
 const isEnglish = document.documentElement.lang === "en";
 const deckLabel = isEnglish ? "ContextOx dynamic introduction" : "数契动态介绍";
 let current = Math.max(0, Math.min(slides.length - 1, Number(location.hash.slice(1) || 1) - 1));
+
+function updateLanguageSwitch() {
+  if (!languageSwitch) return;
+  const targetPage = isEnglish ? "presentation.html" : "presentation-en.html";
+  languageSwitch.href = `${targetPage}#${current + 1}`;
+  languageSwitch.setAttribute("aria-label", isEnglish ? "Switch to Chinese" : "切换到英文");
+}
 
 function render(index, push = true) {
   current = Math.max(0, Math.min(slides.length - 1, index));
@@ -17,6 +25,7 @@ function render(index, push = true) {
   progress.textContent = `${String(current + 1).padStart(2, "0")} / ${String(slides.length).padStart(2, "0")}`;
   previous.disabled = current === 0;
   next.disabled = current === slides.length - 1;
+  updateLanguageSwitch();
   document.title = `${slides[current].dataset.title} · ${deckLabel}`;
   document.body.classList.toggle("deck-stage-active", slides[current].classList.contains("slide--stage"));
   if (push) history.replaceState(null, "", `#${current + 1}`);
