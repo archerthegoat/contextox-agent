@@ -79,28 +79,6 @@ const dark: CSSProperties = {
   backgroundSize: '72px 72px',
 };
 
-const Kicker: React.FC<{children: ReactNode; darkText?: boolean; left?: number}> = ({
-  children,
-  darkText = true,
-  left = 760,
-}) => (
-  <div
-    style={{
-      position: 'absolute',
-      left,
-      top: 34,
-      zIndex: 190,
-      color: darkText ? C.blue : '#8FB8F3',
-      fontFamily: FONT,
-      fontSize: 27,
-      fontWeight: 780,
-      letterSpacing: 0.5,
-    }}
-  >
-    {children}
-  </div>
-);
-
 const CaptionBar: React.FC<{
   index: string;
   children: ReactNode;
@@ -412,7 +390,6 @@ const SendAndUnderstandScene: React.FC = () => {
         <h2 style={{margin: '8px 0 20px', fontSize: 40, letterSpacing: -1.1}}>正在理解 3 份资料</h2>
         <StepStrip active={1} frame={Math.max(0, frame - 52)} />
       </div>
-      <Kicker>一次真实推进</Kicker>
       <CaptionBar index="05" right={620}>按下发送，开始理解资料</CaptionBar>
     </AbsoluteFill>
   );
@@ -505,7 +482,6 @@ const AgentQuestionsScene: React.FC = () => {
           </div>
         </AgentPanel>
       </WorkbenchCamera>
-      <Kicker>Agent 把缺口问出来</Kicker>
       <CaptionBar index="06">会改变结果的问题，先问清楚</CaptionBar>
     </AbsoluteFill>
   );
@@ -607,14 +583,6 @@ const HumanAnswersScene: React.FC = () => {
   const phaseFrame = frame - index * 45;
   const savePhase = frame >= 135 && frame < 150;
   const confirmPhase = frame >= 150;
-  const answerKicker =
-    frame < 135
-      ? '人的决定 · 逐项回答'
-      : savePhase
-        ? '人的决定 · 先保存'
-        : frame < 171
-          ? '已保存 · 尚未批准'
-          : '人的决定 · 已确认采用';
   const clicks = [30, 75, 120, 140, 165];
   const pressed = Math.max(...clicks.map((at) => pulse(frame, at, 4)));
   const cursor = pathPoint(frame, [
@@ -643,7 +611,6 @@ const HumanAnswersScene: React.FC = () => {
         </AgentPanel>
         <Cursor x={cursor.x} y={cursor.y} pressed={pressed} />
       </WorkbenchCamera>
-      <Kicker>{answerKicker}</Kicker>
       <CaptionBar index="07">回答、来源和依据，都由人确认</CaptionBar>
     </AbsoluteFill>
   );
@@ -859,7 +826,6 @@ const CandidateDefinitionScene: React.FC = () => {
         <CandidateCenter frame={frame} />
         <ResultAgentPanel />
       </WorkbenchCamera>
-      <Kicker>真实工作区 · 候选定义</Kicker>
       <CaptionBar index="08">回答进入候选字段，不是最终批准</CaptionBar>
     </AbsoluteFill>
   );
@@ -883,7 +849,6 @@ const RoundChangesScene: React.FC = () => {
         <ResultAgentPanel />
         <Cursor x={cursor.x} y={cursor.y} pressed={pulse(frame, clickAt, 4)} />
       </WorkbenchCamera>
-      <Kicker>真实控件 · 查看本轮变化</Kicker>
       <CaptionBar index="09">人的回答、变化和未知，都能回看</CaptionBar>
     </AbsoluteFill>
   );
@@ -901,7 +866,6 @@ const PositioningScene: React.FC = () => {
       <div style={{position: 'absolute', inset: '0 50% 0 0', background: `rgba(232,237,243,${wash})`}} />
       <div style={{position: 'absolute', inset: '0 0 0 50%', background: `rgba(244,241,234,${wash})`}} />
       <div style={{position: 'absolute', left: '50%', top: 0, bottom: 0, width: 2, background: C.lineStrong, opacity: wash}} />
-      <Kicker>分工不同 · 可以接力</Kicker>
       <div
         style={{
           position: 'absolute',

@@ -56,6 +56,7 @@ motion_language:
   effect_rule: 每个效果必须在 storyboard 的 cause 和 meaning 字段中说明对应产品动作与信息作用
   hold_rule: 问题和回答落定至少 30 帧；候选定义完整落定至少 45 帧；结尾 CTA 完整落定后停留 30 帧，最后 30 帧淡出至黑
   deterministic_rule: 不使用 Math.random、Date.now 或运行时 DOM 测量
+  overlay_label_rule: 产品操作段不叠加额外顶部阶段标签；只保留真实界面状态与左下角叙事字幕
 audio_direction:
   music: Dirty Thinkin' by Michael Ramir C.
   bpm: 120
